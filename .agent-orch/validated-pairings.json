@@ -1,0 +1,12 @@
+[
+  {
+    "harness": "claude_code",
+    "model": "sonnet",
+    "validated_at": "2026-07-08T01:58:58+00:00"
+  },
+  {
+    "harness": "codex_cli",
+    "model": "gpt-5.5",
+    "validated_at": "2026-07-08T01:58:58+00:00"
+  }
+]
