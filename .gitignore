@@ -1,0 +1,11 @@
+build/
+*.o
+*.a
+*.so
+*.dSYM/
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+core
+vgcore.*
