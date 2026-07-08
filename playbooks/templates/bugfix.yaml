@@ -1,0 +1,52 @@
+{
+  "playbook_id": "template_bugfix",
+  "name": "Template - Bugfix",
+  "defaults": {
+    "worker": "codex_cli",
+    "retry_policy": {
+      "max_attempts": 2,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_reproduce_and_fix",
+      "name": "Reproduce and fix the bug",
+      "mission": "Read AGENTS.md, reproduce the bug for linux-utilities, implement a focused fix, and add or update targeted tests. Keep all writes within src/, tests/, and docs/.",
+      "inputs": [
+        "AGENTS.md",
+        "README.md",
+        "architecture.md"
+      ],
+      "allowed_paths": [
+        "src/",
+        "tests/",
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/bugfix-notes.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/bugfix-notes.md"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the bugfix slice and keep all writes inside src/, tests/, and docs/.",
+        "after_retries_exhausted": "halt"
+      }
+    }
+  ]
+}

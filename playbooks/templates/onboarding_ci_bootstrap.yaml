@@ -1,0 +1,59 @@
+{
+  "playbook_id": "template_onboarding_ci_bootstrap",
+  "name": "Template - Onboarding CI bootstrap",
+  "defaults": {
+    "worker": "codex_cli",
+    "retry_policy": {
+      "max_attempts": 2,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_create_ci_bootstrap_artifacts",
+      "name": "Create onboarding CI bootstrap artifacts",
+      "mission": "Read AGENTS.md and docs/project-onboarding.md. Create a minimal CI bootstrap workflow under .github/workflows/agent-orch-onboard.yml for linux-utilities, and add an execution notes file at docs/onboarding-ci-bootstrap.md. Keep all writes within .github/ and docs/.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/project-onboarding.md",
+        ".agent-orch/project.yaml"
+      ],
+      "allowed_paths": [
+        ".github/",
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": ".github/workflows/agent-orch-onboard.yml",
+            "type": "yaml"
+          },
+          {
+            "path": "docs/onboarding-ci-bootstrap.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": ".github/workflows/agent-orch-onboard.yml"
+          },
+          {
+            "type": "file_exists",
+            "path": "docs/onboarding-ci-bootstrap.md"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Create both the bootstrap workflow and notes under the declared paths.",
+        "after_retries_exhausted": "halt"
+      }
+    }
+  ]
+}

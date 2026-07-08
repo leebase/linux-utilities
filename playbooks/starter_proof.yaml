@@ -1,0 +1,48 @@
+{
+  "playbook_id": "starter_proof",
+  "name": "Starter proof workflow",
+  "defaults": {
+    "worker": "codex_cli",
+    "retry_policy": {
+      "max_attempts": 1
+    }
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_write_proof_output",
+      "name": "Write the proof output",
+      "mission": "Create docs/proof-output.md with a short proof note saying the repo scaffold is ready for Agent-Orch. Keep all writes within docs/.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/project-onboarding.md"
+      ],
+      "allowed_paths": [
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/proof-output.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/proof-output.md"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the proof output and keep all writes inside docs/.",
+        "after_retries_exhausted": "halt"
+      }
+    }
+  ]
+}

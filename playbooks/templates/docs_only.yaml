@@ -1,0 +1,59 @@
+{
+  "playbook_id": "template_docs_only",
+  "name": "Template - Docs only update",
+  "defaults": {
+    "worker": "codex_cli",
+    "retry_policy": {
+      "max_attempts": 2,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_update_docs",
+      "name": "Update durable docs",
+      "mission": "Read AGENTS.md and update the necessary durable docs for linux-utilities. Keep all writes within docs/, README.md, architecture.md, project-plan.md, sprint-plan.md, context.md, result-review.md, and WHERE_AM_I.md.",
+      "inputs": [
+        "AGENTS.md",
+        "README.md",
+        "architecture.md",
+        "project-plan.md",
+        "sprint-plan.md"
+      ],
+      "allowed_paths": [
+        "docs/",
+        "README.md",
+        "architecture.md",
+        "project-plan.md",
+        "sprint-plan.md",
+        "context.md",
+        "result-review.md",
+        "WHERE_AM_I.md"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "result-review.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "result-review.md"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the documentation updates and keep all writes inside the declared docs paths.",
+        "after_retries_exhausted": "halt"
+      }
+    }
+  ]
+}
