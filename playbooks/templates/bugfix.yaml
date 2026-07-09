@@ -3,10 +3,30 @@
   "name": "Template - Bugfix",
   "defaults": {
     "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    },
     "retry_policy": {
       "max_attempts": 2,
       "strategy": "rerun_with_validation_feedback"
     }
+  },
+  "roles": {
+    "implementation_worker": [
+      {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    ],
+    "slice_reviewer": [
+      {
+        "harness": "claude_code",
+        "model": "sonnet"
+      }
+    ]
   },
   "run_policy": {
     "on_step_failure": "halt",
@@ -16,6 +36,7 @@
     {
       "step_id": "step_01_reproduce_and_fix",
       "name": "Reproduce and fix the bug",
+      "role": "implementation_worker",
       "mission": "Read AGENTS.md, reproduce the bug for linux-utilities, implement a focused fix, and add or update targeted tests. Keep all writes within src/, tests/, and docs/.",
       "inputs": [
         "AGENTS.md",
@@ -40,11 +61,147 @@
           {
             "type": "file_exists",
             "path": "docs/bugfix-notes.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/bugfix-notes.md",
+            "headings": [
+              "Bug",
+              "Fix",
+              "Verification"
+            ],
+            "min_chars_under_heading": 40
           }
         ]
       },
       "on_fail": {
         "retry_message": "Repair the bugfix slice and keep all writes inside src/, tests/, and docs/.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_02_user_smoke_gate",
+      "name": "Run the existing sysdiff smoke oracle",
+      "worker": "smoke_runner",
+      "mission": "Run ./scripts/smoke.sh from the repository root and capture JSON evidence under artifacts/user-smoke/bugfix-result.json. This gate is grounded in the existing sysdiff smoke oracle; do not rewrite scripts/smoke.sh, tests/test_sysdiff.sh, or Makefile.",
+      "inputs": [
+        "scripts/smoke.sh",
+        "tests/smoke_manifest.json",
+        "tests/test_sysdiff.sh",
+        "Makefile",
+        "src/sysdiff.c"
+      ],
+      "allowed_paths": [
+        "artifacts/user-smoke/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "artifacts/user-smoke/bugfix-result.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "artifacts/user-smoke/bugfix-result.json"
+          },
+          {
+            "type": "json_parse",
+            "path": "artifacts/user-smoke/bugfix-result.json"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "scripts/smoke.sh",
+            "sha256": "daca1ec8b6d0da5d40d65161342f585d0b732d053cf88a396199e63897919667"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/test_sysdiff.sh",
+            "sha256": "ac7ced42064e221f3491b120314de2e1bf0a08596eb93f962e8d34e18ab854ae"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "Makefile",
+            "sha256": "56a1c6262c190f469ca08e0fc7ebf1cfa210399dd0d8304deca03011be61b48d"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "./scripts/smoke.sh",
+            "timeout_seconds": 300
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Re-run the pinned sysdiff smoke oracle and capture valid JSON evidence under artifacts/user-smoke/. If a smoke oracle pin fails, halt and report that scripts/smoke.sh, tests/test_sysdiff.sh, or Makefile changed outside this playbook's allowed paths.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_03_review_bugfix",
+      "name": "Review the bugfix",
+      "role": "slice_reviewer",
+      "mission": "Review the bugfix after the user smoke gate. Write code-reviews/bugfix-review.md with Checks Run and Lens Notes sections, and write code-reviews/bugfix-review.verdict.json using schema_path builtin:review_verdict/v1. The verdict JSON must contain verdict, findings, checks_run, and lenses. lenses must be an object mapping lens names to objects; each lens object must contain either a non-empty finding_ids array of strings or a non-empty justification string, or both. Include only deterministic allowlisted commands in checks_run; use python3 -m compileall . with its observed exit code. Discuss smoke evidence in the prose review. Keep all writes within code-reviews/.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/bugfix-notes.md",
+        "artifacts/user-smoke/bugfix-result.json"
+      ],
+      "allowed_paths": [
+        "code-reviews/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "code-reviews/bugfix-review.md",
+            "type": "markdown"
+          },
+          {
+            "path": "code-reviews/bugfix-review.verdict.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "code-reviews/bugfix-review.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "code-reviews/bugfix-review.md",
+            "headings": [
+              "Checks Run",
+              "Lens Notes"
+            ],
+            "min_chars_under_heading": 40
+          },
+          {
+            "type": "json_schema",
+            "path": "code-reviews/bugfix-review.verdict.json",
+            "schema_path": "builtin:review_verdict/v1"
+          },
+          {
+            "type": "review_verdict_clean",
+            "path": "code-reviews/bugfix-review.verdict.json",
+            "severity_threshold": "High"
+          }
+        ],
+        "system": [
+          {
+            "type": "checks_run_match",
+            "path": "code-reviews/bugfix-review.verdict.json",
+            "timeout_seconds": 300
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the review artifacts so the prose review and verdict JSON honestly reflect the bugfix, use builtin:review_verdict/v1, and include at least one re-executable allowlisted checks_run command.",
         "after_retries_exhausted": "halt"
       }
     }

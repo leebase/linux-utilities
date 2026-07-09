@@ -1,0 +1,81 @@
+{
+  "$schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "severity_threshold": "High",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "Medium",
+      "file": "src/sysdiff.c",
+      "location": "read_line (lines 58-108), snapshot_append (lines 149-171)",
+      "problem": "No resource limits are enforced. read_line grows its buffer without bound and snapshot_append grows its entry array without bound. A hostile snapshot file can exhaust available memory; on OOM the path correctly exits 2 with no partial output, but the diagnostic is 'read or allocation error' rather than a quota-exceeded message, and memory pressure affects co-resident processes. The spec permits but does not require limits.",
+      "proposed_fix": "Define compile-time constants MAX_LINE_BYTES and MAX_ENTRIES. In read_line, reject and return LINE_ERROR when the line buffer would grow past MAX_LINE_BYTES. In snapshot_append, reject and return false when snapshot->len would exceed MAX_ENTRIES. Document the constants in README and print them in the error diagnostic."
+    },
+    {
+      "id": "F002",
+      "severity": "Low",
+      "file": "src/sysdiff.c",
+      "location": "fail_parse (lines 192-198)",
+      "problem": "fail_parse closes file and frees snapshot as invisible side effects. Its callers all immediately return its result, so there is no current use-after-free. However, the function signature gives no indication of ownership transfer; a future maintenance path that uses file or snapshot after a fail_parse call would introduce a double-close or double-free with no compiler warning.",
+      "proposed_fix": "Rename to parse_fail_and_return and document in a leading comment that it consumes file and snapshot. Alternatively, have parse_snapshot manage cleanup at a single top-level return point using gotos."
+    },
+    {
+      "id": "F003",
+      "severity": "Low",
+      "file": "tests/test_sysdiff.py",
+      "location": "sysdiff_bin fixture (lines 11-29)",
+      "problem": "The test build omits -fsanitize=address,undefined. Latent memory-safety or undefined-behavior bugs that the current fixture inputs do not happen to trigger would pass the test suite undetected.",
+      "proposed_fix": "Add \"-fsanitize=address,undefined\" to the gcc invocation in the sysdiff_bin fixture. Wrap in a try/except subprocess.CalledProcessError so the fixture skips gracefully on platforms where the sanitizers are unavailable rather than failing the entire session."
+    },
+    {
+      "id": "F004",
+      "severity": "Low",
+      "file": "tests/test_sysdiff.py",
+      "location": "(missing test)",
+      "problem": "No test confirms that a CRLF-terminated snapshot (\\r\\n line endings) produces the same diff output as the equivalent LF-terminated snapshot. The stripping code exists at src/sysdiff.c:228-230 and appears correct, but the contract is unverified by any fixture.",
+      "proposed_fix": "Add a test_crlf_snapshots_compare_identically_to_lf test that writes the same logical content once with \\r\\n endings and once with \\n endings, then asserts the two diffs are identical."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall tests/test_sysdiff.py",
+      "exit_code": 0,
+      "summary": "Python byte-compilation succeeded with no syntax errors."
+    },
+    {
+      "command": "python3 -m pytest tests/test_sysdiff.py -x",
+      "exit_code": 0,
+      "summary": "17 tests collected and passed. The fixture compiles src/sysdiff.c with -std=c17 -Wall -Wextra -Wpedantic -Werror before any test runs; a compiler-rejected change would fail at collection time."
+    }
+  ],
+  "lenses": {
+    "correctness": {
+      "finding_ids": [],
+      "justification": "All specified behaviors are implemented and confirmed by the test suite: exit codes 0/1/2, output formats for added/removed/changed/no-changes, sorted merge walk, partial-output prevention on parse failure, empty-value handling, comment and blank-line skipping, duplicate-key detection, and NUL-byte rejection. No correctness bugs found."
+    },
+    "security": {
+      "finding_ids": [],
+      "justification": "All format strings are compile-time literals. fopen uses binary mode. NUL byte rejection prevents embedded NUL from being misinterpreted by strchr or strcmp. The file. key namespace is treated as opaque data and never opened as a filesystem path. copy_range guards against SIZE_MAX + 1 overflow before malloc."
+    },
+    "memory-ownership": {
+      "finding_ids": ["F002"],
+      "justification": "No leaks or double-frees found. All allocation paths are correctly paired with free calls. snapshot_free zeroes its fields so double-calls are safe. The Low finding is that fail_parse has hidden side effects (closes file, frees snapshot) that are safe today but fragile for future maintenance."
+    },
+    "undefined-behavior": {
+      "finding_ids": [],
+      "justification": "No undefined behavior found. (char)ch cast is safe (values in [1,255]). separator - line produces non-negative ptrdiff_t. cap - len subtraction maintains the loop invariant len <= cap. All realloc paths have overflow guards. qsort comparator cast is well-defined per C17 6.3.2.3p7."
+    },
+    "resource-limits": {
+      "finding_ids": ["F001"],
+      "justification": "The spec permits but does not require documented maximums. The Medium finding is that no limits are enforced: a hostile snapshot can exhaust system memory. OOM is handled correctly (exit 2, no partial output) but the diagnostic is generic and co-resident processes are affected."
+    },
+    "test-adequacy": {
+      "finding_ids": ["F003", "F004"],
+      "justification": "The test suite covers all acceptance checks in the spec: 9 key-syntax rejection cases, all output format variants, determinism across input orders, error isolation for before and after files, directory and missing-file errors, and embedded NUL rejection. Two Low gaps: no sanitizer build, and no CRLF-vs-LF comparison fixture."
+    },
+    "cli-behavior": {
+      "finding_ids": [],
+      "justification": "All documented CLI forms (no-args, --help, --version, compare with correct args, wrong arg count, unknown command, missing file, directory path) produce the specified exit code, stdout, and stderr. All tested explicitly."
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "findings": [
+    {
+      "id": "F-001",
+      "severity": "Medium",
+      "file": "tests/test_sysdiff_fixture.sh",
+      "location": "line 150",
+      "problem": "assert_sorted_file_equals is used for the primary diff comparison instead of assert_file_equals. Both sides are sorted before comparing, so an implementation that outputs the correct lines in a non-sorted order would pass this test. The contract requires deterministic output sorted by key byte-order.",
+      "proposed_fix": "Replace 'assert_sorted_file_equals \"$expected\" \"$stdout\"' with 'assert_file_equals \"$expected\" \"$stdout\"' on line 150. The expected heredoc is already pre-sorted, so no other change is needed. assert_sorted_file_equals can be removed entirely if no other test relies on it."
+    },
+    {
+      "id": "F-002",
+      "severity": "Low",
+      "file": "tests/test_sysdiff_fixture.sh",
+      "location": "lines 98-108 (assert_diff_prefixes)",
+      "problem": "assert_diff_prefixes validates only that each output line starts with '-', '+', or '~'. It does not validate the full format (e.g., 'key=value' or 'key: old -> new'). This is a defense-in-depth gap in the secondary check; the primary assert_sorted_file_equals already catches format deviations.",
+      "proposed_fix": "Optionally extend assert_diff_prefixes to use a regex such as '^[-+] [^=]+=|^~ [^:]+: .* -> ' to validate the full line format. Not required given the primary check; treat as a low-priority hardening option."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m json.tool tests/smoke_manifest.json",
+      "exit_code": 0,
+      "summary": "smoke_manifest.json is well-formed JSON"
+    },
+    {
+      "command": "python3 -c \"import json,os,sys; m=json.load(open('tests/smoke_manifest.json')); missing=[s['path'] for s in m['steps'] if not os.path.exists(s['path'])]; print('missing:',missing) or sys.exit(bool(missing))\"",
+      "exit_code": 0,
+      "summary": "All path values in smoke_manifest.json steps resolve to existing files"
+    },
+    {
+      "command": "bash -n tests/test_sysdiff_fixture.sh",
+      "exit_code": 0,
+      "summary": "test_sysdiff_fixture.sh passes bash syntax check"
+    },
+    {
+      "command": "python3 -m compileall tests/",
+      "exit_code": 0,
+      "summary": "All Python files under tests/ compile without error"
+    },
+    {
+      "command": "git status --short -- tests/smoke_manifest.json tests/test_sysdiff_fixture.sh",
+      "exit_code": 0,
+      "summary": "Both files are new untracked additions (??) in tests/; no tracked files outside tests/ were modified"
+    }
+  ],
+  "lenses": {
+    "correctness": {
+      "finding_ids": ["F-001"],
+      "justification": "The primary diff comparison does not enforce sorted output order; sorting both sides before comparison masks ordering bugs in the implementation."
+    },
+    "coverage": {
+      "finding_ids": ["F-001", "F-002"],
+      "justification": "F-001 leaves the deterministic-ordering contract unverified. F-002 is a minor gap in the secondary prefix check. All other contract acceptance checks are present and verified."
+    },
+    "determinism": {
+      "finding_ids": [],
+      "justification": "Fixture data is defined entirely via inline heredocs with no external files, environment variables, timestamps, or random values. LC_ALL=C sort is used for locale-independent ordering. The test is fully deterministic."
+    },
+    "allowed_paths": {
+      "finding_ids": [],
+      "justification": "Both new files are additions inside tests/. No tracked files outside tests/ or scripts/ were modified. All paths referenced in smoke_manifest.json already existed before this change."
+    }
+  }
+}

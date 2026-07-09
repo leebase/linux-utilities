@@ -3,9 +3,23 @@
   "name": "Starter proof workflow",
   "defaults": {
     "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    },
     "retry_policy": {
       "max_attempts": 1
     }
+  },
+  "roles": {
+    "implementation_worker": [
+      {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    ]
   },
   "run_policy": {
     "on_step_failure": "halt",
@@ -15,7 +29,8 @@
     {
       "step_id": "step_01_write_proof_output",
       "name": "Write the proof output",
-      "mission": "Create docs/proof-output.md with a short proof note saying the repo scaffold is ready for Agent-Orch. Keep all writes within docs/.",
+      "role": "implementation_worker",
+      "mission": "Create docs/proof-output.md with a Proof heading and a short proof note saying the repo scaffold is ready for Agent-Orch. Keep all writes within docs/.",
       "inputs": [
         "AGENTS.md",
         "docs/project-onboarding.md"
@@ -36,6 +51,14 @@
           {
             "type": "file_exists",
             "path": "docs/proof-output.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/proof-output.md",
+            "headings": [
+              "Proof"
+            ],
+            "min_chars_under_heading": 40
           }
         ]
       },

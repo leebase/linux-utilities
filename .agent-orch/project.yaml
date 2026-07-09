@@ -23,6 +23,7 @@ workers:
   default: codex_cli
   allowed:
     - fake_worker
+    - smoke_runner
     - codex_cli
     - pi_cli
     - claude_code

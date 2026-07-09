@@ -3,10 +3,30 @@
   "name": "Template - Onboarding CI bootstrap",
   "defaults": {
     "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    },
     "retry_policy": {
       "max_attempts": 2,
       "strategy": "rerun_with_validation_feedback"
     }
+  },
+  "roles": {
+    "implementation_worker": [
+      {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    ],
+    "slice_reviewer": [
+      {
+        "harness": "claude_code",
+        "model": "sonnet"
+      }
+    ]
   },
   "run_policy": {
     "on_step_failure": "halt",
@@ -16,6 +36,7 @@
     {
       "step_id": "step_01_create_ci_bootstrap_artifacts",
       "name": "Create onboarding CI bootstrap artifacts",
+      "role": "implementation_worker",
       "mission": "Read AGENTS.md and docs/project-onboarding.md. Create a minimal CI bootstrap workflow under .github/workflows/agent-orch-onboard.yml for linux-utilities, and add an execution notes file at docs/onboarding-ci-bootstrap.md. Keep all writes within .github/ and docs/.",
       "inputs": [
         "AGENTS.md",
@@ -47,11 +68,152 @@
           {
             "type": "file_exists",
             "path": "docs/onboarding-ci-bootstrap.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/onboarding-ci-bootstrap.md",
+            "headings": [
+              "Onboarding CI Bootstrap",
+              "Verification"
+            ],
+            "min_chars_under_heading": 40
           }
         ]
       },
       "on_fail": {
         "retry_message": "Create both the bootstrap workflow and notes under the declared paths.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_02_user_smoke_gate",
+      "name": "Run the existing sysdiff smoke oracle",
+      "worker": "smoke_runner",
+      "mission": "Run ./scripts/smoke.sh from the repository root and capture JSON evidence under artifacts/user-smoke/onboarding-ci-bootstrap-result.json. This gate is grounded in the existing sysdiff smoke oracle; do not rewrite scripts/smoke.sh, tests/test_sysdiff.sh, Makefile, or src/sysdiff.c.",
+      "inputs": [
+        "scripts/smoke.sh",
+        "tests/smoke_manifest.json",
+        "tests/test_sysdiff.sh",
+        "Makefile",
+        "src/sysdiff.c"
+      ],
+      "allowed_paths": [
+        "artifacts/user-smoke/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "artifacts/user-smoke/onboarding-ci-bootstrap-result.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "artifacts/user-smoke/onboarding-ci-bootstrap-result.json"
+          },
+          {
+            "type": "json_parse",
+            "path": "artifacts/user-smoke/onboarding-ci-bootstrap-result.json"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "scripts/smoke.sh",
+            "sha256": "daca1ec8b6d0da5d40d65161342f585d0b732d053cf88a396199e63897919667"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/test_sysdiff.sh",
+            "sha256": "ac7ced42064e221f3491b120314de2e1bf0a08596eb93f962e8d34e18ab854ae"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "Makefile",
+            "sha256": "56a1c6262c190f469ca08e0fc7ebf1cfa210399dd0d8304deca03011be61b48d"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "src/sysdiff.c",
+            "sha256": "8df0bbfa93c53f01ef90551ce87d0bc6e552e424bfcc1656af0c02d4cd5ade11"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "./scripts/smoke.sh",
+            "timeout_seconds": 300
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Re-run the pinned sysdiff smoke oracle and capture valid JSON evidence under artifacts/user-smoke/. If a pin fails, halt and report that the smoke oracle changed outside this playbook's allowed paths.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_03_review_onboarding_ci_bootstrap",
+      "name": "Review the onboarding CI bootstrap",
+      "role": "slice_reviewer",
+      "mission": "Review the onboarding CI bootstrap after the user smoke gate. Write code-reviews/onboarding-ci-bootstrap-review.md with Checks Run and Lens Notes sections, and write code-reviews/onboarding-ci-bootstrap-review.verdict.json using schema_path builtin:review_verdict/v1. The verdict JSON must contain verdict, findings, checks_run, and lenses. lenses must be an object mapping lens names to objects; each lens object must contain either a non-empty finding_ids array of strings or a non-empty justification string, or both. Include only deterministic allowlisted commands in checks_run; use python3 -m compileall . with its observed exit code. Discuss smoke evidence in the prose review. Keep all writes within code-reviews/.",
+      "inputs": [
+        "AGENTS.md",
+        ".github/workflows/agent-orch-onboard.yml",
+        "docs/onboarding-ci-bootstrap.md",
+        "artifacts/user-smoke/onboarding-ci-bootstrap-result.json"
+      ],
+      "allowed_paths": [
+        "code-reviews/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "code-reviews/onboarding-ci-bootstrap-review.md",
+            "type": "markdown"
+          },
+          {
+            "path": "code-reviews/onboarding-ci-bootstrap-review.verdict.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "code-reviews/onboarding-ci-bootstrap-review.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "code-reviews/onboarding-ci-bootstrap-review.md",
+            "headings": [
+              "Checks Run",
+              "Lens Notes"
+            ],
+            "min_chars_under_heading": 40
+          },
+          {
+            "type": "json_schema",
+            "path": "code-reviews/onboarding-ci-bootstrap-review.verdict.json",
+            "schema_path": "builtin:review_verdict/v1"
+          },
+          {
+            "type": "review_verdict_clean",
+            "path": "code-reviews/onboarding-ci-bootstrap-review.verdict.json",
+            "severity_threshold": "High"
+          }
+        ],
+        "system": [
+          {
+            "type": "checks_run_match",
+            "path": "code-reviews/onboarding-ci-bootstrap-review.verdict.json",
+            "timeout_seconds": 300
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the review artifacts so the prose review and verdict JSON honestly reflect the onboarding CI bootstrap, use builtin:review_verdict/v1, and include at least one re-executable allowlisted checks_run command.",
         "after_retries_exhausted": "halt"
       }
     }

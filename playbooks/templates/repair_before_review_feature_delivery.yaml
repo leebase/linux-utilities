@@ -3,15 +3,36 @@
   "name": "Template - Repair-before-review feature delivery",
   "authoring_notes": [
     "Replace every __PLACEHOLDER__ before launch and lint with --strict.",
-    "Semantic checks are advisory-blocking LLM-as-judge gates: a failing verdict fails the step, but a passing verdict never substitutes for the deterministic gates next to it. The judge must resolve to a different harness/model route than the step's producer; __JUDGE_HARNESS__ defaults to the read-only pi_cli judge when the field is omitted.",
-    "Walking-skeleton convention: when the slice has user-visible behavior, add a minimal browser-smoke step (worker browser_smoke_runner, with file_hash_matches pins on the smoke manifest and check script) directly after step_05_implement_slice rather than waiting for closeout, so an end-to-end skeleton is proven before documentation and review. This is a template-authoring convention, not engine behavior. The template also ships a command-driven user smoke gate at step_08_user_smoke_gate that satisfies the strict-lint quality floor; specialize its manifest and replace its all-zeros pins before launch."
+    "Semantic checks are advisory-blocking LLM-as-judge gates: a failing verdict fails the step, but a passing verdict never substitutes for the deterministic gates next to it. The judge must resolve to a different harness/model route than the step's producer; this template uses the read-only pi_cli judge for semantic gates.",
+    "This unattended template intentionally omits the manual approval checkpoint after step_01_define_slice_contract. Add an approval gate before launch when contract intent needs human confirmation.",
+    "Walking-skeleton convention: when the slice has user-visible behavior, add a minimal browser-smoke step with a registered route and file_hash_matches pins on the smoke manifest and check script directly after step_05_implement_slice rather than waiting for closeout, so an end-to-end skeleton is proven before documentation and review. This is a template-authoring convention, not engine behavior. The template also ships a command-driven user smoke gate at step_08_user_smoke_gate grounded in the existing sysdiff smoke oracle."
   ],
   "defaults": {
     "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    },
     "retry_policy": {
       "max_attempts": 2,
       "strategy": "rerun_with_validation_feedback"
     }
+  },
+  "roles": {
+    "implementation_worker": [
+      {
+        "harness": "codex_cli",
+        "model": "gpt-5.5"
+      }
+    ],
+    "slice_reviewer": [
+      {
+        "harness": "claude_code",
+        "model": "sonnet"
+      }
+    ]
   },
   "run_policy": {
     "on_step_failure": "halt",
@@ -21,6 +42,7 @@
     {
       "step_id": "step_01_define_slice_contract",
       "name": "Define the slice contract",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md and follow the repo operating rules. Replace the placeholder slice name, contract path, and acceptance details with the real feature details for linux-utilities before use. Create the contract doc under docs/ and define the problem, required outputs, constraints, validation, routing intent, and acceptance checks under the Overview, Problem, Constraints, and Acceptance Checks headings. Keep all writes within docs/.",
       "inputs": [
         "AGENTS.md",
@@ -65,17 +87,9 @@
       }
     },
     {
-      "step_id": "step_02_approve_contract",
-      "type": "human_approval",
-      "name": "Approve the slice contract",
-      "mission": "Human gate: read docs/__SLICE_NAME__-contract.md and decide whether the contract describes the slice you actually want built, with acceptance checks concrete enough to verify. The run parks in WAITING_APPROVAL until you approve with `agent-orch approve <run_dir> step_02_approve_contract` and resume with `agent-orch resume-run <run_dir>`. Approval is never implicit.",
-      "inputs": [
-        "docs/__SLICE_NAME__-contract.md"
-      ]
-    },
-    {
       "step_id": "step_03_plan_slice_delivery",
       "name": "Plan the implementation",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md and follow the repo operating rules. Read the contract for linux-utilities and turn it into a concrete implementation plan covering Architecture, Tests, Verification, and Risks. Every acceptance check in the contract must map to a concrete plan item; a traceability judge verifies this and fails the step naming any criterion it cannot map. Replace the placeholder plan path and work items with the real slice details before use. Keep all writes within plans/.",
       "inputs": [
         "AGENTS.md",
@@ -118,7 +132,7 @@
             "path": "plans/__SLICE_NAME__-implementation-plan.md",
             "mode": "contract_traceability",
             "reference_path": "docs/__SLICE_NAME__-contract.md",
-            "judge_harness": "__JUDGE_HARNESS__"
+            "judge_harness": "pi_cli"
           }
         ]
       },
@@ -130,6 +144,7 @@
     {
       "step_id": "step_04_author_slice_tests",
       "name": "Author the slice tests",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md, skills/development-loop.md, and skills/test-as-lee.md, then follow them. Author the targeted test suite for the slice contract before the implementation exists, so the tests encode the contract rather than the implementation. Replace the placeholder test path and case names with the real slice details before use. The tests may fail until the implementation lands, but they must be syntactically valid and import-guarded where needed. Keep all writes within tests/.",
       "inputs": [
         "AGENTS.md",
@@ -141,16 +156,6 @@
       "allowed_paths": [
         "tests/"
       ],
-      "routing": {
-        "primary": {
-          "harness": "__TEST_AUTHOR_HARNESS__",
-          "model": "__TEST_AUTHOR_MODEL__"
-        },
-        "fallback": {
-          "harness": "__FALLBACK_HARNESS__",
-          "model": "__FALLBACK_MODEL__"
-        }
-      },
       "outputs": {
         "required": [
           {
@@ -181,6 +186,7 @@
     {
       "step_id": "step_05_implement_slice",
       "name": "Implement the slice",
+      "role": "implementation_worker",
       "mission": "Before writing code, read AGENTS.md, skills/development-loop.md, and skills/test-as-lee.md, then follow them. Implement the slice against the tests authored in the previous step. Replace the placeholder module path, allowed paths, validation commands, routing intent, and any workflow-asset paths with the real slice details before use. If the slice owns workflow files, specialize the playbook paths before running it. Do not modify tests/ — the test suite was authored separately and judges this step. Keep all writes within __PROJECT_SRC__/ and playbooks/ when the slice needs workflow assets.",
       "inputs": [
         "AGENTS.md",
@@ -194,25 +200,6 @@
         "__PROJECT_SRC__/",
         "playbooks/"
       ],
-      "execution": {
-        "task_type": "__TASK_TYPE__",
-        "capabilities_required": [
-          "__CAPABILITY__"
-        ],
-        "routing_hints": {
-          "preferred_harness": "__PRIMARY_HARNESS__"
-        }
-      },
-      "routing": {
-        "primary": {
-          "harness": "__PRIMARY_HARNESS__",
-          "model": "__PRIMARY_MODEL__"
-        },
-        "fallback": {
-          "harness": "__FALLBACK_HARNESS__",
-          "model": "__FALLBACK_MODEL__"
-        }
-      },
       "outputs": {
         "required": [
           {
@@ -244,6 +231,7 @@
     {
       "step_id": "step_06_document_slice",
       "name": "Document the slice",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md and skills/documentation.md, then follow them. Update the user-facing docs that explain the slice and replace the placeholder doc references and required headings with the real files and sections the slice needs. Keep all writes within README.md and user-guide.md.",
       "inputs": [
         "AGENTS.md",
@@ -305,6 +293,7 @@
     {
       "step_id": "step_07_repair_and_verify_slice",
       "name": "Repair and verify the slice",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md, skills/development-loop.md, skills/test-as-lee.md, and skills/documentation.md, then follow them. Repair any remaining slice failures so the implementation, tests, docs, and routing fields are all green before review. If this step was re-entered from a failed review verdict, the findings to repair are in your retry feedback — fix those findings first. Run the full verification set for the slice plus any real CLI proof commands that belong to the feature. Keep all writes within __PROJECT_SRC__/, tests/, playbooks/, README.md, user-guide.md, docs/, plans/, and tmp/.",
       "inputs": [
         "AGENTS.md",
@@ -360,7 +349,7 @@
           },
           {
             "type": "command_succeeds",
-            "command": "python3 -m black --check src tests"
+            "command": "python3 -m black --check --workers 1 src tests"
           },
           {
             "type": "command_succeeds",
@@ -381,18 +370,21 @@
       "step_id": "step_08_user_smoke_gate",
       "name": "Run the user smoke gate for the slice",
       "worker": "smoke_runner",
-      "mission": "Run the canonical smoke manifest for the slice and capture evidence under artifacts/user-smoke/. Specialize before launch: point tests/smoke_manifest.json at the slice's real user flow and replace the all-zeros sha256 placeholders on this step with real pins (shasum -a 256 <file>) so earlier steps cannot rewrite the smoke oracle. An unedited template fails this gate honestly at the pin check.",
+      "mission": "Run ./scripts/smoke.sh from the repository root and capture JSON evidence under artifacts/user-smoke/__SLICE_NAME__-result.json. This gate is grounded in the existing sysdiff smoke oracle; do not rewrite scripts/smoke.sh, tests/test_sysdiff.sh, Makefile, or src/sysdiff.c.",
       "inputs": [
+        "scripts/smoke.sh",
         "tests/smoke_manifest.json",
-        "__PROJECT_SRC__/__SLICE_MODULE__.py"
+        "tests/test_sysdiff.sh",
+        "Makefile",
+        "src/sysdiff.c"
       ],
       "allowed_paths": [
-        "artifacts/user-smoke"
+        "artifacts/user-smoke/"
       ],
       "outputs": {
         "required": [
           {
-            "path": "artifacts/user-smoke/result.json",
+            "path": "artifacts/user-smoke/__SLICE_NAME__-result.json",
             "type": "json"
           }
         ]
@@ -401,33 +393,51 @@
         "structural": [
           {
             "type": "file_exists",
-            "path": "artifacts/user-smoke/result.json"
+            "path": "artifacts/user-smoke/__SLICE_NAME__-result.json"
           },
           {
             "type": "json_parse",
-            "path": "artifacts/user-smoke/result.json"
+            "path": "artifacts/user-smoke/__SLICE_NAME__-result.json"
           },
           {
             "type": "file_hash_matches",
-            "path": "tests/smoke_manifest.json",
-            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            "path": "scripts/smoke.sh",
+            "sha256": "daca1ec8b6d0da5d40d65161342f585d0b732d053cf88a396199e63897919667"
           },
           {
             "type": "file_hash_matches",
-            "path": "__SMOKE_CHECK_SCRIPT__",
-            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            "path": "tests/test_sysdiff.sh",
+            "sha256": "ac7ced42064e221f3491b120314de2e1bf0a08596eb93f962e8d34e18ab854ae"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "Makefile",
+            "sha256": "56a1c6262c190f469ca08e0fc7ebf1cfa210399dd0d8304deca03011be61b48d"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "src/sysdiff.c",
+            "sha256": "8df0bbfa93c53f01ef90551ce87d0bc6e552e424bfcc1656af0c02d4cd5ade11"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "./scripts/smoke.sh",
+            "timeout_seconds": 300
           }
         ]
       },
       "on_fail": {
-        "retry_message": "Repair the slice (or the specialized smoke manifest and pins) until the user smoke gate passes with evidence under artifacts/user-smoke/. All-zeros pins mean this template step was never specialized.",
+        "retry_message": "Repair the slice until the pinned sysdiff smoke oracle passes with JSON evidence under artifacts/user-smoke/. If a pin fails, halt and report that the smoke oracle changed outside this playbook's allowed paths.",
         "after_retries_exhausted": "halt"
       }
     },
     {
       "step_id": "step_09_review_verified_slice",
       "name": "Review the verified slice",
-      "mission": "Before writing, read AGENTS.md, skills/code-review.md, skills/documentation.md, agents/README.md, and agents/code-reviewer.md, then follow them directly in this step. Review the verified slice and record findings under code-reviews/. Write the prose review to code-reviews/review-__SLICE_NAME__.md with the Checks Run and Lens Notes sections, and write the machine-readable verdict to code-reviews/review-__SLICE_NAME__.verdict.json using the canonical review verdict schema contract (verdict pass/fail, findings array with id/severity/file/location/problem/proposed_fix, checks_run array, and lenses). lenses must be an object mapping lens names to objects; each lens object must contain either a non-empty finding_ids array or a non-empty justification string (or both). Every check you actually ran must be listed with its real exit code (the orchestrator re-executes via checks_run_match and fails on mismatch unless the rule is advisory). A verdict with Critical or High findings routes the run back to the repair step instead of advancing. Keep all writes within code-reviews/.",
+      "role": "slice_reviewer",
+      "mission": "Before writing, read AGENTS.md, skills/code-review.md, skills/documentation.md, agents/README.md, and agents/code-reviewer.md, then follow them directly in this step. Review the verified slice and smoke evidence, then record findings under code-reviews/. Write the prose review to code-reviews/review-__SLICE_NAME__.md with the Checks Run and Lens Notes sections, and write the machine-readable verdict to code-reviews/review-__SLICE_NAME__.verdict.json using schema_path builtin:review_verdict/v1. The verdict JSON must contain canonical object fields: verdict is pass or fail; findings is an array of objects with id, severity, file, location, problem, and proposed_fix; checks_run is an array of objects with command, exit_code, and summary; lenses is an object mapping lens names to objects. Each lens object must contain either a non-empty finding_ids array of strings or a non-empty justification string, or both, and lenses must contain at least one entry. Every check you actually ran must be listed with its real exit code (the orchestrator re-executes via checks_run_match and fails on mismatch unless the rule is advisory). A verdict with Critical or High findings routes the run back to the repair step instead of advancing. Keep all writes within code-reviews/.",
       "inputs": [
         "AGENTS.md",
         "skills/code-review.md",
@@ -438,6 +448,7 @@
         "plans/__SLICE_NAME__-implementation-plan.md",
         "README.md",
         "user-guide.md",
+        "artifacts/user-smoke/__SLICE_NAME__-result.json",
         "__PROJECT_SRC__/__SLICE_MODULE__.py",
         "tests/test___SLICE_MODULE__.py"
       ],
@@ -502,6 +513,7 @@
     {
       "step_id": "step_10_closeout_handoff_docs",
       "name": "Close out the sprint and handoff docs",
+      "role": "implementation_worker",
       "mission": "Before writing, read AGENTS.md and skills/documentation.md, then follow them. Update context.md, result-review.md, sprint-plan.md, and WHERE_AM_I.md for handoff after the review artifacts exist. The handoff must honestly reflect the review verdict — a semantic judge checks the closeout against the verdict artifact and fails this step when they contradict. Record any stable architecture decision in architecture.md if needed. Keep all writes within context.md, result-review.md, sprint-plan.md, WHERE_AM_I.md, and architecture.md.",
       "inputs": [
         "AGENTS.md",
@@ -559,7 +571,7 @@
             "path": "context.md",
             "question": "Does the updated handoff state in context.md accurately and honestly describe the delivered slice as recorded in the reference review verdict, without contradicting the verdict, omitting its gating findings, or claiming verification results the verdict does not support?",
             "reference_path": "code-reviews/review-__SLICE_NAME__.verdict.json",
-            "judge_harness": "__JUDGE_HARNESS__"
+            "judge_harness": "pi_cli"
           }
         ]
       },

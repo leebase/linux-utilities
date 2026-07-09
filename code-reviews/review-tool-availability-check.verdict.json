@@ -1,0 +1,98 @@
+{
+  "$schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "severity_threshold": "High",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "Low",
+      "file": "scripts/check_tools.py",
+      "location": "_print_success (lines 105-111)",
+      "problem": "_print_success accepts Sequence[HarnessProbeResult] and formats result.executable and result.path unconditionally. Both fields are typed str | None on HarnessProbeResult. The function is only called from main() after verifying the missing list is empty, so the values are always non-None in practice. However, the function signature provides no guard; a future caller passing an unavailable result would silently print 'None' for the executable and path fields without any type error or runtime assertion.",
+      "proposed_fix": "Add an assertion or filter to _print_success so it only processes results where available is True, or narrow the input type to a type that guarantees executable and path are str rather than str | None."
+    },
+    {
+      "id": "F002",
+      "severity": "Low",
+      "file": "tests/test_check_tools.py",
+      "location": "test_missing_codex_cli_reports_only_stderr_failure (line 91), test_missing_claude_code_reports_required_harness (line 104)",
+      "problem": "The individual partial-failure tests check that stdout does not contain 'all required' but do not assert result.stdout == ''. The strict guarantee that stdout is empty on any failure path is only fully verified in test_cli_streams_keep_success_on_stdout_and_failures_on_stderr. The per-harness tests would pass even if the script wrote a partial 'available:' line for the harness that was found.",
+      "proposed_fix": "Add assert result.stdout == '' to test_missing_codex_cli_reports_only_stderr_failure and test_missing_claude_code_reports_required_harness so each partial-failure case independently verifies the empty-stdout contract."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall scripts/check_tools.py",
+      "exit_code": 0,
+      "summary": "Python byte-compilation succeeded with no syntax errors."
+    },
+    {
+      "command": "python3 -m compileall tests/test_check_tools.py",
+      "exit_code": 0,
+      "summary": "Python byte-compilation succeeded with no syntax errors."
+    },
+    {
+      "command": "python3 -m pytest tests/test_check_tools.py -v",
+      "exit_code": 0,
+      "summary": "9/9 tests collected and passed against the completed implementation."
+    },
+    {
+      "command": "python3 -m compileall scripts tests",
+      "exit_code": 0,
+      "summary": "Full compile of scripts and tests directories succeeded."
+    },
+    {
+      "command": "python3 -m pytest -v",
+      "exit_code": 0,
+      "summary": "26/26 tests passed: 9 from test_check_tools.py and 17 from test_sysdiff.py. No regressions."
+    },
+    {
+      "command": "python3 -m ruff check scripts/check_tools.py tests/test_check_tools.py",
+      "exit_code": 0,
+      "summary": "All ruff lint checks passed."
+    },
+    {
+      "command": "python3 -m black --check scripts/check_tools.py tests/test_check_tools.py",
+      "exit_code": 0,
+      "summary": "Both files match black formatting; no changes needed."
+    },
+    {
+      "command": "mypy scripts/check_tools.py",
+      "exit_code": 0,
+      "summary": "No type errors found in 1 source file."
+    }
+  ],
+  "environment_limitations": [
+    {
+      "tool": "flake8",
+      "status": "not installed",
+      "detail": "python3 -m flake8 exits 1 with 'No module named flake8' in the current venv. ruff covers equivalent lint checks and passes. This is an environment gap, not a product defect."
+    }
+  ],
+  "lenses": {
+    "correctness": {
+      "finding_ids": ["F001"],
+      "justification": "All contract acceptance checks pass. Probe accumulation collects every result before reporting. Exit codes 0/1/2 are correct: 0 for all available, 1 for any missing, and 2 via argparse on usage error. Stdout/stderr discipline is maintained: success writes to stdout only, failure writes to stderr only and keeps stdout empty. F001 is a fragility in _print_success that could produce 'None' output if called incorrectly, but no bug exists on the current code path."
+    },
+    "read-only-safety": {
+      "finding_ids": [],
+      "justification": "The script imports no subprocess, no network client, and no write-mode file API. shutil.which is the only external call. The read-only guard test patches six categories of dangerous calls and asserts none are triggered. No playbook edits, model session invocations, package manager calls, or network connections are present."
+    },
+    "test-adequacy": {
+      "finding_ids": ["F002"],
+      "justification": "All 9 plan-specified test cases are implemented and pass. The read-only guard, stream cleanliness, diagnostic framing, probe accumulation, and module-API tests are all present and thorough. F002 is a minor per-case isolation gap in the partial-failure tests: they check for the absence of 'all required' in stdout but do not assert stdout is empty, leaving a scenario where a partial 'available:' line would go undetected by those individual tests."
+    },
+    "api-contract": {
+      "finding_ids": [],
+      "justification": "DEFAULT_HARNESSES, probe_harnesses, main, HarnessRequirement, and HarnessProbeResult all match the plan specification exactly. main returns int rather than calling sys.exit, making it directly testable. Frozen dataclasses keep probe results immutable. The HarnessProbeResult.name property enables test helpers to resolve the harness name without coupling to internal structure."
+    },
+    "documentation": {
+      "finding_ids": [],
+      "justification": "docs/tool-availability-check.md covers all required topics: usage, default harness table, successful output, failure output, exit status table, and scope. Non-goals are explicitly stated. README section is accurate and points to the dedicated doc. No prohibited promises (model sessions, package installation, network access, sysdiff behavior, automatic route repair) appear in any documentation file."
+    },
+    "scope-adherence": {
+      "finding_ids": [],
+      "justification": "No sysdiff C code is touched. No Agent-Orch processes are launched. No fallback routing, playbook rewriting, live system capture, or host-state probing beyond PATH-based executable discovery is performed. The implementation is purely advisory infrastructure validation."
+    }
+  }
+}

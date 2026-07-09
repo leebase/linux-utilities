@@ -6,3 +6,4 @@ BIN="$ROOT/build/sysdiff"
 
 "$BIN" --help | grep -q "usage: sysdiff"
 "$BIN" --version | grep -q "sysdiff 0.1.0"
+"$ROOT/tests/test_sysdiff_fixture.sh"

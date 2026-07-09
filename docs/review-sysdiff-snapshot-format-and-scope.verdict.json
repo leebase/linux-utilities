@@ -1,0 +1,71 @@
+{
+  "schema_path": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "findings": [
+    {
+      "id": "F-001",
+      "severity": "Medium",
+      "file": "docs/sysdiff-snapshot-format-and-scope.md",
+      "location": "Security Constraints — Content handling",
+      "problem": "Key syntax validation rules (disallowed bytes, `..` segment, leading `/`, trailing `.`, spaces, tabs) are defined in the Key Syntax section but are not cross-referenced in Security Constraints. An implementation worker reading only the security section would miss the requirement to reject invalid keys.",
+      "proposed_fix": "Add a 'Key validation' bullet to the Content handling sub-section of Security Constraints stating that keys failing the Key Syntax rules must be rejected with exit status 2 and a contextual diagnostic to stderr."
+    },
+    {
+      "id": "F-002",
+      "severity": "Medium",
+      "file": "docs/sysdiff-snapshot-format-and-scope.md",
+      "location": "Key Syntax — Valid format 1 keys bullet list",
+      "problem": "The rule 'Must not contain `..` as a path traversal segment' is ambiguous. 'Path traversal segment' is undefined; it is unclear whether the rule applies to the literal substring `..` anywhere in the key, or only to `..` as a complete dot-delimited field, or only to a leading `..` prefix. Implementations will diverge on keys such as `foo..bar` or `a...b`.",
+      "proposed_fix": "Replace the bullet with an unambiguous rule, for example: 'Must not contain two consecutive `.` bytes (i.e., `..` anywhere in the key is invalid).' Optionally add an example invalid key such as `file.../etc/passwd.sha256`."
+    },
+    {
+      "id": "F-003",
+      "severity": "Medium",
+      "file": "docs/sysdiff-snapshot-format-and-scope.md",
+      "location": "Acceptance Checks — Format parsing",
+      "problem": "The acceptance check 'Reject a key with bytes outside the valid key syntax' is present, but no named fixture tests exist for individual key syntax rejection cases most likely to be missed: a key containing `..`, a key starting with `/`, a key ending with `.`, a key with no `.` separator, and a key containing a space or tab. Without these items, implementation workers may cover subsets of the rules inconsistently.",
+      "proposed_fix": "Expand the Format parsing acceptance checks with individual fixture-backed entries for each key syntax rejection case: (1) key containing `..`, (2) key starting with `/`, (3) key ending with `.`, (4) key with no `.` separator, (5) key containing a space character."
+    },
+    {
+      "id": "F-004",
+      "severity": "Low",
+      "file": "docs/sysdiff-snapshot-format-and-scope.md",
+      "location": "Snapshot Format — example block",
+      "problem": "The snapshot format example opens with the comment `# sysdiff snapshot v1` immediately above the data record `sysdiff.snapshot_version=1`. A reader skimming the example may conflate the comment with a required magic header or overlook that the comment is ignored and only the data record is machine-readable.",
+      "proposed_fix": "Annotate the example to clarify that the comment is optional human-readable prose while `sysdiff.snapshot_version=1` is the machine-readable version indicator. Alternatively, place the version record first in the example and move the comment below it."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall .agent-orch docs scripts tests",
+      "exit_code": 0,
+      "summary": "No Python source files found in the listed paths; tool completed without errors. (Smoke result for scripts/smoke.sh was reviewed as reference evidence; exit code was 0 on attempt 2.)"
+    }
+  ],
+  "lenses": {
+    "security": {
+      "finding_ids": ["F-001"],
+      "justification": "Key syntax validation rules are present in the format section but absent from Security Constraints, creating a risk that an implementer satisfies the security checklist without enforcing key validity. All other path and content handling security requirements are clearly stated and consistent with the implementation."
+    },
+    "format-clarity": {
+      "finding_ids": ["F-002", "F-004"],
+      "justification": "The `..` path-traversal-segment rule is underspecified and will produce divergent implementations. The example snapshot may confuse readers about the distinction between a comment and the machine-readable version record."
+    },
+    "test-coverage": {
+      "finding_ids": ["F-003"],
+      "justification": "Acceptance checks cover comparison behavior, exit statuses, and stdout-empty-on-error requirements thoroughly, but individual key syntax rejection fixtures are not enumerated, leaving room for partial coverage by implementation workers."
+    },
+    "correctness": {
+      "finding_ids": [],
+      "justification": "All output format rules, exit status mappings, CRLF stripping, duplicate-key detection, bytewise sort, and stdout/stderr routing were verified against the implementation and are consistent. No correctness defects found in the documentation."
+    },
+    "implementability": {
+      "finding_ids": [],
+      "justification": "The format rules are sufficiently precise to implement: explicit character allowlist for keys, first-`=` record syntax, exact output prefixes, bytewise sort contract, and explicit non-goals. No unresolvable ambiguities block a complete implementation."
+    },
+    "mission-alignment": {
+      "finding_ids": [],
+      "justification": "The document is consistent with AGENTS.md constraints: no added runtime dependencies, no networking or telemetry, auditable scope, explicit non-goals preventing premature scope creep, and plain-text format with no persistence in this slice."
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "verdict": "fail",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "High",
+      "file": "tests/test_sysdiff.sh",
+      "location": "entire file (Makefile line 13)",
+      "problem": "tests/test_sysdiff.sh does not invoke tests/test_sysdiff_fixture.sh. The Makefile test target runs only tests/test_sysdiff.sh, and the smoke oracle delegates to make test. As a result, ./scripts/smoke.sh reports pass while all fixture comparison tests — exact diff output, error exits, partial-output prevention, malformed input, and duplicate-key detection — are never exercised by any governed quality gate.",
+      "proposed_fix": "Append the line '\"$ROOT/tests/test_sysdiff_fixture.sh\"' at the end of tests/test_sysdiff.sh so that make test and ./scripts/smoke.sh automatically cover the fixture slice."
+    },
+    {
+      "id": "F002",
+      "severity": "Low",
+      "file": "src/sysdiff.c",
+      "location": "copy_range, line 38",
+      "problem": "The guard 'if (len == (size_t)-1) return NULL' is unreachable dead code. Both call sites derive len from bounded line-buffer sizes that cannot reach SIZE_MAX. The guard misleads readers into thinking callers may pass SIZE_MAX as a sentinel, and makes allocation-failure NULL indistinguishable from sentinel-triggered NULL.",
+      "proposed_fix": "Remove the guard. If a defensive check is desired, replace it with an assert or a comment explaining the invariant that prevents SIZE_MAX from being passed."
+    },
+    {
+      "id": "F003",
+      "severity": "Low",
+      "file": "tests/test_sysdiff_fixture.sh",
+      "location": "line 152",
+      "problem": "The wrong-argument-count test covers only the too-few case ('sysdiff compare \"$before\"', argc=3). The too-many case ('sysdiff compare a b c d', argc=5) is not tested. Both are caught by the same 'argc != 4' branch, so coverage is partial.",
+      "proposed_fix": "Add 'run_status 2 \"$stdout\" \"$stderr\" \"$BIN\" compare a b c d' after the existing wrong-argument-count test, and assert stdout is empty and stderr is non-empty."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall scripts",
+      "exit_code": 0,
+      "summary": "The scripts/ directory contains only shell scripts; no Python source files are present. compileall found nothing to compile and exited cleanly."
+    }
+  ],
+  "lenses": {
+    "correctness": {
+      "finding_ids": ["F001"],
+      "justification": "All logic in src/sysdiff.c is correct: exit codes, diff format strings, 'no changes' output, CRLF stripping, sorted merge walk, partial-output prevention, NUL byte rejection, empty value handling, duplicate detection, and line number reporting all match the contract. The High finding is that no automated gate validates this correctness because the fixture tests are never run by make test or the smoke oracle."
+    },
+    "security": {
+      "justification": "No vulnerabilities found. All fprintf/printf calls use fixed format strings; user-controlled strings are always printf %s arguments. fopen uses binary mode. NUL byte rejection prevents embedded NUL from corrupting C-string key/value comparisons. Dynamic line growth uses realloc with overflow guards; no fixed-size stack buffer is used for line content."
+    },
+    "memory-ownership": {
+      "finding_ids": ["F002"],
+      "justification": "All allocation paths are correctly paired with free calls. snapshot_free is called on every error return in parse_snapshot. copy_range failure is handled before ownership transfer. snapshot_append false return leaves key and value with the caller, which frees them. The Low finding is a dead guard in copy_range that does not cause a leak but obscures ownership intent."
+    },
+    "undefined-behavior": {
+      "justification": "No undefined behavior found. (char)ch cast is safe because ch is confirmed in [1,255] before the cast, and strcmp uses unsigned char semantics per C17 7.24.4.2. Pointer arithmetic (separator - line) is a positive ptrdiff_t safely cast to size_t. size_t subtraction (cap - len) maintains the invariant len <= cap. Multiplication overflows in snapshot_append and read_line are caught by explicit guards before use."
+    },
+    "cli-behavior": {
+      "justification": "All documented CLI forms produce the correct exit codes, stdout, and stderr behavior. argc == 1, --help, --version, compare with correct args, compare with wrong arg count, and unknown command all match the contract. Minor: --help with extra arguments produces a confusing 'unknown command: --help' message, but this is not a contract violation."
+    },
+    "maintainability": {
+      "finding_ids": ["F002"],
+      "justification": "Static helper boundaries (parse_snapshot, emit_diff, compare_snapshots) match the separability direction in architecture.md. No unnecessary abstractions or global mutable state. The Low finding (dead guard in copy_range) lightly obscures the function's contract and should be removed."
+    },
+    "test-adequacy": {
+      "finding_ids": ["F001", "F003"],
+      "justification": "The test_sysdiff_fixture.sh script itself provides solid coverage of all acceptance checks: changed and identical comparisons with exact stdout, all error exits with empty stdout and non-empty contextual stderr, comments/blank lines, empty values, and input-order independence. The High gap is that this script is never run by make test or the smoke oracle. The Low gap is that the wrong-argument-count test covers only argc=3, not argc>=5."
+    }
+  }
+}

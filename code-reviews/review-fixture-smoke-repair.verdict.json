@@ -1,0 +1,44 @@
+{
+  "schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "findings": [],
+  "checks_run": [
+    {
+      "command": "python3 -m pytest tests/ -x -q",
+      "exit_code": 0,
+      "summary": "26 tests pass; no failures or errors"
+    },
+    {
+      "command": "python3 -m compileall tests/",
+      "exit_code": 0,
+      "summary": "All Python files under tests/ compile without error"
+    },
+    {
+      "command": "BLACK_NUM_WORKERS=1 python3 -m black --check --workers 1 tests/check_sysdiff_smoke.py tests/smoke_start.py",
+      "exit_code": 0,
+      "summary": "Both reviewed Python files are properly formatted"
+    }
+  ],
+  "lenses": {
+    "repair_verification": {
+      "finding_ids": [],
+      "justification": "Prior F-001 (Medium) is resolved: line 146 now uses assert_file_equals instead of assert_sorted_file_equals; assert_sorted_file_equals has been removed entirely. Prior F-002 (Low) is resolved: assert_diff_prefixes now validates the full line format with specific ERE patterns for added/removed lines (^[\\+\\-]\\ [A-Za-z0-9._/-]+=.*$) and changed lines (^~\\ [A-Za-z0-9._/-]+:\\ .*\\ ->\\  .*$), not merely the leading prefix character. No new Critical or High findings were introduced by the repair."
+    },
+    "correctness": {
+      "finding_ids": [],
+      "justification": "assert_file_equals performs exact byte-for-byte comparison against the pre-sorted golden heredoc, enforcing the deterministic-ordering contract. All 12 test paths (changed/added/removed keys, empty values, space-containing values, comment/blank-line filtering, identical snapshots, missing file, usage error, unknown command, malformed input, duplicate key) are exercised with correct exit-status, stdout, and stderr assertions. The ERE character class [A-Za-z0-9._/-] places - at the end, making it literal; \\> in the changed-line pattern is evaluated as literal > in bash ERE. No correctness issues found."
+    },
+    "coverage": {
+      "finding_ids": [],
+      "justification": "All acceptance checks listed in the sysdiff fixture slice contract are present and unmodified by the repair. The specific regex patterns in assert_diff_prefixes close the prior F-002 secondary-check gap. One pre-existing Low cosmetic gap remains: error-path stderr assertions use assert_contains rather than exact match, but this was present before the repair and is consistent across all error paths."
+    },
+    "determinism": {
+      "finding_ids": [],
+      "justification": "All fixture data is defined via inline heredocs with no external files or environment-dependent inputs. LC_ALL=C is exported, ensuring locale-independent behaviour. WORKDIR is a mktemp directory cleaned on EXIT/HUP/INT/TERM. No timestamps, PIDs, or random values appear in any assertion. The test is fully deterministic."
+    },
+    "allowed_paths": {
+      "finding_ids": [],
+      "justification": "Both files are untracked additions (git status: ??) inside tests/. No tracked files outside tests/ were modified. All four paths referenced in smoke_manifest.json steps (tests/smoke_start.py, scripts/smoke.sh, tests/test_sysdiff_fixture.sh, tests/check_sysdiff_smoke.py) were confirmed present by path-resolution check."
+    }
+  }
+}

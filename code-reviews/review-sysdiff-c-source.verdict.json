@@ -1,0 +1,94 @@
+{
+  "$schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "severity_threshold": "High",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "Medium",
+      "file": "tests/test_sysdiff.py",
+      "location": "(missing tests)",
+      "problem": "Two contract acceptance checks have no test coverage: (1) CRLF-terminated snapshots must compare identically to LF-terminated snapshots — the stripping logic exists (src/sysdiff.c:248-253) and appears correct but is unverified by any fixture; (2) a snapshot line exceeding SYSDIFF_MAX_LINE_BYTES and a snapshot exceeding SYSDIFF_MAX_SNAPSHOT_ENTRIES must each return exit 2 with empty stdout and a contextual diagnostic — no test exercises either limit path.",
+      "proposed_fix": "Add test_crlf_snapshots_compare_identically_to_lf that writes the same logical snapshot content with \\r\\n and \\n endings and asserts identical diff output. Add test_line_too_long_fails and test_too_many_entries_fails that generate inputs at the boundary and assert exit 2, empty stdout, and a stderr fragment naming the exceeded limit."
+    },
+    {
+      "id": "F002",
+      "severity": "Low",
+      "file": "src/sysdiff.c",
+      "location": "read_line, line 89",
+      "problem": "CRLF-terminated lines can have at most SYSDIFF_MAX_LINE_BYTES - 1 data bytes while LF-terminated lines can have exactly SYSDIFF_MAX_LINE_BYTES. The check `ch != '\\n' && len >= SYSDIFF_MAX_LINE_BYTES` exempts '\\n' from the limit guard but not '\\r'. A CRLF line with N data bytes has len == N when '\\r' is read; at N == SYSDIFF_MAX_LINE_BYTES the guard triggers LINE_TOO_LONG. The diagnostic prints 'maximum 65536 bytes' but the effective maximum for CRLF files is 65535 data bytes.",
+      "proposed_fix": "Extend the guard to also exempt '\\r' when a following '\\n' is expected, or document the 1-byte discrepancy in the limit comment and the README."
+    },
+    {
+      "id": "F003",
+      "severity": "Medium",
+      "file": "Makefile",
+      "location": "valgrind-test target (line 47)",
+      "problem": "The valgrind-test target depends on build/sysdiff but does not rebuild it. If make sanitizer-test has already run (which performs make clean and rebuilds with -fsanitize=address,undefined), the binary left in build/ is an ASan-instrumented binary. Running make valgrind-test directly after make sanitizer-test causes valgrind to abort with a shadow-memory range conflict. The make-quality aggregate target avoids this by inserting a clean GCC rebuild between sanitizer-test and valgrind-test, but standalone invocation of make valgrind-test is unreliable.",
+      "proposed_fix": "Add an explicit prerequisite that rebuilds build/sysdiff without sanitizers before valgrind runs, or document clearly that valgrind-test must only be invoked via make-quality or after a fresh clean non-sanitized build."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall src/ tests/",
+      "exit_code": 0,
+      "summary": "All Python source files byte-compiled with no syntax errors."
+    },
+    {
+      "command": "make clean && make CC=gcc",
+      "exit_code": 0,
+      "summary": "GCC strict build passed with -std=c17 -Wall -Wextra -Wpedantic -Werror -O2; zero warnings."
+    },
+    {
+      "command": "make clean && make CC=clang",
+      "exit_code": 0,
+      "summary": "Clang strict build passed with same flags; zero warnings."
+    },
+    {
+      "command": "make test",
+      "exit_code": 0,
+      "summary": "Shell fixture (test_sysdiff.sh -> test_sysdiff_fixture.sh) passed all scenarios."
+    },
+    {
+      "command": "python3 -m pytest tests/test_sysdiff.py -v",
+      "exit_code": 0,
+      "summary": "17 tests collected and passed; fixture compiles from source with strict flags."
+    },
+    {
+      "command": "make sanitizer-test",
+      "exit_code": 0,
+      "summary": "ASan+UBSan build with clang ran shell fixture clean; no memory or UB errors."
+    },
+    {
+      "command": "make clean && make CC=gcc && make valgrind-test",
+      "exit_code": 0,
+      "summary": "Valgrind --leak-check=full reported no memory errors against clean non-sanitized binary."
+    }
+  ],
+  "lenses": {
+    "correctness": {
+      "finding_ids": [],
+      "justification": "All documented behaviors verified: exit codes 0/1/2, output formats for added/removed/changed/no-change, sorted merge walk, partial-output prevention on both before and after parse errors, empty-value round-trip, comment and blank-line skipping, duplicate-key detection, embedded-NUL rejection. No correctness bugs found."
+    },
+    "security": {
+      "finding_ids": [],
+      "justification": "All fprintf/fputs format strings are compile-time literals. fopen uses binary mode. Embedded NUL bytes are detected before strchr or strcmp. file.* keys are treated as opaque data and never opened as filesystem paths. copy_range guards len+1 overflow before malloc. Line buffer growth guards overflow at cap*2 and SIZE_MAX/sizeof(char)."
+    },
+    "memory-ownership": {
+      "finding_ids": [],
+      "justification": "goto cleanup pattern makes ownership explicit: parse_snapshot owns snapshot resources until it returns 0. snapshot_free zeroes fields making double-calls safe. All allocation paths pair correctly with free. read_line frees its buffer on every error return. fclose failure path sets file=NULL before goto cleanup to prevent double-close. No leaks or double-frees found."
+    },
+    "resource-limits": {
+      "finding_ids": ["F002"],
+      "justification": "SYSDIFF_MAX_LINE_BYTES and SYSDIFF_MAX_SNAPSHOT_ENTRIES are defined and enforced with contextual diagnostics. The Low finding is a 1-byte discrepancy between CRLF and LF lines at the boundary of the line limit."
+    },
+    "test-adequacy": {
+      "finding_ids": ["F001"],
+      "justification": "17 pytest cases cover all key-syntax rejection cases, output format variants, input-order determinism, error isolation, directory/missing-file errors, and embedded NUL rejection. Missing: CRLF equivalence fixture, line-length limit rejection test, entry-count limit rejection test — all explicitly required by contract acceptance checks."
+    },
+    "build-and-toolchain": {
+      "finding_ids": ["F003"],
+      "justification": "GCC and Clang strict builds pass. Sanitizer coverage is available via make sanitizer-test with graceful skip when clang is absent. Valgrind coverage is available via make-quality or a manual clean build sequence. Standalone make valgrind-test after make sanitizer-test is broken due to the ASan binary being left in build/."
+    }
+  }
+}

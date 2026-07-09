@@ -1,4 +1,12 @@
 build/
+.agent-orch-scratch/
+.agent-orch/user-smoke/
+artifacts/
+__pycache__/
+*/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.o
 *.a
 *.so
