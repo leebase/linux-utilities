@@ -1,38 +1,67 @@
 # v0.1.0 Release Review
 
-Reviewed on 2026-07-10 for the public release candidate.
+Reviewed on 2026-07-10 as the final pre-publication audit of the local release
+candidate.
 
-## Scope reviewed
+## Scope
 
-- `src/sysdiff.c`: parsing, bounds checks, ownership, deterministic merge, and
-  diagnostics.
-- `Makefile`: strict compilers, static analysis, sanitizers, Valgrind, and test
-  composition.
-- Shell fixtures, pytest coverage, and smoke scripts.
-- User-facing documentation, snapshot specification, decisions, contribution
-  guidance, license placeholder, changelog, and Ubuntu CI.
+- `src/sysdiff.c`: command dispatch, untrusted-input parsing, ownership,
+  integer and resource bounds, deterministic comparison, terminal-safe
+  rendering, diagnostics, and output-failure handling.
+- `Makefile`, shell fixtures, pytest, sanitizers, static analyzers, and
+  Valgrind composition.
+- README, format specification, decisions, design, release notes, license,
+  contribution/security guidance, AI-development disclosure, and Ubuntu CI.
+- Public-seed curation: no private orchestration state, raw run artifacts,
+  caches, build output, old review transcripts, or copied Git history.
 
-## Result
+## Adversarial findings and repairs
 
-No Medium-or-higher findings remain after the release repairs. The previous
-portable-compiler and smoke-start findings are verified resolved: pytest uses
-`$CC` with `cc` fallback, and the smoke start helper exits immediately. The
-previous whitespace-only-line contract mismatch is resolved by accepting
-space/tab-only lines as blank. The unreachable `copy_range` `SIZE_MAX` guard
-was removed; bounded input is enforced by the documented line limit and the
-real allocation-growth overflow guards remain in place.
+The last-stop review initially rejected publication with five Medium findings:
 
-## Accepted Low limitation
+1. raw terminal-control bytes from untrusted values;
+2. successful exit despite stdout failure (`/dev/full`);
+3. aggregate inputs capable of multi-gigabyte memory pressure;
+4. Valgrind and cppcheck gates that could miss findings; and
+5. stale and contradictory public documentation.
 
-Changed output is intentionally human-readable rather than reversible. A value
-containing ` -> ` makes the displayed old/new boundary ambiguous to a parser.
-Values remain opaque and this is documented in the changelog and decisions;
-format `1` consumers should treat changed lines as display output, not a data
-interchange format.
+All were repaired and regression-tested. Values and user-controlled diagnostic
+text now render as printable ASCII with deterministic escaping. Every snapshot
+has a 16 MiB total-byte cap in addition to line and entry caps. Stdio failures,
+including closed Linux/POSIX pipes, return status `2`. Valgrind uses reserved
+status `99` and fails on any non-empty error log; cppcheck findings now fail the
+build. Public contracts and build instructions match the implementation.
+
+Subsequent review iterations fixed C/POSIX details found by the strengthened
+gates, including format-argument typing, byte-limit/NUL precedence, SIGPIPE
+handling, and removal of unnecessary feature-test coupling. ASan leak detection
+is enabled rather than suppressed.
+
+## Verdict
+
+No known Medium-or-higher finding remains in the local release candidate. It is
+ready to become a public repository. Do not tag or publish the GitHub release
+until the newly created repository's first Ubuntu Actions run has completed
+successfully; that external CI run cannot exist before the remote exists.
+
+## Accepted Low limitations
+
+- Changed output is human-readable, not a reversible interchange format. A
+  value containing ` -> ` makes the displayed old/new boundary ambiguous.
+- Version 0.1.0 is Linux-focused and CI covers Ubuntu, not a distribution or
+  architecture matrix.
+- Packaging is source-first: there is no install target, package, or man page
+  in 0.1.0.
+- `sysdiff` compares explicit snapshots only; it does not collect live system
+  state.
 
 ## Evidence
 
-On Linux, `make quality` passed after this review. It runs GCC and Clang strict
-checks, formatting, clang-tidy, cppcheck, shell fixtures, pytest, ASan, UBSan,
-and Valgrind. The CI workflow installs the declared tools on Ubuntu and runs
-the same canonical command.
+The canonical local Linux gate is `make quality`: strict GCC and Clang,
+clang-format, clang-tidy with warnings as errors, cppcheck with a failing error
+status, shell fixtures, pytest, ASan plus LeakSanitizer, UBSan, and Valgrind.
+The curated public suite contains 32 passing product tests. (The governed source
+repository also runs nine internal infrastructure tests; those are deliberately
+absent from the public seed.) Ubuntu CI installs the declared tools and runs
+exactly the same command; `actions/checkout` is pinned to the official immutable
+v4 tag SHA.

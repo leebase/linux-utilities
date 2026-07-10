@@ -5,11 +5,7 @@
 This document is the durable contract for the first release-oriented `sysdiff`
 slice. It defines the explicit snapshot file format, deterministic comparison
 rules, initial resource scope, non-goals, compatibility expectations, security
-constraints, and acceptance checks.
-
-This slice is documentation-only. It describes behavior for an implementation
-worker to build against; it does not require source, tests, scripts, Makefile,
-or playbook changes in this step.
+constraints, and acceptance checks for `sysdiff` 0.1.0.
 
 ## Release Slice
 
@@ -159,6 +155,18 @@ For each key in sorted order:
 
 All comparison output goes to stdout. All diagnostics go to stderr.
 
+Snapshot bytes remain opaque for comparison. Keys render unchanged. Every value
+byte is rendered for display as printable ASCII:
+
+- bytes `0x20` through `0x7e` except backslash render literally;
+- backslash renders as `\\`;
+- every other byte renders as uppercase `\xNN`.
+
+The same escaping applies to every user-controlled command argument or path
+printed in diagnostics. Trusted fixed diagnostic text and `strerror` messages
+may print normally. No raw ESC, control, DEL, or non-ASCII byte from a
+snapshot value, path, or unknown command may reach stdout or stderr.
+
 For removed records:
 
 ```text
@@ -193,10 +201,16 @@ sequences, or explanatory prose.
   command such as `--help` or `--version` succeeded.
 - `1`: `compare` succeeded and at least one difference was found.
 - `2`: usage error, file I/O error, malformed snapshot, duplicate key,
-  allocation failure, unsafe input, or other runtime error.
+  allocation failure, resource-limit violation, stdout write/flush failure,
+  unsafe input, or other runtime error.
 
-On exit status `2`, stdout must be empty for `compare` failures. Stderr must
-include enough context to identify the failed argument, path, line, or key.
+On exit status `2` for validation failures, stdout must be empty for `compare`.
+Stderr must include enough context to identify the failed argument, path, line,
+or key. A stdout write or flush failure on compare or informational output
+returns `2` with a contextual `stdout write error: <strerror>` diagnostic
+(`EIO` when errno is unset) and may leave partial stdout. On Linux, `SIGPIPE`
+is ignored so a closed stdout pipe follows that same failure path as `EPIPE`
+rather than terminating the process.
 
 ## Initial Scope
 
@@ -298,8 +312,8 @@ Path handling:
 - Do not recursively walk directories.
 - If a supplied path names a directory or unreadable file, fail with exit status
   `2`.
-- Diagnostics may include the supplied path, but must not emit terminal escape
-  sequences intentionally.
+- Diagnostics may include the supplied path after safe byte escaping, and must
+  not emit raw terminal escape sequences from untrusted input.
 
 Content handling:
 
@@ -310,22 +324,31 @@ Content handling:
 - Do not use fixed-size input buffers in a way that permits truncation to be
   mistaken for valid data.
 - Do not write partial diff output if either snapshot is invalid.
+- Detect stdout write and flush failures on compare and informational paths;
+  return status `2` with `stdout write error: <strerror>` (`EIO` when errno is
+  unset). Partial stdout is allowed only for that failure class. On Linux,
+  ignore `SIGPIPE` so a closed stdout pipe becomes `EPIPE`.
 - Do not treat `file.` keys as filesystem paths to inspect.
 - Do not interpret values as commands, regular expressions, format strings, or
   paths to open.
+- Escape untrusted value and path bytes for display as documented above,
+  including non-ASCII path bytes such as `0xFF`.
 
 Resource limits:
 
-- Implementations may impose documented maximums for line length, key length,
-  value length, record count, and total input bytes.
-- If a maximum is exceeded, the command must fail with exit status `2`.
-- Limits must be deterministic and must fail closed; they must not produce a
-  partial comparison.
+- Maximum line length: 65,536 bytes after line-ending removal considerations
+  documented by the implementation (`SYSDIFF_MAX_LINE_BYTES`).
+- Maximum entries per snapshot: 65,536 (`SYSDIFF_MAX_SNAPSHOT_ENTRIES`).
+- Maximum total bytes read per snapshot input: 16,777,216
+  (`SYSDIFF_MAX_SNAPSHOT_BYTES`), counting every byte including newlines,
+  comments, and blank lines, without integer overflow.
+- If a maximum is exceeded, the command must fail with exit status `2`, empty
+  stdout, and a contextual diagnostic. Limits must be deterministic and must
+  fail closed; they must not produce a partial comparison.
 
 ## Acceptance Checks
 
-A later implementation worker must provide fixture-backed checks for all items
-in this section.
+Fixture-backed checks must cover all items in this section.
 
 Format parsing:
 
@@ -335,7 +358,7 @@ Format parsing:
   comments.
 - Accept a final record without trailing newline.
 - Accept an empty value such as `service.ssh.active=`.
-- Preserve spaces, `#`, and extra `=` bytes inside values.
+- Preserve spaces, `#`, and extra `=` bytes inside values for comparison.
 - Reject a line with no `=`.
 - Reject an empty key.
 - Reject a key with bytes outside the valid key syntax.
@@ -349,14 +372,29 @@ Comparison behavior:
 - Print exactly `no changes\n` for identical snapshots.
 - Return `0` for identical snapshots.
 - Return `1` for changed snapshots.
-- Return `2` for usage, file, parse, duplicate-key, and unsafe-input errors.
-- Keep stdout empty on `compare` errors.
+- Return `2` for usage, file, parse, duplicate-key, limit, write-error, and
+  unsafe-input errors.
+- Keep stdout empty on `compare` validation errors.
+- Escape ESC, tab, CR, backslash, DEL, and non-ASCII value bytes in diff
+  output; verify exact escaped forms and absence of raw unsafe bytes.
+- Escape ESC in unknown-command or path diagnostics, and escape a path
+  containing raw `0xFF` as `\xFF` with no raw byte on stderr.
+- On Linux, redirecting no-argument usage, `--help`, `--version`, or a
+  successful comparison to `/dev/full` returns `2` with a
+  `stdout write error: <strerror>` diagnostic.
+- On Linux, closing the read end of a pipe before connecting sysdiff stdout to
+  the write end returns `2` with an EPIPE/broken-pipe `stdout write error`
+  diagnostic for at least one informational path and one comparison path, with
+  no signal termination.
+- Reject inputs at one byte over the 16 MiB total-byte limit, including
+  comment/blank-only over-limit files and a NUL as byte 16,777,217 (byte-limit,
+  not embedded-NUL); accept inputs at exactly the limit.
 
 Determinism:
 
 - Prove that different input order produces identical diff output.
 - Prove that output is sorted by bytewise key order.
-- Prove that comments and blank lines do not affect output.
+- Prove that comments and blank lines do not affect comparison results.
 - Prove that host locale and timezone are not required by the tests.
 - Prove that acceptance fixtures cover `os.`, `kernel.`, `package.`,
   `service.`, `file.`, and `sysdiff.` keys.
@@ -378,3 +416,4 @@ Documentation consistency:
 - Architecture documentation preserves the separation between parsing,
   comparison, and output formatting.
 - No documentation for this slice promises live system capture.
+- Build docs describe `make`, `make test`, and `make quality` accurately.

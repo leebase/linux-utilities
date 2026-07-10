@@ -30,14 +30,22 @@ identity.
 ### Validate Before Output
 
 Both snapshots must be fully opened, read, parsed, validated, sorted, and
-checked for duplicate keys before diff output is written. Compare failures use
-exit status `2` and leave stdout empty.
+checked for duplicate keys before diff output is written. Compare validation
+failures use exit status `2` and leave stdout empty. Stdout write or flush
+failures also use status `2` with a `stdout write error: <strerror>` diagnostic
+(`EIO` when errno is unset) and may leave partial stdout. Informational stdout
+paths (`--help`, `--version`, and no-argument usage) use the same rule. On
+Linux, `SIGPIPE` is ignored so a closed stdout pipe becomes `EPIPE` instead of
+process termination.
 
-### Opaque Values
+### Opaque Values With Safe Display Escaping
 
 Values are compared byte-for-byte. `sysdiff` does not normalize versions,
 paths, booleans, whitespace, Unicode, timestamps, package names, or service
-states.
+states. Display rendering escapes non-printable and non-ASCII value bytes, and
+the same escaping applies to user-controlled paths and command arguments in
+diagnostics. Trusted fixed diagnostic text and `strerror` messages print
+normally.
 
 ### Narrow Key Validation
 
@@ -47,8 +55,10 @@ tabs, `=`, traversal-like `..` segments, a leading `/`, or a trailing `.`.
 
 ### Deterministic Resource Limits
 
-The C implementation defines explicit maximums for line bytes and snapshot
-entries. Exceeding a limit is an error, not truncation.
+The C implementation defines explicit maximums for line bytes (65,536),
+snapshot entries (65,536), and total snapshot bytes read (16 MiB), counting
+every byte including newlines, comments, and blank lines. Exceeding a limit is
+an error, not truncation.
 
 ### Single Small C Executable
 
@@ -58,10 +68,11 @@ intentional while the command surface is small and the main need is auditability
 ### Strict Local Quality Gates
 
 The project treats warnings, unsafe input handling, undefined behavior, unclear
-ownership, and missing deterministic tests as defects. The build and test
-surface is centered on strict GCC/Clang builds, fixture tests, smoke tests,
-sanitizers, Valgrind when available, and static-analysis-oriented follow-up
-work.
+ownership, and missing deterministic tests as defects. Default `make` builds
+`build/sysdiff`. `make test` runs the functional suite. `make quality` (aliased
+by `check`) is the canonical full release gate: strict GCC/Clang, clang-format,
+clang-tidy, cppcheck with failing findings, fixtures, pytest, ASan, UBSan, and
+Valgrind using reserved error status `99`.
 
 ### v0.1.0 Release Contract
 
@@ -114,7 +125,8 @@ is easier to specify, test, and reproduce across hosts.
 
 Streaming diff output while reading snapshots could reduce memory use, but it
 would make error handling and no-partial-output guarantees harder. The current
-design validates both snapshots first.
+design validates both snapshots first. Output I/O failures after validation are
+the only path that may leave partial stdout.
 
 ### Runtime Dependencies
 
@@ -130,9 +142,10 @@ Plain text records keep fixtures reviewable. Bytewise sorting and opaque values
 make output deterministic and avoid hidden policy decisions.
 
 Validating both snapshots before output keeps failure behavior clean: users can
-rely on empty stdout for compare errors and can separate diagnostics from diff
-data. Deterministic resource limits make hostile input behavior predictable
-instead of depending on memory pressure.
+rely on empty stdout for validation errors and can separate diagnostics from
+diff data. Deterministic resource limits make hostile input behavior predictable
+instead of depending on memory pressure. Safe display escaping keeps terminals
+and logs free of raw control bytes from untrusted snapshot content.
 
 Keeping the implementation as a small C17 executable matches the repository
 mission: small Linux utilities with minimal dependencies, strict warning-free

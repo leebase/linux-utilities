@@ -44,6 +44,11 @@
 - The release-preparation verification on 2026-07-10 resolved the former
   F001–F004 findings and passed fresh Linux `make quality`. This is the release
   evidence, not the earlier smoke artifact with `start_exit_code: -15`.
+- A later adversarial last-stop audit rejected that first candidate, found five
+  additional Medium issues, and repaired them through Cursor/Grok coding plus
+  independent planner review. Current protections include safe byte rendering,
+  checked stdout/EPIPE behavior, a 16 MiB total snapshot cap, honest static and
+  dynamic analysis failure semantics, and 41 governed tests.
 - `sysdiff` v0.1.0 has Ubuntu CI and curated public release material. See
   `docs/RELEASE_REVIEW.md` for scope, evidence, and the accepted Low
   limitation.
@@ -53,8 +58,8 @@
 
 ## Next milestone
 
-The v0.1.0 release candidate passed its required local Linux gate. It is ready
-to be seeded as an independent public repository, but has not been pushed or
-published. Keep the accepted changed-line display ambiguity visible in public
-release notes. Internal Agent-Orch tool-availability Low findings remain out of
-scope for the public product seed.
+The v0.1.0 local candidate is ready to be reseeded as an independent public
+repository after the final post-documentation gate and commit. Once the remote
+is created, require its first Ubuntu CI run to pass before tagging or publishing
+the release. Keep every accepted Low limitation visible. Internal Agent-Orch
+tool-availability findings remain outside the public product seed.

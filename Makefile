@@ -13,7 +13,7 @@ CLANG_TIDY_CHECKS := clang-analyzer-*,bugprone-*,performance-*,portability-*,-bu
 	gcc-strict clang-syntax format-check clang-tidy-check cppcheck-check \
 	sanitizer-test asan-test ubsan-test valgrind-test
 
-all: quality
+all: build/sysdiff
 
 sysdiff: build/sysdiff
 
@@ -21,7 +21,7 @@ build/sysdiff: src/sysdiff.c
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $<
 
-test: quality
+test: test-suite
 
 check: quality
 
@@ -51,7 +51,7 @@ clang-tidy-check:
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
 
 cppcheck-check:
-	cppcheck --quiet --enable=all --suppress=missingIncludeSystem $(SRC)
+	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(SRC)
 
 test-shell: build/sysdiff
 	./tests/test_sysdiff.sh
@@ -65,7 +65,7 @@ sanitizer-test: asan-test ubsan-test
 asan-test:
 	$(MAKE) clean
 	$(MAKE) CC=clang CFLAGS="$(ASAN_CFLAGS)" build/sysdiff
-	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 $(MAKE) test-suite
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 $(MAKE) test-suite
 
 ubsan-test:
 	$(MAKE) clean

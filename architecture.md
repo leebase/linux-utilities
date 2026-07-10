@@ -46,16 +46,19 @@
   `docs/sysdiff-c-source-contract.md`.
 - `src/sysdiff.c` defines deterministic compile-time limits:
   `SYSDIFF_MAX_LINE_BYTES == 65536` and
-  `SYSDIFF_MAX_SNAPSHOT_ENTRIES == 65536`.
-- Inputs that exceed the line or entry limits are rejected. They are not
+  `SYSDIFF_MAX_SNAPSHOT_ENTRIES == 65536`, plus a 16 MiB total-byte limit per
+  snapshot including ignored input.
+- Inputs that exceed line, entry, or total-byte limits are rejected. They are not
   truncated. `compare` returns exit status `2`, leaves stdout empty, and emits
   contextual stderr naming the limit and affected location.
 - `parse_snapshot` owns snapshot resources until successful return. It uses
   typed line/append statuses and a centralized cleanup block for parse errors.
   The latest review found no memory-ownership defects in this structure.
-- `Makefile` keeps strict C17 warning-as-error builds and exposes
-  `sanitizer-test` for ASan/UBSan coverage when `clang` is present. `check`
-  delegates to `test-suite`. The aggregate `make-quality` target performs a
+- Diff values and untrusted path/command diagnostics render as printable ASCII;
+  comparison remains byte-opaque. Stdout failures and closed pipes return `2`.
+- `Makefile` keeps strict C17 warning-as-error builds. `make` builds, `test`
+  runs functional coverage, and `check` delegates to `quality`. The full gate
+  includes gating clang-tidy/cppcheck, ASan with leak detection, UBSan, and a
   clean GCC rebuild before Valgrind.
 - `valgrind-test` always cleans and rebuilds a strict GCC binary, so it does
   not reuse sanitizer instrumentation. CRLF/LF line-limit equivalence and both
@@ -70,7 +73,8 @@
 - No product architecture expansion was approved during the craftsmanship
   review. The explicit snapshot-only `sysdiff compare BEFORE_SNAPSHOT
   AFTER_SNAPSHOT` scope remains in force.
-- Release preparation resolved the test and smoke infrastructure follow-ups:
+- Release preparation and the adversarial last-stop audit resolved the test,
+  smoke, terminal-output, resource-bound, and quality-gate follow-ups:
   pytest uses `$CC` with `cc` fallback and the smoke start helper exits
   immediately. The remaining accepted Low limitation is presentation-only:
   changed values containing ` -> ` are not reversibly delimited in format-1

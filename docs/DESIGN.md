@@ -18,16 +18,14 @@ managers, persist snapshots, contact the network, or run background work.
 The executable is built from `src/sysdiff.c` by `make`. The implementation is
 kept as a single small C17 translation unit for now so parsing, validation,
 comparison, output, and cleanup remain easy to audit. The durable behavior
-contracts are:
-
-- `docs/sysdiff-snapshot-format-and-scope.md` for snapshot syntax, comparison
-  behavior, output, exit status, security constraints, and non-goals.
-- `docs/sysdiff-c-source-contract.md` for C-source hardening requirements,
-  resource limits, ownership, and quality gates.
+contract is `docs/sysdiff-snapshot-format-and-scope.md` for snapshot syntax,
+comparison behavior, output, exit status, security constraints, and non-goals.
 
 The current implementation defines deterministic limits of 65536 bytes per
-snapshot line and 65536 records per snapshot. Inputs that exceed these limits
-fail closed with exit status `2`, empty stdout, and contextual stderr.
+snapshot line, 65536 records per snapshot, and 16777216 total bytes read per
+snapshot input (including newlines, comments, and blank lines). Inputs that
+exceed these limits fail closed with exit status `2`, empty stdout, and
+contextual stderr.
 
 ## Component Design
 
@@ -35,15 +33,17 @@ fail closed with exit status `2`, empty stdout, and contextual stderr.
 
 Command dispatch recognizes informational commands and the `compare` subcommand.
 Usage errors return exit status `2`. Informational commands return `0` and do
-not require snapshot files.
+not require snapshot files. Unknown commands and paths printed in diagnostics
+use the same safe byte escaping as diff values.
 
 ### Snapshot Reader
 
 The reader opens each named snapshot in binary mode and reads one logical line
-at a time. It rejects embedded NUL bytes, read errors, allocation failures, and
-lines that exceed `SYSDIFF_MAX_LINE_BYTES`. It removes `\n` and a single
-trailing `\r` before `\n`, accepts a final line without a trailing newline, and
-never silently truncates input.
+at a time. It rejects embedded NUL bytes, read errors, allocation failures,
+lines that exceed `SYSDIFF_MAX_LINE_BYTES`, and inputs that exceed
+`SYSDIFF_MAX_SNAPSHOT_BYTES`. It removes `\n` and a single trailing `\r` before
+`\n`, accepts a final line without a trailing newline, and never silently
+truncates input.
 
 ### Parser and Validator
 
@@ -68,7 +68,8 @@ independent of input order.
 
 The comparator walks the two sorted snapshots as maps. For each key in the
 union of both snapshots, it identifies removed, added, changed, or unchanged
-records. Unchanged records are suppressed.
+records. Unchanged records are suppressed. Comparison uses raw value bytes;
+display escaping does not affect equality.
 
 ### Output Formatter
 
@@ -81,13 +82,23 @@ line-oriented:
 ~ key: old value -> new value
 ```
 
+Keys render unchanged. Values render as printable ASCII: bytes `0x20` through
+`0x7e` except backslash are literal, backslash is `\\`, and every other byte is
+uppercase `\xNN`. The same escaping applies to user-controlled diagnostic text.
+
 For identical snapshots stdout is exactly:
 
 ```text
 no changes
 ```
 
-Each output line ends in `\n`. Compare errors must leave stdout empty.
+Each output line ends in `\n`. Validation failures leave stdout empty. Stdout
+write or flush failures on compare and informational paths return status `2`
+with a `stdout write error: <strerror>` diagnostic (`EIO` when errno is unset)
+and may leave partial stdout. Successful stdout paths flush through a shared
+finalization helper before returning their normal status. On Linux, `SIGPIPE`
+is ignored before command dispatch so a closed stdout pipe is reported as
+`EPIPE` through that helper instead of terminating the process.
 
 ### Ownership and Cleanup
 
@@ -104,7 +115,8 @@ which keeps caller cleanup simple.
    for duplicates.
 4. The after snapshot goes through the same validation path.
 5. Only after both snapshots are valid, the comparator walks the sorted maps.
-6. The formatter emits deterministic diff lines or `no changes`.
+6. The formatter emits deterministic diff lines or `no changes`, checking
+   write and flush results.
 7. Both snapshots are freed before exit.
 
 This ordering is deliberate: malformed input, duplicate keys, I/O errors,
@@ -119,8 +131,8 @@ The default build is:
 make
 ```
 
-The build emits `build/sysdiff` and uses strict C17 warning flags by default:
-`-std=c17 -Wall -Wextra -Wpedantic -Werror`.
+That target builds only `build/sysdiff` and uses strict C17 warning flags by
+default: `-std=c17 -Wall -Wextra -Wpedantic -Werror`.
 
 The primary test paths are:
 
@@ -130,22 +142,15 @@ python3 -m pytest tests/ -q
 ./scripts/smoke.sh
 ```
 
-Broader local quality coverage is exposed through:
+`make test` runs the functional shell and pytest suites. The canonical full
+release gate is:
 
 ```sh
-make make-quality
+make quality
 ```
 
-That target performs clean GCC and Clang builds, runs the shell and Python test
-suites, runs ASan/UBSan coverage through `make sanitizer-test` when `clang` is
-available, then performs a clean GCC rebuild before `make valgrind-test`.
-
-Current open test and quality caveats from the latest C-source review are:
-
-- CRLF-vs-LF equivalence and both resource-limit failure paths need focused
-  tests.
-- CRLF-terminated lines currently allow one fewer data byte than LF-terminated
-  lines at the line-length boundary.
-- Standalone `make valgrind-test` can be unreliable immediately after
-  `make sanitizer-test` because it may reuse an ASan-instrumented binary;
-  `make make-quality` avoids this by rebuilding with GCC first.
+`make check` aliases `make quality`. That target performs clean GCC and Clang
+builds, formatting and static analysis (including cppcheck with
+`--error-exitcode=1`), the shell and Python test suites, ASan/UBSan coverage
+through `make sanitizer-test`, then a clean GCC rebuild before
+`make valgrind-test` with Valgrind `--error-exitcode=99`.

@@ -16,5 +16,5 @@ Add or update deterministic tests for every behavior change. Preserve the
 snapshot-format and output contracts, or document an intentional compatible
 versioned change in the specification and release notes.
 
-Please report security-sensitive issues privately to the repository owner
-rather than opening a public issue with exploit details.
+Follow [SECURITY.md](SECURITY.md) for security-sensitive reports. Do not open a
+public issue containing exploit details.

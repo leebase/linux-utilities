@@ -1,3 +1,4 @@
+import errno as errno_mod
 import os
 import subprocess
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "sysdiff.c"
+EPIPE_MESSAGE = os.strerror(errno_mod.EPIPE).encode()
 
 
 @pytest.fixture(scope="session")
@@ -21,6 +23,7 @@ def sysdiff_bin(tmp_path_factory):
             "-Wextra",
             "-Wpedantic",
             "-Werror",
+            "-D_POSIX_C_SOURCE=200809L",
             "-o",
             str(binary),
             str(SRC),
@@ -39,9 +42,32 @@ def run_sysdiff(binary, *args):
     )
 
 
+def run_sysdiff_bytes(binary, *args):
+    return subprocess.run(
+        [str(binary), *map(str, args)],
+        capture_output=True,
+        check=False,
+    )
+
+
 def write_snapshot(path, text):
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def write_snapshot_bytes(path, data):
+    path.write_bytes(data)
+    return path
+
+
+def assert_no_raw_unsafe_bytes(data: bytes):
+    for index, byte in enumerate(data):
+        if byte == 0x0A:
+            continue
+        if byte < 0x20 or byte > 0x7E:
+            raise AssertionError(
+                f"unsafe raw byte 0x{byte:02X} at offset {index} in output"
+            )
 
 
 def test_help_and_version(sysdiff_bin):
@@ -258,3 +284,180 @@ def test_file_keys_are_compared_as_data(sysdiff_bin, tmp_path):
     assert result.stdout == (
         "~ file./path/that/should/not/be/opened.sha256: old -> new\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "escaped_value"),
+    [
+        (b"\x1b", r"\x1B"),
+        (b"\t", r"\x09"),
+        (b"\rX", r"\x0DX"),
+        (b"\\", r"\\"),
+        (b"\x7f", r"\x7F"),
+        (b"\xc3\xa9", r"\xC3\xA9"),
+        (b"a\x1b\\b\t\rc\x7f\xff", r"a\x1B\\b\x09\x0Dc\x7F\xFF"),
+    ],
+)
+def test_diff_values_are_safely_escaped(
+    sysdiff_bin, tmp_path, raw_value, escaped_value
+):
+    before = write_snapshot_bytes(tmp_path / "before.snapshot", b"a.key=safe\n")
+    after = write_snapshot_bytes(
+        tmp_path / "after.snapshot", b"a.key=" + raw_value + b"\n"
+    )
+
+    result = run_sysdiff_bytes(sysdiff_bin, "compare", before, after)
+
+    expected = f"~ a.key: safe -> {escaped_value}\n".encode("ascii")
+    assert result.returncode == 1
+    assert result.stdout == expected
+    assert result.stderr == b""
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert raw_value not in result.stdout or raw_value == b"\\"
+
+
+def test_added_and_removed_values_are_safely_escaped(sysdiff_bin, tmp_path):
+    before = write_snapshot_bytes(
+        tmp_path / "before.snapshot", b"gone.key=old\x1b\t\r\\\x7f\xff\n"
+    )
+    after = write_snapshot_bytes(
+        tmp_path / "after.snapshot", b"new.key=new\x1b\t\r\\\x7f\xff\n"
+    )
+
+    result = run_sysdiff_bytes(sysdiff_bin, "compare", before, after)
+
+    expected = (
+        b"- gone.key=old\\x1B\\x09\\x0D\\\\\\x7F\\xFF\n"
+        b"+ new.key=new\\x1B\\x09\\x0D\\\\\\x7F\\xFF\n"
+    )
+    assert result.returncode == 1
+    assert result.stdout == expected
+    assert result.stderr == b""
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert b"\x1b" not in result.stdout
+    assert b"\t" not in result.stdout
+    assert b"\r" not in result.stdout
+    assert b"\x7f" not in result.stdout
+    assert b"\xff" not in result.stdout
+
+
+def test_opaque_comparison_ignores_display_escaping(sysdiff_bin, tmp_path):
+    snapshot = write_snapshot_bytes(
+        tmp_path / "same.snapshot", b"a.key=has\\backslash and\x09tab\n"
+    )
+
+    result = run_sysdiff_bytes(sysdiff_bin, "compare", snapshot, snapshot)
+
+    assert result.returncode == 0
+    assert result.stdout == b"no changes\n"
+    assert result.stderr == b""
+
+
+def test_unknown_command_with_esc_is_safely_escaped(sysdiff_bin):
+    result = run_sysdiff_bytes(sysdiff_bin, "bad\x1bcmd")
+
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert b"unknown command: bad\\x1Bcmd" in result.stderr
+    assert b"\x1b" not in result.stderr
+    assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def test_path_with_esc_is_safely_escaped_in_diagnostics(sysdiff_bin, tmp_path):
+    valid = write_snapshot(tmp_path / "valid.snapshot", "valid.key=value\n")
+    missing = tmp_path / "miss\x1bing.snapshot"
+
+    result = run_sysdiff_bytes(sysdiff_bin, "compare", valid, missing)
+
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert b"miss\\x1Bing.snapshot" in result.stderr
+    assert b"\x1b" not in result.stderr
+    assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def test_path_with_non_ascii_ff_is_safely_escaped(sysdiff_bin, tmp_path):
+    valid = write_snapshot(tmp_path / "valid.snapshot", "valid.key=value\n")
+    # Build a path whose filesystem name contains raw 0xFF via surrogateescape.
+    missing_name = os.fsdecode(b"miss\xffing.snapshot")
+    missing = tmp_path / missing_name
+
+    result = run_sysdiff_bytes(sysdiff_bin, "compare", valid, missing)
+
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert b"miss\\xFFing.snapshot" in result.stderr
+    assert b"\xff" not in result.stderr
+    assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def run_with_closed_stdout_pipe(binary, *args):
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    proc = subprocess.Popen(
+        [str(binary), *map(str, args)],
+        stdout=write_fd,
+        stderr=subprocess.PIPE,
+    )
+    os.close(write_fd)
+    _, stderr = proc.communicate()
+    return proc.returncode, stderr
+
+
+def test_closed_stdout_pipe_on_help_returns_epipe(sysdiff_bin):
+    status, stderr = run_with_closed_stdout_pipe(sysdiff_bin, "--help")
+
+    assert status == 2
+    assert status > 0
+    assert b"stdout write error:" in stderr
+    assert EPIPE_MESSAGE in stderr
+
+
+def test_closed_stdout_pipe_on_changed_compare_returns_epipe(sysdiff_bin, tmp_path):
+    before = write_snapshot(tmp_path / "before.snapshot", "a.key=old\n")
+    after = write_snapshot(tmp_path / "after.snapshot", "a.key=new\n")
+    status, stderr = run_with_closed_stdout_pipe(
+        sysdiff_bin, "compare", before, after
+    )
+
+    assert status == 2
+    assert status > 0
+    assert b"stdout write error:" in stderr
+    assert EPIPE_MESSAGE in stderr
+
+
+def test_snapshot_byte_limit_boundary(sysdiff_bin, tmp_path):
+    max_bytes = 16777216
+    at_limit = tmp_path / "bytes-at-limit.snapshot"
+    over_limit = tmp_path / "bytes-over-limit.snapshot"
+    comments_over = tmp_path / "comments-over-limit.snapshot"
+    nul_over = tmp_path / "nul-over-limit.snapshot"
+
+    at_limit.write_bytes(b"#\n" * (max_bytes // 2))
+    over_limit.write_bytes(b"#\n" * (max_bytes // 2) + b"\n")
+    comments_over.write_bytes(b"\n" * max_bytes + b"#")
+    nul_over.write_bytes(b"\n" * max_bytes + b"\0")
+
+    at_result = run_sysdiff(sysdiff_bin, "compare", at_limit, at_limit)
+    assert at_result.returncode == 0
+    assert at_result.stdout == "no changes\n"
+    assert at_result.stderr == ""
+
+    over_result = run_sysdiff(sysdiff_bin, "compare", over_limit, at_limit)
+    assert over_result.returncode == 2
+    assert over_result.stdout == ""
+    assert "snapshot byte limit exceeded" in over_result.stderr
+    assert str(over_limit) in over_result.stderr
+
+    comments_result = run_sysdiff(sysdiff_bin, "compare", comments_over, at_limit)
+    assert comments_result.returncode == 2
+    assert comments_result.stdout == ""
+    assert "snapshot byte limit exceeded" in comments_result.stderr
+    assert str(comments_over) in comments_result.stderr
+
+    nul_result = run_sysdiff_bytes(sysdiff_bin, "compare", nul_over, at_limit)
+    assert nul_result.returncode == 2
+    assert nul_result.stdout == b""
+    assert b"snapshot byte limit exceeded" in nul_result.stderr
+    assert b"embedded NUL" not in nul_result.stderr
+    assert str(nul_over).encode() in nul_result.stderr

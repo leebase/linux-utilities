@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 
 #define SYSDIFF_MAX_LINE_BYTES ((size_t)65536)
 #define SYSDIFF_MAX_SNAPSHOT_ENTRIES ((size_t)65536)
+#define SYSDIFF_MAX_SNAPSHOT_BYTES ((size_t)16777216)
 
 struct Entry {
   char *key;
@@ -24,16 +26,74 @@ enum LineStatus {
   LINE_EOF,
   LINE_EMBEDDED_NUL,
   LINE_TOO_LONG,
+  LINE_BYTE_LIMIT,
   LINE_READ_ERROR,
   LINE_ALLOC_ERROR
 };
 
 enum AppendStatus { APPEND_OK, APPEND_ENTRY_LIMIT, APPEND_ALLOC_ERROR };
 
-static void print_usage(FILE *stream) {
-  fputs("usage: sysdiff --help|--version|compare BEFORE_SNAPSHOT "
-        "AFTER_SNAPSHOT\n",
-        stream);
+static const char USAGE_TEXT[] =
+    "usage: sysdiff --help|--version|compare BEFORE_SNAPSHOT AFTER_SNAPSHOT\n";
+
+static int fputc_checked(int ch, FILE *stream) {
+  return fputc(ch, stream) == EOF ? -1 : 0;
+}
+
+static int fputs_checked(const char *text, FILE *stream) {
+  return fputs(text, stream) == EOF ? -1 : 0;
+}
+
+static int put_escaped_bytes(FILE *stream, const char *text) {
+  for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
+    unsigned char ch = *p;
+    if (ch == '\\') {
+      if (fputs_checked("\\\\", stream) != 0) {
+        return -1;
+      }
+    } else if (ch >= 0x20U && ch <= 0x7eU) {
+      if (fputc_checked((int)ch, stream) != 0) {
+        return -1;
+      }
+    } else if (fprintf(stream, "\\x%02X", (unsigned int)ch) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+static int emit_write_error(void) {
+  int err = errno;
+  if (err == 0) {
+    err = EIO;
+  }
+  fprintf(stderr, "sysdiff: stdout write error: %s\n", strerror(err));
+  return 2;
+}
+
+static int complete_stdout(int status) {
+  if (fflush(stdout) != 0 || ferror(stdout)) {
+    return emit_write_error();
+  }
+  return status;
+}
+
+static int print_usage(FILE *stream) {
+  return fputs_checked(USAGE_TEXT, stream);
+}
+
+/* Ignore SIGPIPE so a closed stdout pipe surfaces as EPIPE from stdio instead
+ * of terminating the process. Failure aborts before command dispatch. */
+static int ignore_sigpipe_for_stdout(void) {
+  if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+    fprintf(stderr, "sysdiff: cannot ignore SIGPIPE: %s\n", strerror(errno));
+    return 2;
+  }
+  return 0;
+}
+
+static void diag_puts_escaped(const char *text) {
+  (void)put_escaped_bytes(stderr, text);
 }
 
 static void snapshot_free(struct Snapshot *snapshot) {
@@ -62,7 +122,8 @@ static char *copy_range(const char *text, size_t len) {
   return copy;
 }
 
-static enum LineStatus read_line(FILE *file, char **out, size_t *out_len) {
+static enum LineStatus read_line(FILE *file, char **out, size_t *out_len,
+                                 size_t *total_bytes) {
   char *line = NULL;
   size_t len = 0;
   size_t cap = 0;
@@ -80,6 +141,14 @@ static enum LineStatus read_line(FILE *file, char **out, size_t *out_len) {
       }
       break;
     }
+
+    /* Count every consumed byte before classifying it. Byte-limit rejection
+     * therefore precedes embedded-NUL when the overflowing byte is NUL. */
+    if (*total_bytes >= SYSDIFF_MAX_SNAPSHOT_BYTES) {
+      free(line);
+      return LINE_BYTE_LIMIT;
+    }
+    (*total_bytes)++;
 
     if (ch == '\0') {
       free(line);
@@ -214,7 +283,10 @@ static bool validate_no_duplicates(const char *path,
                                    const struct Snapshot *snapshot) {
   for (size_t i = 1; i < snapshot->len; i++) {
     if (strcmp(snapshot->items[i - 1].key, snapshot->items[i].key) == 0) {
-      fprintf(stderr, "%s: duplicate key: %s\n", path, snapshot->items[i].key);
+      diag_puts_escaped(path);
+      fputs(": duplicate key: ", stderr);
+      diag_puts_escaped(snapshot->items[i].key);
+      fputc('\n', stderr);
       return false;
     }
   }
@@ -225,35 +297,47 @@ static bool validate_no_duplicates(const char *path,
 static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
   FILE *file = fopen(path, "rb");
   if (file == NULL) {
-    fprintf(stderr, "%s: cannot open: %s\n", path, strerror(errno));
+    diag_puts_escaped(path);
+    fprintf(stderr, ": cannot open: %s\n", strerror(errno));
     return 2;
   }
 
   size_t line_no = 0;
+  size_t total_bytes = 0;
   for (;;) {
     char *line = NULL;
     size_t line_len = 0;
-    enum LineStatus status = read_line(file, &line, &line_len);
+    enum LineStatus status = read_line(file, &line, &line_len, &total_bytes);
 
     if (status == LINE_EOF) {
       break;
     }
     if (status == LINE_EMBEDDED_NUL) {
-      fprintf(stderr, "%s:%zu: embedded NUL byte\n", path, line_no + 1);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: embedded NUL byte\n", line_no + 1);
       goto cleanup;
     }
     if (status == LINE_TOO_LONG) {
-      fprintf(stderr,
-              "%s:%zu: line length limit exceeded (maximum %zu bytes)\n", path,
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: line length limit exceeded (maximum %zu bytes)\n",
               line_no + 1, SYSDIFF_MAX_LINE_BYTES);
       goto cleanup;
     }
+    if (status == LINE_BYTE_LIMIT) {
+      diag_puts_escaped(path);
+      fprintf(stderr,
+              ":%zu: snapshot byte limit exceeded (maximum %zu bytes)\n",
+              line_no + 1, SYSDIFF_MAX_SNAPSHOT_BYTES);
+      goto cleanup;
+    }
     if (status == LINE_READ_ERROR) {
-      fprintf(stderr, "%s:%zu: read error\n", path, line_no + 1);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: read error\n", line_no + 1);
       goto cleanup;
     }
     if (status == LINE_ALLOC_ERROR) {
-      fprintf(stderr, "%s:%zu: allocation failure\n", path, line_no + 1);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: allocation failure\n", line_no + 1);
       goto cleanup;
     }
 
@@ -267,8 +351,8 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
 
     if (line_len > SYSDIFF_MAX_LINE_BYTES) {
       free(line);
-      fprintf(stderr,
-              "%s:%zu: line length limit exceeded (maximum %zu bytes)\n", path,
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: line length limit exceeded (maximum %zu bytes)\n",
               line_no, SYSDIFF_MAX_LINE_BYTES);
       goto cleanup;
     }
@@ -281,12 +365,14 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
     char *separator = strchr(line, '=');
     if (separator == NULL) {
       free(line);
-      fprintf(stderr, "%s:%zu: missing '=' separator\n", path, line_no);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: missing '=' separator\n", line_no);
       goto cleanup;
     }
     if (separator == line) {
       free(line);
-      fprintf(stderr, "%s:%zu: empty key\n", path, line_no);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: empty key\n", line_no);
       goto cleanup;
     }
 
@@ -294,7 +380,8 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
     size_t value_len = line_len - key_len - 1;
     if (!is_valid_key(line, key_len)) {
       free(line);
-      fprintf(stderr, "%s:%zu: invalid key syntax\n", path, line_no);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: invalid key syntax\n", line_no);
       goto cleanup;
     }
 
@@ -305,7 +392,8 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
     if (key == NULL || value == NULL) {
       free(key);
       free(value);
-      fprintf(stderr, "%s:%zu: allocation failure\n", path, line_no);
+      diag_puts_escaped(path);
+      fprintf(stderr, ":%zu: allocation failure\n", line_no);
       goto cleanup;
     }
 
@@ -313,19 +401,21 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
     if (append_status != APPEND_OK) {
       free(key);
       free(value);
+      diag_puts_escaped(path);
       if (append_status == APPEND_ENTRY_LIMIT) {
         fprintf(stderr,
-                "%s:%zu: snapshot entry limit exceeded (maximum %zu entries)\n",
-                path, line_no, SYSDIFF_MAX_SNAPSHOT_ENTRIES);
+                ":%zu: snapshot entry limit exceeded (maximum %zu entries)\n",
+                line_no, SYSDIFF_MAX_SNAPSHOT_ENTRIES);
       } else {
-        fprintf(stderr, "%s:%zu: allocation failure\n", path, line_no);
+        fprintf(stderr, ":%zu: allocation failure\n", line_no);
       }
       goto cleanup;
     }
   }
 
   if (fclose(file) != 0) {
-    fprintf(stderr, "%s: close failed: %s\n", path, strerror(errno));
+    diag_puts_escaped(path);
+    fprintf(stderr, ": close failed: %s\n", strerror(errno));
     file = NULL;
     goto cleanup;
   }
@@ -350,6 +440,39 @@ cleanup:
   return 2;
 }
 
+static int emit_added(const char *key, const char *value) {
+  if (fputs_checked("+ ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
+      fputc_checked('=', stdout) != 0 ||
+      put_escaped_bytes(stdout, value) != 0 ||
+      fputc_checked('\n', stdout) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int emit_removed(const char *key, const char *value) {
+  if (fputs_checked("- ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
+      fputc_checked('=', stdout) != 0 ||
+      put_escaped_bytes(stdout, value) != 0 ||
+      fputc_checked('\n', stdout) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int emit_changed(const char *key, const char *old_value,
+                        const char *new_value) {
+  if (fputs_checked("~ ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
+      fputs_checked(": ", stdout) != 0 ||
+      put_escaped_bytes(stdout, old_value) != 0 ||
+      fputs_checked(" -> ", stdout) != 0 ||
+      put_escaped_bytes(stdout, new_value) != 0 ||
+      fputc_checked('\n', stdout) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
 static int emit_diff(const struct Snapshot *before,
                      const struct Snapshot *after) {
   size_t before_i = 0;
@@ -358,16 +481,20 @@ static int emit_diff(const struct Snapshot *before,
 
   while (before_i < before->len || after_i < after->len) {
     if (before_i == before->len) {
-      printf("+ %s=%s\n", after->items[after_i].key,
-             after->items[after_i].value);
+      if (emit_added(after->items[after_i].key, after->items[after_i].value) !=
+          0) {
+        return emit_write_error();
+      }
       after_i++;
       changed = true;
       continue;
     }
 
     if (after_i == after->len) {
-      printf("- %s=%s\n", before->items[before_i].key,
-             before->items[before_i].value);
+      if (emit_removed(before->items[before_i].key,
+                       before->items[before_i].value) != 0) {
+        return emit_write_error();
+      }
       before_i++;
       changed = true;
       continue;
@@ -377,31 +504,39 @@ static int emit_diff(const struct Snapshot *before,
     if (cmp == 0) {
       if (strcmp(before->items[before_i].value, after->items[after_i].value) !=
           0) {
-        printf("~ %s: %s -> %s\n", before->items[before_i].key,
-               before->items[before_i].value, after->items[after_i].value);
+        if (emit_changed(before->items[before_i].key,
+                         before->items[before_i].value,
+                         after->items[after_i].value) != 0) {
+          return emit_write_error();
+        }
         changed = true;
       }
       before_i++;
       after_i++;
     } else if (cmp < 0) {
-      printf("- %s=%s\n", before->items[before_i].key,
-             before->items[before_i].value);
+      if (emit_removed(before->items[before_i].key,
+                       before->items[before_i].value) != 0) {
+        return emit_write_error();
+      }
       before_i++;
       changed = true;
     } else {
-      printf("+ %s=%s\n", after->items[after_i].key,
-             after->items[after_i].value);
+      if (emit_added(after->items[after_i].key, after->items[after_i].value) !=
+          0) {
+        return emit_write_error();
+      }
       after_i++;
       changed = true;
     }
   }
 
   if (!changed) {
-    puts("no changes");
-    return 0;
+    if (fputs_checked("no changes\n", stdout) != 0) {
+      return emit_write_error();
+    }
   }
 
-  return 1;
+  return complete_stdout(changed ? 1 : 0);
 }
 
 static int compare_snapshots(const char *before_path, const char *after_path) {
@@ -431,18 +566,31 @@ int main(int argc, char **argv) {
     return 2;
   }
 
+  {
+    int sigpipe_status = ignore_sigpipe_for_stdout();
+    if (sigpipe_status != 0) {
+      return sigpipe_status;
+    }
+  }
+
   if (argc == 1) {
-    print_usage(stdout);
-    return 0;
+    if (print_usage(stdout) != 0) {
+      return emit_write_error();
+    }
+    return complete_stdout(0);
   }
 
   if (argc == 2 && strcmp(argv[1], "--help") == 0) {
-    print_usage(stdout);
-    return 0;
+    if (print_usage(stdout) != 0) {
+      return emit_write_error();
+    }
+    return complete_stdout(0);
   }
   if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-    puts("sysdiff 0.1.0");
-    return 0;
+    if (fputs_checked("sysdiff 0.1.0\n", stdout) != 0) {
+      return emit_write_error();
+    }
+    return complete_stdout(0);
   }
 
   if (strcmp(argv[1], "compare") == 0) {
@@ -450,14 +598,16 @@ int main(int argc, char **argv) {
       fputs("sysdiff: compare requires BEFORE_SNAPSHOT and "
             "AFTER_SNAPSHOT\n",
             stderr);
-      print_usage(stderr);
+      (void)print_usage(stderr);
       return 2;
     }
 
     return compare_snapshots(argv[2], argv[3]);
   }
 
-  fprintf(stderr, "sysdiff: unknown command: %s\n", argv[1]);
-  print_usage(stderr);
+  fputs("sysdiff: unknown command: ", stderr);
+  diag_puts_escaped(argv[1]);
+  fputc('\n', stderr);
+  (void)print_usage(stderr);
   return 2;
 }

@@ -1,5 +1,26 @@
 # Result Review
 
+## 2026-07-10 — Adversarial public-release remediation
+
+- Final evaluator rejected the first seed with five Medium findings: raw
+  terminal-control output, successful exit on stdout loss, multi-gigabyte
+  aggregate input exposure, non-gating Valgrind/cppcheck behavior, and stale
+  public docs.
+- Cursor `agent` using `grok-4.5-high` wrote tests and implementation through
+  eight bounded review iterations. The planner independently reviewed every
+  diff and returned C/POSIX/static-analysis findings until clean.
+- Added printable-ASCII byte escaping for values and untrusted diagnostics,
+  checked stdout/flush/EPIPE handling, a 16 MiB per-snapshot total-byte limit,
+  byte-limit/NUL precedence, Valgrind status 99 with error-log enforcement,
+  gating cppcheck, a normal default build, leak-enabled ASan, immutable CI
+  action pinning, and adversarial fixtures.
+- Governed pytest now reports 41 passing tests. Final post-documentation
+  `make quality` completed with exit status `0`, including the final Valgrind
+  fixture success line.
+- Public docs now record the rejected findings and repairs. Remaining Low
+  limitations are explicit and do not block making the repository public; the
+  GitHub release itself must wait for first-remote CI success.
+
 ## 2026-07-10 — v0.1.0 release candidate prepared
 
 - Verified the governing run `eab8bbd05f50` is `COMPLETED`; its prior smoke
@@ -12,7 +33,7 @@
   that exact command. Added public release documentation, contribution guide,
   MIT placeholder license, changelog, AI-development safeguards, and a fresh
   release review.
-- Fresh Linux verification passed: `make quality`; pytest reported 26 passed.
+- Historical first-pass verification: `make quality`; pytest reported 26 passed.
   The quality gate includes GCC/Clang strict builds, formatting, clang-tidy,
   cppcheck, fixtures, pytest, ASan, UBSan, and Valgrind.
 - Accepted Low limitation: changed output is human-readable and not reversible
@@ -97,6 +118,12 @@
   slice and is still visible for future output-format work.
 
 ## Verification
+
+- Final post-documentation `make quality` — exit `0`; strict GCC/Clang,
+  clang-format, clang-tidy, gating cppcheck, 41 pytest tests, shell fixtures,
+  leak-enabled ASan, UBSan, and Valgrind all passed.
+- Official `actions/checkout` lookup — pinned SHA
+  `34e114876b0b11c390a56381ad16ebd13914f8d5` matches `refs/tags/v4`.
 
 - `python3 -m pytest tests/ -q` — exit `0`; 26 tests passed (fixture-acceptance
   review check)

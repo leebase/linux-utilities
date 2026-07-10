@@ -36,7 +36,8 @@ run_status() {
     set +e
     if [ "${SYSDIFF_UNDER_VALGRIND:-0}" = "1" ]; then
         vg_log="$WORKDIR/valgrind.log"
-        valgrind --quiet --error-exitcode=1 --leak-check=full \
+        : >"$vg_log"
+        valgrind --quiet --error-exitcode=99 --leak-check=full \
             --errors-for-leak-kinds=definite,possible \
             --log-file="$vg_log" "$@" >"$stdout" 2>"$stderr"
     else
@@ -44,6 +45,17 @@ run_status() {
     fi
     status="$?"
     set -e
+
+    if [ -n "$vg_log" ] && { [ "$status" -eq 99 ] || [ -s "$vg_log" ]; }; then
+        printf 'valgrind reported errors (status %s) for:' "$status" >&2
+        printf ' %s' "$@" >&2
+        printf '\n' >&2
+        if [ -s "$vg_log" ]; then
+            printf 'valgrind log:\n' >&2
+            sed 's/^/  /' "$vg_log" >&2
+        fi
+        exit 1
+    fi
 
     if [ "$status" -ne "$expected_status" ]; then
         printf 'expected status %s, got %s for:' "$expected_status" "$status" >&2
@@ -521,6 +533,148 @@ PY
     assert_nonempty "$stderr"
     assert_contains "$stderr" "$entries_over_limit"
     assert_contains "$stderr" "entry limit"
+fi
+
+# --- Safe value rendering: ESC, tab, CR, backslash, DEL, non-ASCII.
+safe_before="$WORKDIR/safe-before.snapshot"
+safe_after="$WORKDIR/safe-after.snapshot"
+expected_safe="$WORKDIR/expected.safe.golden"
+python3 - "$safe_before" "$safe_after" "$expected_safe" <<'PY'
+from pathlib import Path
+import sys
+
+before_path, after_path, expected_path = map(Path, sys.argv[1:4])
+before_path.write_bytes(b"a.key=plain\nb.key=old\n")
+after_path.write_bytes(
+    b"a.key=plain\x1b\t\r\\\x7f\xc3\xa9\nb.key=old\nc.key=new\x1b\n"
+)
+expected_path.write_text(
+    "~ a.key: plain -> plain\\x1B\\x09\\x0D\\\\\\x7F\\xC3\\xA9\n"
+    "+ c.key=new\\x1B\n",
+    encoding="ascii",
+)
+PY
+run_status 1 "$stdout" "$stderr" "$BIN" compare "$safe_before" "$safe_after"
+assert_file_equals "$expected_safe" "$stdout"
+assert_empty "$stderr"
+if grep -a $'\x1b' "$stdout" >/dev/null || grep -a $'\x7f' "$stdout" >/dev/null; then
+    fail "stdout must not contain raw ESC or DEL bytes"
+fi
+assert_diff_prefixes "$stdout"
+
+# Diagnostic path/command escaping for ESC bytes.
+esc_cmd=$'bad\x1bcmd'
+run_status 2 "$stdout" "$stderr" "$BIN" "$esc_cmd"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" 'bad\x1Bcmd'
+if grep -a $'\x1b' "$stderr" >/dev/null; then
+    fail "stderr must not contain raw ESC from unknown command"
+fi
+
+# --- Output write failure: informational and compare paths to /dev/full.
+if [ -w /dev/full ]; then
+    assert_write_error_to_full() {
+        local label="$1"
+        shift
+        set +e
+        "$@" >/dev/full 2>"$stderr"
+        local full_status=$?
+        set -e
+        if [ "$full_status" -ne 2 ]; then
+            fail "expected status 2 for $label to /dev/full, got $full_status"
+        fi
+        assert_contains "$stderr" "stdout write error:"
+    }
+
+    assert_write_error_to_full "no-arg usage" "$BIN"
+    assert_write_error_to_full "--help" "$BIN" --help
+    assert_write_error_to_full "--version" "$BIN" --version
+    assert_write_error_to_full "compare" "$BIN" compare "$before" "$before"
+fi
+
+# --- Closed stdout pipe: EPIPE via stdio, status 2, no SIGPIPE death.
+assert_closed_stdout_pipe() {
+    local label="$1"
+    shift
+    python3 - "$label" "$BIN" "$@" <<'PY'
+import errno as errno_mod
+import os
+import subprocess
+import sys
+
+label = sys.argv[1]
+cmd = sys.argv[2:]
+epipe_message = os.strerror(errno_mod.EPIPE).encode()
+read_fd, write_fd = os.pipe()
+os.close(read_fd)
+proc = subprocess.Popen(cmd, stdout=write_fd, stderr=subprocess.PIPE)
+os.close(write_fd)
+_, err = proc.communicate()
+if proc.returncode != 2:
+    raise SystemExit(
+        f"{label}: expected status 2, got {proc.returncode} (signal death "
+        f"would be negative)"
+    )
+if proc.returncode < 0:
+    raise SystemExit(f"{label}: unexpected signal termination")
+if b"stdout write error:" not in err:
+    raise SystemExit(f"{label}: missing stdout write error diagnostic: {err!r}")
+if epipe_message not in err:
+    raise SystemExit(
+        f"{label}: expected platform EPIPE text {epipe_message!r} in {err!r}"
+    )
+PY
+}
+
+assert_closed_stdout_pipe "--help" --help
+assert_closed_stdout_pipe "changed-compare" compare "$before" "$after"
+
+# --- Aggregate snapshot byte limit (16 MiB), including comment-only bypass.
+MAX_SNAPSHOT_BYTES=16777216
+if [ "${SYSDIFF_UNDER_VALGRIND:-0}" != "1" ]; then
+    bytes_at_limit="$WORKDIR/bytes-at-limit.snapshot"
+    bytes_over_limit="$WORKDIR/bytes-over-limit.snapshot"
+    comments_over_limit="$WORKDIR/comments-over-limit.snapshot"
+    nul_over_limit="$WORKDIR/nul-over-limit.snapshot"
+    python3 - "$bytes_at_limit" "$bytes_over_limit" "$comments_over_limit" \
+        "$nul_over_limit" "$MAX_SNAPSHOT_BYTES" <<'PY'
+import sys
+from pathlib import Path
+
+at_limit, over_limit, comments_over, nul_over, max_bytes_s = sys.argv[1:6]
+max_bytes = int(max_bytes_s)
+Path(at_limit).write_bytes(b"#\n" * (max_bytes // 2))
+Path(over_limit).write_bytes(b"#\n" * (max_bytes // 2) + b"\n")
+Path(comments_over).write_bytes(b"\n" * max_bytes + b"#")
+Path(nul_over).write_bytes(b"\n" * max_bytes + b"\0")
+PY
+
+    run_status 0 "$stdout" "$stderr" "$BIN" compare "$bytes_at_limit" "$bytes_at_limit"
+    assert_file_equals "$expected_no_changes" "$stdout"
+    assert_empty "$stderr"
+
+    run_status 2 "$stdout" "$stderr" "$BIN" compare "$bytes_over_limit" "$after"
+    assert_empty "$stdout"
+    assert_nonempty "$stderr"
+    assert_contains "$stderr" "$bytes_over_limit"
+    assert_contains "$stderr" "snapshot byte limit exceeded"
+
+    run_status 2 "$stdout" "$stderr" "$BIN" compare "$comments_over_limit" "$after"
+    assert_empty "$stdout"
+    assert_nonempty "$stderr"
+    assert_contains "$stderr" "$comments_over_limit"
+    assert_contains "$stderr" "snapshot byte limit exceeded"
+
+    # NUL as byte 16,777,217 is a byte-limit failure, not embedded-NUL.
+    run_status 2 "$stdout" "$stderr" "$BIN" compare "$nul_over_limit" "$after"
+    assert_empty "$stdout"
+    assert_nonempty "$stderr"
+    assert_contains "$stderr" "$nul_over_limit"
+    assert_contains "$stderr" "snapshot byte limit exceeded"
+    if grep -Fq "embedded NUL" "$stderr"; then
+        fail "NUL beyond the byte limit must not be classified as embedded NUL"
+    fi
 fi
 
 printf 'ok: sysdiff fixture acceptance tests passed\n'

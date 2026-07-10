@@ -10,11 +10,19 @@ run_sysdiff() {
         local vg_log status
         vg_log="$(mktemp -t sysdiff-valgrind.XXXXXXXXXX)"
         set +e
-        valgrind --quiet --error-exitcode=1 --leak-check=full \
+        valgrind --quiet --error-exitcode=99 --leak-check=full \
             --errors-for-leak-kinds=definite,possible \
             --log-file="$vg_log" "$BIN" "$@"
         status=$?
         set -e
+        if [ "$status" -eq 99 ] || [ -s "$vg_log" ]; then
+            printf 'valgrind reported errors (status %s)\n' "$status" >&2
+            if [ -s "$vg_log" ]; then
+                sed 's/^/  /' "$vg_log" >&2
+            fi
+            rm -f "$vg_log"
+            return 99
+        fi
         rm -f "$vg_log"
         return "$status"
     else

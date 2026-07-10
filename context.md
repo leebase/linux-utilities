@@ -13,10 +13,16 @@ verified resolved in the release work: pytest selects `$CC` with `cc` fallback;
 the smoke start helper exits immediately; whitespace-only space/tab lines are
 ignored as blank; and the unreachable `copy_range` `SIZE_MAX` guard is gone.
 
-The Linux release gate `make quality` passed after those repairs. It ran strict
-GCC and Clang checks, clang-format, clang-tidy, cppcheck, shell fixtures,
-pytest (26 passed), ASan, UBSan, and Valgrind. The public release candidate is
-version `0.1.0`; its reviewed evidence and accepted Low limitation are in
+The 2026-07-10 last-stop audit initially rejected publication with five Medium
+findings: terminal injection, ignored stdout failures, an impractical aggregate
+resource bound, dishonest Valgrind/cppcheck failure semantics, and stale public
+documentation. Cursor `agent` with `grok-4.5-high` implemented bounded repairs
+under independent planner review. The resulting Linux gate covers strict GCC
+and Clang, clang-format, clang-tidy, gating cppcheck, 41 governed tests, ASan
+with leak detection, UBSan, and Valgrind with a non-colliding error status.
+
+The local public release candidate remains version `0.1.0`. Its current verdict,
+repair record, evidence, and accepted Low limitations are in
 `docs/RELEASE_REVIEW.md`.
 
 Lee approved the current diff output format on 2026-07-09:
@@ -28,11 +34,11 @@ background behavior in the next `sysdiff` slice.
 
 ## What's Happening Now
 
-Do not claim that a GitHub release has been published: this work prepares only
-the local v0.1.0 release candidate and a separate clean seed repository. The
-remaining accepted product limitation is changed-line display ambiguity when a
-value itself contains ` -> `; values are opaque and changed lines are not a
-reversible data interchange format. Tool-availability follow-ups remain
-internal infrastructure work and are not part of the public seed.
+Do not claim that GitHub CI or a GitHub release has passed before the remote
+exists and its first Actions run is green. The local candidate is ready to be
+made public, but tagging/publishing waits for that external result. Accepted
+Low limitations are the changed-line delimiter ambiguity, Ubuntu-only CI,
+source-first packaging without install/man targets, and explicit-snapshot-only
+scope. Tool-availability follow-ups remain internal and outside the public seed.
 
 Runs root: `/home/lee/projects/linux-utilities-agent-orch-runs`.

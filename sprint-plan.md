@@ -123,3 +123,11 @@
   Makefile/C-source Valgrind-after-sanitizer Medium as current evidence).
 - [x] Prepare and verify the `sysdiff` v0.1.0 public release candidate: fresh
   Linux `make quality` pass, CI, curated release docs, and release review.
+- [x] Perform an adversarial last-stop release audit; reject the first candidate
+  and repair all five Medium findings with Cursor `grok-4.5-high` under
+  independent planner review.
+- [x] Add terminal-safe rendering, checked stdout/EPIPE behavior, a 16 MiB
+  aggregate snapshot limit, honest Valgrind/cppcheck gates, leak-enabled ASan,
+  immutable CI action pinning, and regression coverage.
+- [ ] Create the public remote and require the first Ubuntu `make quality` CI
+  run to pass before tagging or publishing v0.1.0.
