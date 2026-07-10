@@ -131,3 +131,6 @@
   immutable CI action pinning, and regression coverage.
 - [ ] Create the public remote and require the first Ubuntu `make quality` CI
   run to pass before tagging or publishing v0.1.0.
+- [x] Add and review `man/sysdiff.1`, integrate warning-gated groff rendering
+  into `make quality`/Ubuntu CI, reconcile public docs, and pass the governed
+  quality gate with 41 tests.

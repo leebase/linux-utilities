@@ -3,6 +3,7 @@ CFLAGS ?= -std=c17 -Wall -Wextra -Wpedantic -Werror -O2
 PYTHON ?= python3
 
 SRC := src/sysdiff.c
+MANPAGE := man/sysdiff.1
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
 ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
@@ -11,7 +12,7 @@ CLANG_TIDY_CHECKS := clang-analyzer-*,bugprone-*,performance-*,portability-*,-bu
 
 .PHONY: all sysdiff test check clean quality make-quality test-suite test-shell \
 	gcc-strict clang-syntax format-check clang-tidy-check cppcheck-check \
-	sanitizer-test asan-test ubsan-test valgrind-test
+	man-check sanitizer-test asan-test ubsan-test valgrind-test
 
 all: build/sysdiff
 
@@ -32,6 +33,7 @@ quality:
 	$(MAKE) format-check
 	$(MAKE) clang-tidy-check
 	$(MAKE) cppcheck-check
+	$(MAKE) man-check
 	$(MAKE) test-suite
 	$(MAKE) sanitizer-test
 	$(MAKE) valgrind-test
@@ -52,6 +54,20 @@ clang-tidy-check:
 
 cppcheck-check:
 	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(SRC)
+
+man-check:
+	@warnfile=$$(mktemp) || exit 1; \
+	status=0; \
+	if ! groff -man -Tutf8 -ww -z $(MANPAGE) 2>"$$warnfile"; then \
+		status=1; \
+	elif [ -s "$$warnfile" ]; then \
+		status=1; \
+	fi; \
+	if [ "$$status" -ne 0 ]; then \
+		cat "$$warnfile" >&2; \
+	fi; \
+	rm -f "$$warnfile"; \
+	exit "$$status"
 
 test-shell: build/sysdiff
 	./tests/test_sysdiff.sh

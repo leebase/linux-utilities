@@ -1,5 +1,20 @@
 # Result Review
 
+## 2026-07-10 — Section-1 manual page ready for publication
+
+- Added `man/sysdiff.1` with exact CLI, format, escaping, limits, security,
+  output, exit-status, example, copyright, and version documentation.
+- Added `make man-check`; it captures groff diagnostics and fails on either a
+  nonzero render or any warning. `make quality` and Ubuntu CI include this gate;
+  CI installs groff.
+- Reconciled README, changelog, decisions, design, specification, and release
+  review. The key grammar now says exactly that consecutive dots (`..`) are
+  rejected.
+- Final governed `make quality` exited `0`: groff lint, strict compilers,
+  static analysis, 41 tests, leak-enabled ASan, UBSan, and Valgrind passed.
+- GitHub authentication is active as `leebase`; no remote existed before this
+  publication step.
+
 ## 2026-07-10 — Adversarial public-release remediation
 
 - Final evaluator rejected the first seed with five Medium findings: raw
@@ -124,6 +139,8 @@
   leak-enabled ASan, UBSan, and Valgrind all passed.
 - Official `actions/checkout` lookup — pinned SHA
   `34e114876b0b11c390a56381ad16ebd13914f8d5` matches `refs/tags/v4`.
+- Post-man-page `make quality` — exit `0`; includes warning-gated groff render,
+  41 governed tests, sanitizers, and Valgrind.
 
 - `python3 -m pytest tests/ -q` — exit `0`; 26 tests passed (fixture-acceptance
   review check)

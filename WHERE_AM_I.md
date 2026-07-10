@@ -52,14 +52,16 @@
 - `sysdiff` v0.1.0 has Ubuntu CI and curated public release material. See
   `docs/RELEASE_REVIEW.md` for scope, evidence, and the accepted Low
   limitation.
+- The publication follow-up adds a reviewed section-1 manual page at
+  `man/sysdiff.1`. `make man-check` treats groff warnings as failures and is
+  included in the canonical gate; post-integration `make quality` exited `0`.
 - Lee approved the current diff output format on 2026-07-09:
   `+ key=value`, `- key=value`, and `~ key: old -> new`. Future OpenAI/Codex
   routes should use `gpt-5.5`; do not add GPT-5.4 assignments.
 
 ## Next milestone
 
-The v0.1.0 local candidate is ready to be reseeded as an independent public
-repository after the final post-documentation gate and commit. Once the remote
-is created, require its first Ubuntu CI run to pass before tagging or publishing
-the release. Keep every accepted Low limitation visible. Internal Agent-Orch
-tool-availability findings remain outside the public product seed.
+The v0.1.0 local candidate is ready to be reseeded and pushed to the newly
+authorized public repository. Require its first Ubuntu CI run to pass before
+tagging or publishing the release. Keep every accepted Low limitation visible.
+Internal Agent-Orch tool-availability findings remain outside the public seed.

@@ -53,8 +53,9 @@ tabs is `#`; inline comments are data. Keys and values are otherwise not
 trimmed.
 
 Validation rejects missing separators, empty keys, invalid key bytes, keys
-without a dot separator, keys beginning with `/`, keys ending with `.`, `..`
-segments, duplicate keys, embedded NUL bytes, and resource-limit violations.
+without a dot separator, keys beginning with `/`, keys ending with `.`,
+consecutive dots (`..`), duplicate keys, embedded NUL bytes, and
+resource-limit violations.
 Values remain opaque byte strings after line-ending removal.
 
 ### Snapshot Map
@@ -151,6 +152,12 @@ make quality
 
 `make check` aliases `make quality`. That target performs clean GCC and Clang
 builds, formatting and static analysis (including cppcheck with
-`--error-exitcode=1`), the shell and Python test suites, ASan/UBSan coverage
-through `make sanitizer-test`, then a clean GCC rebuild before
+`--error-exitcode=1`), man-page lint via `make man-check` (groff with warnings
+enabled, no tracked output), the shell and Python test suites, ASan/UBSan
+coverage through `make sanitizer-test`, then a clean GCC rebuild before
 `make valgrind-test` with Valgrind `--error-exitcode=99`.
+
+The section-1 manual page lives at `man/sysdiff.1` and documents the
+implemented CLI, snapshot format, output, exit status, limits, and security
+behavior for public distribution. View it with `man -l man/sysdiff.1`. There
+is still no install target or package that installs the page system-wide.

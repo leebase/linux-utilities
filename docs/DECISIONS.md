@@ -51,7 +51,7 @@ normally.
 
 Format `1` keys are case-sensitive dot-separated names using only documented
 safe bytes. They must contain at least one dot and must not contain spaces,
-tabs, `=`, traversal-like `..` segments, a leading `/`, or a trailing `.`.
+tabs, `=`, consecutive dots (`..`), a leading `/`, or a trailing `.`.
 
 ### Deterministic Resource Limits
 

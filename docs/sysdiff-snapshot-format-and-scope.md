@@ -87,7 +87,7 @@ Valid format `1` keys:
 - Must contain at least one `.` separator.
 - Must not contain spaces or tabs.
 - Must not contain `=`.
-- Must not contain `..` as a path traversal segment.
+- Must not contain consecutive dots (`..`).
 - Must not begin with `/`.
 - Must not end with `.`.
 - Are case-sensitive.

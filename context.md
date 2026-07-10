@@ -25,6 +25,14 @@ The local public release candidate remains version `0.1.0`. Its current verdict,
 repair record, evidence, and accepted Low limitations are in
 `docs/RELEASE_REVIEW.md`.
 
+Lee then authorized publication and requested a man page. Cursor
+`grok-4.5-high` authored `man/sysdiff.1` under a bounded contract; planner review
+added conventional OPTIONS/COMMANDS sections, exact consecutive-dot wording,
+and a gate-bearing groff warning check. Governed `make quality` exited `0` with
+41 tests after the man-page integration. The next action is to commit, refresh
+the curated seed, create `leebase/linux-utilities`, push `main`, and require the
+first Ubuntu Actions run to pass.
+
 Lee approved the current diff output format on 2026-07-09:
 `+ key=value`, `- key=value`, and `~ key: old -> new`. Treat that as the
 format-1 contract unless Lee explicitly changes it later. Preserve
@@ -35,8 +43,9 @@ background behavior in the next `sysdiff` slice.
 ## What's Happening Now
 
 Do not claim that GitHub CI or a GitHub release has passed before the remote
-exists and its first Actions run is green. The local candidate is ready to be
-made public, but tagging/publishing waits for that external result. Accepted
+exists and its first Actions run is green. Lee has now authorized creating and
+pushing the public repository; tagging/publishing still waits for that external
+result. Accepted
 Low limitations are the changed-line delimiter ambiguity, Ubuntu-only CI,
 source-first packaging without install/man targets, and explicit-snapshot-only
 scope. Tool-availability follow-ups remain internal and outside the public seed.

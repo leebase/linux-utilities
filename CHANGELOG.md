@@ -22,7 +22,10 @@ Initial public release candidate of `sysdiff`.
   fixture, pytest, smoke, and Ubuntu CI configuration. Default `make` builds
   the binary; `make test` runs functional tests; `make quality` is the full
   gate.
+- Ships a section-1 manual page at `man/sysdiff.1`, linted by `make man-check`
+  (part of `make quality`) with groff warnings enabled.
 
 Known limitations: values are opaque text and changed records use a human
 readable `old -> new` presentation, so that line format is not reversible when
 values themselves contain ` -> `. `sysdiff` does not collect live snapshots.
+There is no install target or packaged distribution yet.

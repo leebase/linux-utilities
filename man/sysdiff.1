@@ -1,0 +1,274 @@
+.\" Copyright (c) 2026 Lee Harrington
+.\" SPDX-License-Identifier: MIT
+.TH SYSDIFF 1 "2026-07-10" "sysdiff 0.1.0" "User Commands"
+.SH NAME
+sysdiff \(em compare explicit system snapshot files
+.SH SYNOPSIS
+.B sysdiff
+.P
+.B sysdiff \-\-help
+.P
+.B sysdiff \-\-version
+.P
+.B sysdiff compare
+.I BEFORE_SNAPSHOT AFTER_SNAPSHOT
+.SH DESCRIPTION
+.B sysdiff
+compares two user\-provided plain\-text system snapshot files and prints a
+deterministic, key\-sorted diff.
+.P
+It reads only the two paths named on the command line.
+It does
+.B not
+inspect the live system, scan directories, call package or service managers,
+persist snapshots, contact the network, or run background work.
+.P
+Invoked with no arguments, with
+.BR \-\-help ,
+or with
+.BR \-\-version ,
+.B sysdiff
+prints usage or version information to standard output and exits successfully
+unless a stdout write or flush failure occurs.
+.SH OPTIONS
+.TP
+.B \-\-help
+Print the usage line to standard output and exit with status
+.BR 0 .
+A stdout write or flush failure returns status
+.B 2
+as described in
+.BR "EXIT STATUS" .
+.TP
+.B \-\-version
+Print
+.B sysdiff 0.1.0
+to standard output and exit with status
+.BR 0 .
+A stdout write or flush failure returns status
+.B 2
+as described in
+.BR "EXIT STATUS" .
+.SH COMMANDS
+.TP
+.BI compare " BEFORE_SNAPSHOT AFTER_SNAPSHOT"
+Compare two explicit snapshot files.
+.I BEFORE_SNAPSHOT
+is the earlier state;
+.I AFTER_SNAPSHOT
+is the later state.
+.B sysdiff
+reads only those two paths.
+Diff output and the
+.B no changes
+result are described in
+.BR OUTPUT ;
+exit statuses are described in
+.BR "EXIT STATUS" .
+.SH SNAPSHOT FORMAT
+Snapshot files are plain\-text byte streams with one
+.B key=value
+record per line.
+.P
+Line handling:
+.IP \(bu 3
+A line ends at
+.B \en
+or end of file.
+A single trailing
+.B \er
+before
+.B \en
+is removed as part of the line ending.
+.IP \(bu 3
+A final line without a trailing newline is valid.
+.IP \(bu 3
+Empty lines, including lines made only of spaces and tabs, are ignored.
+.IP \(bu 3
+Lines whose first byte after leading spaces or tabs is
+.B #
+are whole\-line comments and are ignored.
+Inline comments are not supported;
+a
+.B #
+byte inside a key or value is data.
+.P
+Record rules:
+.IP \(bu 3
+The first
+.B =
+byte separates key from value.
+The key must be non\-empty; the value may be empty.
+Keys and values are not trimmed.
+.IP \(bu 3
+Duplicate keys within one snapshot are rejected.
+.IP \(bu 3
+Embedded NUL bytes are rejected.
+.IP \(bu 3
+Values are opaque byte strings after line\-ending removal and are compared
+byte\-for\-byte.
+.P
+Valid format\-1 keys use only the bytes
+.BR A\-Z ,
+.BR a\-z ,
+.BR 0\-9 ,
+.BR . ,
+.BR _ ,
+.BR \- ,
+and
+.BR / .
+A key must contain at least one
+.B .\&
+separator; must not contain spaces, tabs, or
+.BR = ;
+must not contain consecutive dots (\fB..\fP);
+must not begin with
+.BR / ;
+and must not have a trailing
+.B .
+character.
+Keys are case\-sensitive.
+.P
+A key in the
+.B file.\&
+namespace is snapshot data only.
+.B sysdiff
+does not open the named path.
+.SH OUTPUT
+All comparison output goes to standard output.
+Diagnostics go to standard error.
+No diff output is written until both snapshots are fully validated.
+.P
+Diff lines are sorted by key across the union of both snapshots using
+bytewise, locale\-independent ordering.
+Unchanged keys emit nothing.
+.P
+Removed record:
+.P
+.RS
+.nf
+\- key=old value
+.fi
+.RE
+.P
+Added record:
+.P
+.RS
+.nf
++ key=new value
+.fi
+.RE
+.P
+Changed record:
+.P
+.RS
+.nf
+~ key: old value \-> new value
+.fi
+.RE
+.P
+Identical snapshots print exactly:
+.P
+.RS
+.nf
+no changes
+.fi
+.RE
+.P
+Each stdout line ends with a newline.
+.P
+Keys render unchanged.
+Every value byte is rendered for display as printable ASCII:
+bytes
+.B 0x20
+through
+.B 0x7e
+except backslash render literally; backslash renders as
+.BR \e\e ;
+every other byte renders as uppercase
+.BR \exNN .
+The same escaping applies to user\-controlled command arguments and paths in
+diagnostics.
+.P
+The changed\-line delimiter
+.RB \(lq\  \->\  \(rq
+is human\-readable and not a reversible interchange format.
+If a value itself contains that delimiter sequence, the displayed old/new
+boundary is ambiguous.
+.SH EXIT STATUS
+.TP
+.B 0
+Success with no differences, or a successful informational command
+.RB ( \-\-help ,
+.BR \-\-version ,
+or no\-argument usage).
+.TP
+.B 1
+.B compare
+succeeded and at least one difference was found.
+.TP
+.B 2
+Usage error, file I/O error, malformed snapshot, duplicate key, allocation
+failure, resource\-limit violation, stdout write/flush failure, unsafe input,
+or other runtime error.
+.P
+On validation failures for
+.BR compare ,
+stdout is empty.
+A stdout write or flush failure returns
+.B 2
+with a
+.B stdout write error:
+diagnostic (using
+.B EIO
+when errno is unset) and may leave partial stdout.
+On Linux,
+.B SIGPIPE
+is ignored so a closed stdout pipe follows that same failure path as
+.B EPIPE
+rather than terminating the process.
+.SH RESOURCE LIMITS
+Per snapshot input:
+.IP \(bu 3
+Maximum line length: 65\|536 bytes after line\-ending removal.
+.IP \(bu 3
+Maximum entries: 65\|536.
+.IP \(bu 3
+Maximum total bytes read: 16\|777\|216, counting every byte including newlines,
+comments, and blank lines.
+.P
+Exceeding a limit fails with exit status
+.BR 2 ,
+empty stdout, and a contextual diagnostic.
+.SH SECURITY
+Snapshot paths and file contents are untrusted.
+.B sysdiff
+opens exactly the two named files for reading.
+It does not invoke a shell, expand globs, create or modify files, recurse
+directories, or treat
+.B file.\&
+keys as filesystem paths to inspect.
+.P
+Untrusted value and path bytes are escaped for terminal\-safe rendering as
+described in
+.BR OUTPUT .
+Raw ESC, control, DEL, or non\-ASCII bytes from snapshot values, paths, or
+unknown commands do not reach stdout or stderr unescaped.
+.SH EXAMPLES
+Compare two temporary snapshot files:
+.P
+.RS
+.nf
+sysdiff compare /tmp/before.snap /tmp/after.snap
+.fi
+.RE
+.SH SEE ALSO
+.BR diff (1)
+.SH AUTHOR
+Lee Harrington
+.SH COPYRIGHT
+Copyright \(co 2026 Lee Harrington.
+.B sysdiff
+is released under the MIT License.
+.SH VERSION
+sysdiff 0.1.0 (2026\-07\-10)

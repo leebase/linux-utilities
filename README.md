@@ -66,9 +66,20 @@ make quality
 
 `make check` is an alias for `make quality`. The quality gate runs strict GCC
 and Clang checks, clang-format, clang-tidy, cppcheck (findings fail the build),
-fixture and pytest suites, AddressSanitizer, UndefinedBehaviorSanitizer, and
-Valgrind with a reserved error status that cannot collide with sysdiff exit
-codes `0`, `1`, or `2`. Ubuntu CI runs exactly `make quality`.
+man-page lint via `make man-check`, fixture and pytest suites,
+AddressSanitizer, UndefinedBehaviorSanitizer, and Valgrind with a reserved
+error status that cannot collide with sysdiff exit codes `0`, `1`, or `2`.
+Ubuntu CI runs exactly `make quality`.
+
+View the section-1 manual page locally:
+
+```sh
+man -l man/sysdiff.1
+```
+
+The source is [man/sysdiff.1](man/sysdiff.1). `make man-check` runs groff with
+all warnings enabled, fails if groff exits nonzero or emits any warning, prints
+captured diagnostics on failure, and does not write tracked output.
 
 For individual functional checks:
 
@@ -127,6 +138,7 @@ no changes
 
 ## Project documents
 
+- [Manual page](man/sysdiff.1)
 - [Snapshot format specification](docs/sysdiff-snapshot-format-and-scope.md)
 - [Design decisions](docs/DECISIONS.md)
 - [Release notes](CHANGELOG.md)
