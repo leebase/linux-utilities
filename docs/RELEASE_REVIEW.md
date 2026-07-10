@@ -67,5 +67,5 @@ The curated public suite contains 32 passing product tests. (The governed source
 repository also runs nine internal infrastructure tests; those are deliberately
 absent from the public seed.) Ubuntu CI installs the declared tools, including
 groff, and runs exactly the same command; `actions/checkout` is pinned to the
-official immutable v4 tag SHA. Do not treat a GitHub Actions result as passed
+official immutable v6 tag SHA. Do not treat a GitHub Actions result as passed
 until a remote exists and its first run completes successfully.
