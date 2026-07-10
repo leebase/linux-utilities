@@ -11,12 +11,14 @@ jobs:
   quality:
     name: Ubuntu quality gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install quality tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes \
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install --yes --no-install-recommends \
             build-essential clang clang-format clang-tidy cppcheck groff \
             python3-pytest valgrind
       - name: Run canonical quality gate
