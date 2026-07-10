@@ -129,8 +129,9 @@
 - [x] Add terminal-safe rendering, checked stdout/EPIPE behavior, a 16 MiB
   aggregate snapshot limit, honest Valgrind/cppcheck gates, leak-enabled ASan,
   immutable CI action pinning, and regression coverage.
-- [ ] Create the public remote and require the first Ubuntu `make quality` CI
-  run to pass before tagging or publishing v0.1.0.
+- [x] Create `leebase/linux-utilities`, push the clean seed, repair the stalled
+  hosted install, upgrade checkout to immutable v6, and obtain a zero-annotation
+  successful Ubuntu `make quality` run (`29119972847`).
 - [x] Add and review `man/sysdiff.1`, integrate warning-gated groff rendering
   into `make quality`/Ubuntu CI, reconcile public docs, and pass the governed
   quality gate with 41 tests.

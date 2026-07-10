@@ -61,7 +61,7 @@
 
 ## Next milestone
 
-The v0.1.0 local candidate is ready to be reseeded and pushed to the newly
-authorized public repository. Require its first Ubuntu CI run to pass before
-tagging or publishing the release. Keep every accepted Low limitation visible.
-Internal Agent-Orch tool-availability findings remain outside the public seed.
+The v0.1.0 seed is public at `https://github.com/leebase/linux-utilities`.
+Ubuntu CI run `29119972847` passed `make quality` with checkout v6 and zero
+annotations. No v0.1.0 tag or GitHub release exists yet. Keep every accepted
+Low limitation visible; internal Agent-Orch findings remain outside the seed.

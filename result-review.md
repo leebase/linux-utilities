@@ -14,6 +14,16 @@
   static analysis, 41 tests, leak-enabled ASan, UBSan, and Valgrind passed.
 - GitHub authentication is active as `leebase`; no remote existed before this
   publication step.
+- Created and pushed `https://github.com/leebase/linux-utilities` from the clean
+  seed. Public commits are `255bdde` (man page), `8abf062` (noninteractive CI
+  install), and `fbdf071` (checkout v6).
+- Initial CI run `29119319248` was cancelled after hosted apt stalled for over
+  six minutes. The bounded repair added noninteractive apt/needrestart handling
+  and a 15-minute job timeout.
+- CI run `29119799430` passed but exposed a Node 20 deprecation annotation from
+  checkout v4. The official immutable checkout-v6 pin removed it.
+- Final CI run `29119972847` passed the Ubuntu `make quality` job in full with
+  zero annotations on commit `fbdf071`.
 
 ## 2026-07-10 — Adversarial public-release remediation
 
