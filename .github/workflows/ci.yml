@@ -17,7 +17,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            build-essential clang clang-format clang-tidy cppcheck \
+            build-essential clang clang-format clang-tidy cppcheck groff \
             python3-pytest valgrind
       - name: Run canonical quality gate
         run: make quality

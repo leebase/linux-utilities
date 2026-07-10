@@ -11,7 +11,8 @@ candidate.
 - `Makefile`, shell fixtures, pytest, sanitizers, static analyzers, and
   Valgrind composition.
 - README, format specification, decisions, design, release notes, license,
-  contribution/security guidance, AI-development disclosure, and Ubuntu CI.
+  contribution/security guidance, AI-development disclosure, Ubuntu CI, and
+  the section-1 man page.
 - Public-seed curation: no private orchestration state, raw run artifacts,
   caches, build output, old review transcripts, or copied Git history.
 
@@ -50,8 +51,9 @@ successfully; that external CI run cannot exist before the remote exists.
   value containing ` -> ` makes the displayed old/new boundary ambiguous.
 - Version 0.1.0 is Linux-focused and CI covers Ubuntu, not a distribution or
   architecture matrix.
-- Packaging is source-first: there is no install target, package, or man page
-  in 0.1.0.
+- Packaging is source-first: there is no install target or package in 0.1.0.
+  A section-1 man page is present at `man/sysdiff.1` and is checked by
+  `make man-check` as part of `make quality`.
 - `sysdiff` compares explicit snapshots only; it does not collect live system
   state.
 
@@ -59,9 +61,11 @@ successfully; that external CI run cannot exist before the remote exists.
 
 The canonical local Linux gate is `make quality`: strict GCC and Clang,
 clang-format, clang-tidy with warnings as errors, cppcheck with a failing error
-status, shell fixtures, pytest, ASan plus LeakSanitizer, UBSan, and Valgrind.
+status, man-page lint via groff (`make man-check`), shell fixtures, pytest,
+ASan plus LeakSanitizer, UBSan, and Valgrind.
 The curated public suite contains 32 passing product tests. (The governed source
 repository also runs nine internal infrastructure tests; those are deliberately
-absent from the public seed.) Ubuntu CI installs the declared tools and runs
-exactly the same command; `actions/checkout` is pinned to the official immutable
-v4 tag SHA.
+absent from the public seed.) Ubuntu CI installs the declared tools, including
+groff, and runs exactly the same command; `actions/checkout` is pinned to the
+official immutable v4 tag SHA. Do not treat a GitHub Actions result as passed
+until a remote exists and its first run completes successfully.
