@@ -1,0 +1,84 @@
+{
+  "$schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "severity_threshold": "High",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "Medium",
+      "file": "tests/test_sysdiff.py",
+      "location": "sysdiff_bin fixture, line 17",
+      "problem": "The session-scoped sysdiff_bin fixture hardcodes the compiler as 'gcc'. On hosts where gcc is absent and only cc or clang is available, fixture setup fails and all collected pytest cases error before exercising compare behavior. The Makefile already honors CC, so the pytest path is less portable than the project build entrypoint.",
+      "proposed_fix": "Compile with os.environ.get('CC', 'cc') (or try CC, then cc, then clang) instead of hardcoding gcc, and keep the same strict -std=c17 -Wall -Wextra -Wpedantic -Werror flags."
+    },
+    {
+      "id": "F002",
+      "severity": "Medium",
+      "file": "tests/smoke_start.py",
+      "location": "line 8",
+      "problem": "smoke_start.py calls time.sleep(30) while tests/smoke_manifest.json sets startup_timeout_seconds to 10. The Agent-Orch smoke_runner therefore SIGTERMs the start helper; artifacts/user-smoke/result.json records start_exit_code -15. For a batch CLI with no real startup phase, the sleep is unnecessary and makes the governed start step unreliable.",
+      "proposed_fix": "Make smoke_start.py exit immediately with status 0 (remove the sleep), or keep any intentional delay strictly below startup_timeout_seconds."
+    },
+    {
+      "id": "F003",
+      "severity": "Low",
+      "file": "src/sysdiff.c",
+      "location": "parse_snapshot blank-line handling, lines 267-270",
+      "problem": "The fixture-slice contract says blank lines are ignored, but parse_snapshot only skips a fully empty line after ending strip. A whitespace-only line such as three spaces has no '=', so it is rejected as malformed with exit status 2. tests/test_sysdiff_fixture.sh and the pytest malformed matrix currently assert that reject behavior, locking in the stricter reading.",
+      "proposed_fix": "Either treat lines whose remaining bytes are only spaces/tabs as blank (ignore them) to match the contract wording, or update the fixture-slice contract and README to state that whitespace-only lines are parse errors."
+    },
+    {
+      "id": "F004",
+      "severity": "Low",
+      "file": "src/sysdiff.c",
+      "location": "copy_range, lines 51-54",
+      "problem": "The guard 'if (len > SIZE_MAX - 1)' is unreachable: both call sites derive lengths from lines already bounded by SYSDIFF_MAX_LINE_BYTES (65536). The dead branch suggests near-SIZE_MAX allocations are possible and makes a NULL return ambiguous between that sentinel and a real malloc failure.",
+      "proposed_fix": "Remove the unreachable SIZE_MAX guard, or replace it with a comment/static assertion that documents the call-site bound instead of a runtime check that can never fire."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m pytest tests/ -q",
+      "exit_code": 0,
+      "summary": "26 tests collected and passed in 0.40s across test_sysdiff.py and test_check_tools.py; zero failures, errors, or skips."
+    }
+  ],
+  "lenses": {
+    "c-quality": {
+      "finding_ids": ["F004"],
+      "justification": "src/sysdiff.c is warning-clean under the project's strict C17 flags, uses centralized parse cleanup, rejects embedded NUL before C-string use, and guards argc < 1. Ownership of snapshot entries is explicit and freed on all error paths. The only C-quality finding is the unreachable copy_range SIZE_MAX guard (F004, Low)."
+    },
+    "ownership": {
+      "finding_ids": [],
+      "justification": "Every allocated key and value is owned by struct Snapshot; snapshot_append transfers ownership only after successful growth; failed appends free the just-copied key/value; parse_snapshot cleanup and compare_snapshots always call snapshot_free. No ownership leaks or double-free paths were identified on reviewed success and error flows."
+    },
+    "undefined-behavior": {
+      "finding_ids": [],
+      "justification": "No UB findings: argv access is guarded for argc < 1, fgetc EOF/error paths are distinct, realloc growth checks prevent wraparound, and qsort comparators only read initialized key pointers. Diff formatting uses owned NUL-terminated strings after validation."
+    },
+    "portability": {
+      "finding_ids": ["F001"],
+      "justification": "Implementation stays on ISO C17 library calls with binary fopen and fgetc-based line reading (no getline). Fixture tests pin LC_ALL=C. Medium portability gap is the pytest fixture hardcoding gcc instead of honoring CC/cc (F001)."
+    },
+    "diagnostics": {
+      "finding_ids": [],
+      "justification": "Status-2 paths write contextual stderr (path, line, key, or argument token) and leave stdout empty. Shell and pytest assertions check those contextual fragments for missing files, malformed lines, duplicates, wrong arity, and unknown commands."
+    },
+    "deterministic-fixture-coverage": {
+      "finding_ids": ["F003"],
+      "justification": "test_sysdiff_fixture.sh plus pytest cover changed/identical/ordering cases, comments, empty values, CRLF equivalence, resource limits, and empty stdout on errors. Low contract drift remains for whitespace-only lines treated as malformed rather than blank (F003)."
+    },
+    "test-quality": {
+      "finding_ids": ["F001", "F003"],
+      "justification": "Helpers run_status/assert_file_equals/assert_empty keep set -e safe while asserting exact stdout goldens and empty error stdout. Coverage of acceptance checks is strong; remaining issues are the gcc-hardcoded pytest fixture (F001) and tests that encode whitespace-only rejection against looser contract wording (F003)."
+    },
+    "smoke-integrity": {
+      "finding_ids": ["F002"],
+      "justification": "scripts/smoke.sh still runs make test and therefore the fixture suite; check_sysdiff_smoke.py reuses that oracle. User-smoke check_exit_code is 0, but smoke_start.py's 30s sleep versus a 10s startup timeout produces start_exit_code -15 (F002)."
+    },
+    "maintainability": {
+      "finding_ids": ["F004"],
+      "justification": "Parsing, sorting/duplicate detection, and formatting remain separable static helpers with named limits and typed status enums. README documents compare usage without live-capture promises. Dead copy_range guard is a small readability defect (F004)."
+    }
+  }
+}

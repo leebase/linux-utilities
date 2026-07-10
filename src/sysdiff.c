@@ -48,7 +48,7 @@ static void snapshot_free(struct Snapshot *snapshot) {
 }
 
 static char *copy_range(const char *text, size_t len) {
-  if (len > SIZE_MAX - 1) {
+  if (len > SYSDIFF_MAX_LINE_BYTES) {
     return NULL;
   }
 
@@ -86,7 +86,10 @@ static enum LineStatus read_line(FILE *file, char **out, size_t *out_len) {
       return LINE_EMBEDDED_NUL;
     }
 
-    if (ch != '\n' && len >= SYSDIFF_MAX_LINE_BYTES) {
+    /* Allow one extra non-newline byte so a trailing CR in CRLF does not
+     * shrink the effective content limit; parse_snapshot enforces the real
+     * SYSDIFF_MAX_LINE_BYTES bound after stripping line endings. */
+    if (ch != '\n' && len >= SYSDIFF_MAX_LINE_BYTES + 1) {
       free(line);
       return LINE_TOO_LONG;
     }
@@ -127,6 +130,16 @@ static bool is_comment_line(const char *line) {
   }
 
   return line[i] == '#';
+}
+
+static bool is_blank_line(const char *line) {
+  size_t i = 0;
+
+  while (line[i] == ' ' || line[i] == '\t') {
+    i++;
+  }
+
+  return line[i] == '\0';
 }
 
 static bool is_key_byte(unsigned char ch) {
@@ -252,7 +265,15 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
       }
     }
 
-    if (line[0] == '\0' || is_comment_line(line)) {
+    if (line_len > SYSDIFF_MAX_LINE_BYTES) {
+      free(line);
+      fprintf(stderr,
+              "%s:%zu: line length limit exceeded (maximum %zu bytes)\n", path,
+              line_no, SYSDIFF_MAX_LINE_BYTES);
+      goto cleanup;
+    }
+
+    if (is_blank_line(line) || is_comment_line(line)) {
       free(line);
       continue;
     }
@@ -405,6 +426,11 @@ static int compare_snapshots(const char *before_path, const char *after_path) {
 }
 
 int main(int argc, char **argv) {
+  if (argc < 1) {
+    fputs("sysdiff: invalid argument vector\n", stderr);
+    return 2;
+  }
+
   if (argc == 1) {
     print_usage(stdout);
     return 0;

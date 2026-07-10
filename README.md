@@ -1,15 +1,9 @@
-# Linux Utilities
+# sysdiff
 
-Small, auditable Linux utilities built under the autonomous
-`linux-utilities` mission.
-
-## Description
-
-The first utility is `sysdiff`: a lightweight C program for comparing
-explicit system snapshot files. The snapshot comparison feature delivered by
-the current slice is `sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT`, which
-reads two user-provided plain-text `key=value` snapshots, validates them, and
-prints a deterministic diff sorted by key.
+`sysdiff` 0.1.0 is a small, auditable C17 command-line utility for comparing
+explicit system snapshot files. It reads two user-provided plain-text
+`key=value` snapshots, validates them fully, and prints a deterministic diff
+sorted by key.
 
 This slice is intentionally narrow. It compares only explicit snapshot files in
 the supported format; it is not a replacement for `diff(1)`, does not scan
@@ -41,29 +35,33 @@ The compare command exits with:
 Diagnostics are written to stderr. Diff output and the `no changes` result are
 written to stdout.
 
-## Building
+## Build and verify
 
-Build the executable from the repository root:
+Build only the executable:
 
 ```sh
-make
+make sysdiff
 ```
 
-The build writes the utility to `build/sysdiff`. The default build uses the
-configured `CC` with strict C17 warning flags.
+The executable is written to `build/sysdiff`. The default compiler is `cc`; set
+`CC` to select another C compiler.
 
-Run the current tests from the repository root:
+Run the release quality gate:
 
 ```sh
-make test
+make quality
+```
+
+It runs strict GCC and Clang checks, clang-format, clang-tidy, cppcheck,
+fixture and pytest suites, AddressSanitizer, UndefinedBehaviorSanitizer, and
+Valgrind. Ubuntu CI runs the same command.
+
+For the individual functional checks:
+
+```sh
+python3 -m pytest tests/ -q
 bash tests/test_sysdiff_fixture.sh
 ./scripts/smoke.sh
-```
-
-For broader local checks, use:
-
-```sh
-make make-quality
 ```
 
 ## Snapshot Format
@@ -84,7 +82,8 @@ another.entry=some value
 empty.value=
 ```
 
-Blank lines and lines whose first non-space character is `#` are ignored.
+Blank lines, including lines made only of spaces and tabs, and lines whose first
+non-space character is `#` are ignored.
 Keys are compared byte-for-byte and are not trimmed. Values are compared
 byte-for-byte after the trailing line ending is removed. Duplicate keys in one
 snapshot are errors.
@@ -104,31 +103,10 @@ For identical snapshots, stdout is exactly:
 no changes
 ```
 
-## Tool Availability Check
+## Project documents
 
-Before authoring or launching governed Agent-Orch work, use the repository-local
-tool availability check to confirm that the routed worker harnesses expected by
-this project are discoverable on `PATH`:
-
-```sh
-python3 scripts/check_tools.py
-```
-
-The script currently verifies `codex_cli` for the `implementation_worker` route
-through the `codex` executable and `claude_code` for the `slice_reviewer` route
-through the `claude` executable. It is a read-only local preflight: it reports
-missing routed worker infrastructure early, but it does not launch workflows,
-start model sessions, install tools, repair routes, contact the network, or
-change `sysdiff` behavior. See
-[docs/tool-availability-check.md](docs/tool-availability-check.md) for usage,
-output, exit status, and limitation details.
-
-## Engineering Standard
-
-- One executable per utility.
-- Plain C, preferably C17 or C23.
-- Minimal dependencies.
-- `make` first; CMake only when it clearly simplifies the project.
-- Automated quality gates for compiler warnings, formatting, static analysis,
-  sanitizers, Valgrind, unit tests, integration tests, regression tests, and
-  fixtures.
+- [Snapshot format specification](docs/sysdiff-snapshot-format-and-scope.md)
+- [Design decisions](docs/DECISIONS.md)
+- [Release notes](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [AI-assisted development safeguards](docs/AI_DEVELOPMENT.md)

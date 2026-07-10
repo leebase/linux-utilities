@@ -2,12 +2,18 @@ CC ?= cc
 CFLAGS ?= -std=c17 -Wall -Wextra -Wpedantic -Werror -O2
 PYTHON ?= python3
 
-STRICT_CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -O2
-SANITIZE_CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+SRC := src/sysdiff.c
+STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
+STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
+ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
+UBSAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=undefined -fno-omit-frame-pointer
+CLANG_TIDY_CHECKS := clang-analyzer-*,bugprone-*,performance-*,portability-*,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
 
-.PHONY: all sysdiff test clean make-quality test-suite sanitizer-test valgrind-test
+.PHONY: all sysdiff test check clean quality make-quality test-suite test-shell \
+	gcc-strict clang-syntax format-check clang-tidy-check cppcheck-check \
+	sanitizer-test asan-test ubsan-test valgrind-test
 
-all: build/sysdiff
+all: quality
 
 sysdiff: build/sysdiff
 
@@ -15,46 +21,61 @@ build/sysdiff: src/sysdiff.c
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $<
 
-test: build/sysdiff
-	./tests/test_sysdiff.sh
+test: quality
 
-make-quality:
+check: quality
+
+quality:
 	$(MAKE) clean
-	$(MAKE) CC=gcc CFLAGS="$(STRICT_CFLAGS)"
-	$(MAKE) clean
-	$(MAKE) CC=clang CFLAGS="$(STRICT_CFLAGS)"
+	$(MAKE) gcc-strict
+	$(MAKE) clang-syntax
+	$(MAKE) format-check
+	$(MAKE) clang-tidy-check
+	$(MAKE) cppcheck-check
 	$(MAKE) test-suite
 	$(MAKE) sanitizer-test
-	$(MAKE) clean
-	$(MAKE) CC=gcc CFLAGS="$(STRICT_CFLAGS)"
 	$(MAKE) valgrind-test
 
+make-quality: quality
+
+gcc-strict:
+	$(MAKE) CC=gcc CFLAGS="$(STRICT_CFLAGS)" build/sysdiff
+
+clang-syntax:
+	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
+
+format-check:
+	clang-format --dry-run --Werror $(SRC)
+
+clang-tidy-check:
+	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
+
+cppcheck-check:
+	cppcheck --quiet --enable=all --suppress=missingIncludeSystem $(SRC)
+
+test-shell: build/sysdiff
+	./tests/test_sysdiff.sh
+
 test-suite: build/sysdiff
-	$(MAKE) test
+	$(MAKE) test-shell
 	$(PYTHON) -m pytest tests/ -q
 
-sanitizer-test:
-	@if command -v clang >/dev/null 2>&1; then \
-		$(MAKE) clean; \
-		$(MAKE) CC=clang CFLAGS="$(SANITIZE_CFLAGS)"; \
-		ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 $(MAKE) test; \
-	else \
-		printf 'warning: clang not found; skipping sanitizer-test\n' >&2; \
-	fi
+sanitizer-test: asan-test ubsan-test
 
-# Valgrind is warning-only when the valgrind executable is unavailable in the
-# current environment; when present, any reported memory error is release-blocking.
-valgrind-test: build/sysdiff
-	@if command -v valgrind >/dev/null 2>&1; then \
-		tmp=$$(mktemp -d); \
-		trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
-		printf 'same.key=value\n' >"$$tmp/snapshot"; \
-		valgrind --quiet --error-exitcode=1 --leak-check=full \
-			--errors-for-leak-kinds=definite,possible \
-			./build/sysdiff compare "$$tmp/snapshot" "$$tmp/snapshot" >/dev/null; \
-	else \
-		printf 'warning: valgrind not found; skipping valgrind-test\n' >&2; \
-	fi
+asan-test:
+	$(MAKE) clean
+	$(MAKE) CC=clang CFLAGS="$(ASAN_CFLAGS)" build/sysdiff
+	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 $(MAKE) test-suite
+
+ubsan-test:
+	$(MAKE) clean
+	$(MAKE) CC=clang CFLAGS="$(UBSAN_CFLAGS)" build/sysdiff
+	UBSAN_OPTIONS=halt_on_error=1 $(MAKE) test-suite
+
+valgrind-test:
+	$(MAKE) clean
+	$(MAKE) CC=gcc CFLAGS="$(STRICT_CFLAGS)" build/sysdiff
+	SYSDIFF_UNDER_VALGRIND=1 ./tests/test_sysdiff.sh
 
 clean:
 	rm -rf build

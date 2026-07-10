@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -14,7 +15,7 @@ def sysdiff_bin(tmp_path_factory):
     binary = build_dir / "sysdiff"
     subprocess.run(
         [
-            "gcc",
+            os.environ.get("CC", "cc"),
             "-std=c17",
             "-Wall",
             "-Wextra",
@@ -44,6 +45,11 @@ def write_snapshot(path, text):
 
 
 def test_help_and_version(sysdiff_bin):
+    no_args_result = run_sysdiff(sysdiff_bin)
+    assert no_args_result.returncode == 0
+    assert "usage: sysdiff" in no_args_result.stdout
+    assert no_args_result.stderr == ""
+
     help_result = run_sysdiff(sysdiff_bin, "--help")
     assert help_result.returncode == 0
     assert "usage: sysdiff" in help_result.stdout
@@ -118,6 +124,18 @@ def test_identical_snapshots_report_no_changes_and_accept_final_line_without_new
     assert result.stderr == ""
 
 
+def test_whitespace_only_space_and_tab_lines_are_ignored(sysdiff_bin, tmp_path):
+    whitespace_only = write_snapshot(
+        tmp_path / "whitespace-only.snapshot", " \t \n\t\t\n"
+    )
+
+    result = run_sysdiff(sysdiff_bin, "compare", whitespace_only, whitespace_only)
+
+    assert result.returncode == 0
+    assert result.stdout == "no changes\n"
+    assert result.stderr == ""
+
+
 def test_input_order_does_not_affect_diff_output(sysdiff_bin, tmp_path):
     before_a = write_snapshot(
         tmp_path / "before-a",
@@ -159,7 +177,6 @@ def test_input_order_does_not_affect_diff_output(sysdiff_bin, tmp_path):
         ("/starts.with.slash=value\n", "invalid key syntax"),
         ("ends.with.dot.=value\n", "invalid key syntax"),
         ("path..traversal=value\n", "invalid key syntax"),
-        ("   \n", "missing '=' separator"),
         ("dup.key=first\ndup.key=second\n", "duplicate key"),
     ],
 )

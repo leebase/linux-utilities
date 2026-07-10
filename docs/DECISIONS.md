@@ -63,6 +63,20 @@ surface is centered on strict GCC/Clang builds, fixture tests, smoke tests,
 sanitizers, Valgrind when available, and static-analysis-oriented follow-up
 work.
 
+### v0.1.0 Release Contract
+
+The first public release is version `0.1.0`. Its stable command surface is
+`--help`, `--version`, and `compare BEFORE_SNAPSHOT AFTER_SNAPSHOT`; its stable
+comparison lines are `+ key=value`, `- key=value`, and
+`~ key: old -> new`. The release intentionally leaves values opaque, so the
+changed-line delimiter is presentation rather than a reversible serialization.
+
+### Whitespace-Only Lines Are Blank
+
+Format `1` ignores a line that contains only horizontal spaces and tabs, just
+as it ignores an empty line. Leading horizontal whitespace before a comment is
+used only to identify a whole-line comment; whitespace in records remains data.
+
 ## Alternatives Considered
 
 ### Live System Capture

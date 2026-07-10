@@ -50,7 +50,7 @@ file./etc/ssh/sshd_config.sha256=3b7f6f...
 - A line is terminated by `\n` or by end of file.
 - A single trailing `\r` before `\n` is part of the line ending and is removed.
 - A final line without a trailing newline is valid.
-- Empty lines are ignored.
+- Empty lines, including lines made only of spaces and tabs, are ignored.
 - Lines whose first byte after leading spaces or tabs is `#` are comments and
   are ignored.
 - Inline comments are not supported. A `#` byte inside a key or value is data.
@@ -331,7 +331,8 @@ Format parsing:
 
 - Accept a valid file containing `sysdiff.snapshot_version=1`.
 - Accept a valid file without `sysdiff.snapshot_version`.
-- Accept blank lines and whole-line comments.
+- Accept blank lines (including whitespace-only space/tab lines) and whole-line
+  comments.
 - Accept a final record without trailing newline.
 - Accept an empty value such as `service.ssh.active=`.
 - Preserve spaces, `#`, and extra `=` bytes inside values.

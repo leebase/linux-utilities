@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
+# Deterministic fixture acceptance suite for `sysdiff compare`.
+# Covers contract status classes 0/1/2, exact sorted stdout, ordering
+# independence, parsing edge cases, and empty stdout on errors.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/build/sysdiff"
+BIN="${SYSDIFF_BIN:-$ROOT/build/sysdiff}"
 WORKDIR=""
 export LC_ALL=C
 
@@ -27,10 +30,18 @@ run_status() {
     local stdout="$2"
     local stderr="$3"
     local status
+    local vg_log=""
     shift 3
 
     set +e
-    "$@" >"$stdout" 2>"$stderr"
+    if [ "${SYSDIFF_UNDER_VALGRIND:-0}" = "1" ]; then
+        vg_log="$WORKDIR/valgrind.log"
+        valgrind --quiet --error-exitcode=1 --leak-check=full \
+            --errors-for-leak-kinds=definite,possible \
+            --log-file="$vg_log" "$@" >"$stdout" 2>"$stderr"
+    else
+        "$@" >"$stdout" 2>"$stderr"
+    fi
     status="$?"
     set -e
 
@@ -41,6 +52,10 @@ run_status() {
         sed 's/^/  /' "$stdout" >&2
         printf 'stderr:\n' >&2
         sed 's/^/  /' "$stderr" >&2
+        if [ -n "$vg_log" ] && [ -s "$vg_log" ]; then
+            printf 'valgrind log:\n' >&2
+            sed 's/^/  /' "$vg_log" >&2
+        fi
         exit 1
     fi
 }
@@ -108,7 +123,11 @@ expected_diff="$WORKDIR/expected.diff.golden"
 expected_no_changes="$WORKDIR/expected-no-changes.golden"
 stdout="$WORKDIR/stdout"
 stderr="$WORKDIR/stderr"
+printf 'no changes\n' >"$expected_no_changes"
 
+# --- Status 1: valid changed snapshots with exact sorted stdout for added,
+# removed, and changed keys. Unchanged keys emit nothing. Also covers
+# comments, blank lines, values containing spaces, and empty values.
 cat >"$before" <<'EOF'
 # before snapshot
 z.changed=old value
@@ -119,6 +138,8 @@ space.value=old value with spaces
 removed.empty=
 removed.key=gone
 m.changed=before
+hash.value=old # note
+eq.value=old=hash
 EOF
 
 cat >"$after" <<'EOF'
@@ -130,11 +151,15 @@ space.value=new value with spaces
 z.changed=new value
 m.changed=after
 added.empty=
+hash.value=new # note
+eq.value=new=hash
 EOF
 
 cat >"$expected_diff" <<'EOF'
 + added.empty=
 + added.key=new value
+~ eq.value: old=hash -> new=hash
+~ hash.value: old # note -> new # note
 ~ m.changed: before -> after
 - removed.empty=
 - removed.key=gone
@@ -146,27 +171,161 @@ run_status 1 "$stdout" "$stderr" "$BIN" compare "$before" "$after"
 assert_file_equals "$expected_diff" "$stdout"
 assert_empty "$stderr"
 assert_diff_prefixes "$stdout"
+# Unchanged keys must not appear in diff output.
+if grep -Fq 'same.keep' "$stdout"; then
+    fail "unchanged key same.keep must not appear in diff stdout"
+fi
 
+# --- Status 0: identical snapshots print exactly "no changes".
 run_status 0 "$stdout" "$stderr" "$BIN" compare "$before" "$before"
-printf 'no changes\n' >"$expected_no_changes"
 assert_file_equals "$expected_no_changes" "$stdout"
 assert_empty "$stderr"
 
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$after" "$after"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# Identical entry sets that differ only by comments and blank lines.
+comments_a="$WORKDIR/comments-a.snapshot"
+comments_b="$WORKDIR/comments-b.snapshot"
+cat >"$comments_a" <<'EOF'
+# first layout
+a.key=one
+
+b.key=two
+EOF
+cat >"$comments_b" <<'EOF'
+b.key=two
+	# tab-indented comment
+
+a.key=one
+# trailing
+EOF
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$comments_a" "$comments_b"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# --- Empty values: added empty, removed empty, and empty <-> non-empty change.
+empty_before="$WORKDIR/empty-before.snapshot"
+empty_after="$WORKDIR/empty-after.snapshot"
+expected_empty="$WORKDIR/expected.empty.golden"
+cat >"$empty_before" <<'EOF'
+keep.empty=
+gone.empty=
+flip.empty=
+flip.full=text
+EOF
+cat >"$empty_after" <<'EOF'
+keep.empty=
+added.empty=
+flip.empty=text
+flip.full=
+EOF
+printf '%s\n' \
+    '+ added.empty=' \
+    '~ flip.empty:  -> text' \
+    '~ flip.full: text -> ' \
+    '- gone.empty=' >"$expected_empty"
+run_status 1 "$stdout" "$stderr" "$BIN" compare "$empty_before" "$empty_after"
+assert_file_equals "$expected_empty" "$stdout"
+assert_empty "$stderr"
+assert_diff_prefixes "$stdout"
+
+# --- Ordering independence: same logical entries in different input order
+# must produce the same sorted stdout.
+order_a="$WORKDIR/order-a.snapshot"
+order_b="$WORKDIR/order-b.snapshot"
+order_c="$WORKDIR/order-c.snapshot"
+order_d="$WORKDIR/order-d.snapshot"
+expected_order="$WORKDIR/expected.order.golden"
+stdout_order_ab="$WORKDIR/stdout.order.ab"
+stdout_order_cd="$WORKDIR/stdout.order.cd"
+
+cat >"$order_a" <<'EOF'
+# unsorted before
+c.key=three
+a.key=one
+b.key=two
+EOF
+
+cat >"$order_b" <<'EOF'
+b.key=TWO
+a.key=ONE
+d.key=four
+EOF
+
+# Same logical content as order_a / order_b, different line order and comments.
+cat >"$order_c" <<'EOF'
+a.key=one
+
+b.key=two
+# trailing comment
+c.key=three
+EOF
+
+cat >"$order_d" <<'EOF'
+d.key=four
+a.key=ONE
+b.key=TWO
+EOF
+
+cat >"$expected_order" <<'EOF'
+~ a.key: one -> ONE
+~ b.key: two -> TWO
+- c.key=three
++ d.key=four
+EOF
+
+run_status 1 "$stdout_order_ab" "$stderr" "$BIN" compare "$order_a" "$order_b"
+assert_file_equals "$expected_order" "$stdout_order_ab"
+assert_empty "$stderr"
+assert_diff_prefixes "$stdout_order_ab"
+
+run_status 1 "$stdout_order_cd" "$stderr" "$BIN" compare "$order_c" "$order_d"
+assert_file_equals "$expected_order" "$stdout_order_cd"
+assert_empty "$stderr"
+assert_file_equals "$stdout_order_ab" "$stdout_order_cd"
+
+# --- Status 2: missing files. Empty stdout, non-empty contextual stderr.
 missing="$WORKDIR/does-not-exist.snapshot"
 run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$missing"
 assert_empty "$stdout"
 assert_nonempty "$stderr"
 assert_contains "$stderr" "$missing"
 
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$missing" "$after"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$missing"
+
+# --- Status 2: wrong argument counts. Empty stdout, contextual stderr.
+run_status 2 "$stdout" "$stderr" "$BIN" compare
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "compare"
+
 run_status 2 "$stdout" "$stderr" "$BIN" compare "$before"
 assert_empty "$stdout"
 assert_nonempty "$stderr"
+assert_contains "$stderr" "compare"
 
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$after" "$WORKDIR/extra.snapshot"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "compare"
+
+# --- Status 2: unknown command. Empty stdout, contextual stderr.
 run_status 2 "$stdout" "$stderr" "$BIN" unknown-command
 assert_empty "$stdout"
 assert_nonempty "$stderr"
 assert_contains "$stderr" "unknown-command"
 
+run_status 2 "$stdout" "$stderr" "$BIN" nope
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "nope"
+
+# --- Status 2: malformed lines (missing '=', empty key). Empty stdout.
 malformed="$WORKDIR/malformed.snapshot"
 cat >"$malformed" <<'EOF'
 valid.key=value
@@ -177,7 +336,54 @@ run_status 2 "$stdout" "$stderr" "$BIN" compare "$malformed" "$after"
 assert_empty "$stdout"
 assert_nonempty "$stderr"
 assert_contains "$stderr" "$malformed"
+assert_contains "$stderr" "${malformed}:2"
 
+# Malformed after path must not emit partial diff stdout.
+malformed_after="$WORKDIR/malformed-after.snapshot"
+cat >"$malformed_after" <<'EOF'
+a.key=new
+also missing separator
+EOF
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$malformed_after"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$malformed_after"
+assert_contains "$stderr" "${malformed_after}:2"
+
+empty_key="$WORKDIR/empty-key.snapshot"
+cat >"$empty_key" <<'EOF'
+=value-without-key
+EOF
+
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$empty_key" "$after"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$empty_key"
+assert_contains "$stderr" "${empty_key}:1"
+
+# Whitespace-only space/tab lines are blank entries and are ignored.
+ws_only="$WORKDIR/ws-only.snapshot"
+printf ' \t \n\t\t\n' >"$ws_only"
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$ws_only" "$ws_only"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# Embedded NUL bytes are malformed input (empty stdout, contextual stderr).
+embedded_nul="$WORKDIR/embedded-nul.snapshot"
+printf 'good.key=ok\nbad\0.key=value\n' >"$embedded_nul"
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$embedded_nul" "$after"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$embedded_nul"
+assert_contains "$stderr" "embedded NUL"
+
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$embedded_nul"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$embedded_nul"
+assert_contains "$stderr" "embedded NUL"
+
+# --- Status 2: duplicate keys. Empty stdout, contextual stderr with key.
 duplicate="$WORKDIR/duplicate.snapshot"
 cat >"$duplicate" <<'EOF'
 dup.key=first
@@ -190,3 +396,131 @@ assert_empty "$stdout"
 assert_nonempty "$stderr"
 assert_contains "$stderr" "$duplicate"
 assert_contains "$stderr" "dup.key"
+
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$duplicate"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$duplicate"
+assert_contains "$stderr" "dup.key"
+
+# --- CRLF equivalence: CRLF-terminated snapshots compare like LF ones.
+crlf_before="$WORKDIR/crlf-before.snapshot"
+crlf_after="$WORKDIR/crlf-after.snapshot"
+lf_before="$WORKDIR/lf-before.snapshot"
+lf_after="$WORKDIR/lf-after.snapshot"
+expected_crlf="$WORKDIR/expected.crlf.golden"
+stdout_crlf="$WORKDIR/stdout.crlf"
+stdout_lf="$WORKDIR/stdout.lf"
+
+printf 'same.keep=stable\r\nz.changed=old value\r\nremoved.key=gone\r\n' >"$crlf_before"
+printf 'same.keep=stable\r\nz.changed=new value\r\nadded.key=new\r\n' >"$crlf_after"
+printf 'same.keep=stable\nz.changed=old value\nremoved.key=gone\n' >"$lf_before"
+printf 'same.keep=stable\nz.changed=new value\nadded.key=new\n' >"$lf_after"
+cat >"$expected_crlf" <<'EOF'
++ added.key=new
+- removed.key=gone
+~ z.changed: old value -> new value
+EOF
+
+run_status 1 "$stdout_crlf" "$stderr" "$BIN" compare "$crlf_before" "$crlf_after"
+assert_file_equals "$expected_crlf" "$stdout_crlf"
+assert_empty "$stderr"
+assert_diff_prefixes "$stdout_crlf"
+
+run_status 1 "$stdout_lf" "$stderr" "$BIN" compare "$lf_before" "$lf_after"
+assert_file_equals "$expected_crlf" "$stdout_lf"
+assert_empty "$stderr"
+assert_file_equals "$stdout_crlf" "$stdout_lf"
+
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$crlf_before" "$lf_before"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# Mixed endings within one file still parse to the same logical entries.
+mixed_endings="$WORKDIR/mixed-endings.snapshot"
+printf 'a.key=one\r\nb.key=two\n' >"$mixed_endings"
+lf_mixed="$WORKDIR/lf-mixed.snapshot"
+printf 'a.key=one\nb.key=two\n' >"$lf_mixed"
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$mixed_endings" "$lf_mixed"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# --- Resource limits: line length and entry count (exit 2, empty stdout).
+MAX_LINE_BYTES=65536
+MAX_SNAPSHOT_ENTRIES=65536
+
+line_at_limit="$WORKDIR/line-at-limit.snapshot"
+line_over_limit="$WORKDIR/line-over-limit.snapshot"
+line_crlf_at_limit="$WORKDIR/line-crlf-at-limit.snapshot"
+python3 - "$line_at_limit" "$line_over_limit" "$line_crlf_at_limit" "$MAX_LINE_BYTES" <<'PY'
+import sys
+
+at_limit, over_limit, crlf_at_limit, max_bytes_s = sys.argv[1:5]
+max_bytes = int(max_bytes_s)
+prefix = b"a.key="
+pad = max_bytes - len(prefix)
+if pad < 0:
+    raise SystemExit("MAX_LINE_BYTES too small for test prefix")
+content = prefix + (b"x" * pad)
+open(at_limit, "wb").write(content + b"\n")
+open(over_limit, "wb").write(content + b"y\n")
+open(crlf_at_limit, "wb").write(content + b"\r\n")
+PY
+
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$line_at_limit" "$line_at_limit"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+# CRLF at the content-length boundary must match LF (fixes prior off-by-one).
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$line_at_limit" "$line_crlf_at_limit"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
+
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$line_over_limit" "$after"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$line_over_limit"
+assert_contains "$stderr" "line length limit"
+
+run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$line_over_limit"
+assert_empty "$stdout"
+assert_nonempty "$stderr"
+assert_contains "$stderr" "$line_over_limit"
+assert_contains "$stderr" "line length limit"
+
+# Parsing 65536 entries under Valgrind is prohibitively slow; keep full
+# coverage on the normal and sanitizer paths that make test already runs.
+if [ "${SYSDIFF_UNDER_VALGRIND:-0}" != "1" ]; then
+    entries_at_limit="$WORKDIR/entries-at-limit.snapshot"
+    entries_over_limit="$WORKDIR/entries-over-limit.snapshot"
+    python3 - "$entries_at_limit" "$entries_over_limit" "$MAX_SNAPSHOT_ENTRIES" <<'PY'
+import sys
+
+at_limit, over_limit, max_entries_s = sys.argv[1:4]
+max_entries = int(max_entries_s)
+with open(at_limit, "w", encoding="utf-8") as fh:
+    for i in range(max_entries):
+        fh.write(f"k.{i}=v\n")
+with open(over_limit, "w", encoding="utf-8") as fh:
+    for i in range(max_entries + 1):
+        fh.write(f"k.{i}=v\n")
+PY
+
+    run_status 0 "$stdout" "$stderr" "$BIN" compare "$entries_at_limit" "$entries_at_limit"
+    assert_file_equals "$expected_no_changes" "$stdout"
+    assert_empty "$stderr"
+
+    run_status 2 "$stdout" "$stderr" "$BIN" compare "$entries_over_limit" "$after"
+    assert_empty "$stdout"
+    assert_nonempty "$stderr"
+    assert_contains "$stderr" "$entries_over_limit"
+    assert_contains "$stderr" "entry limit"
+
+    run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$entries_over_limit"
+    assert_empty "$stdout"
+    assert_nonempty "$stderr"
+    assert_contains "$stderr" "$entries_over_limit"
+    assert_contains "$stderr" "entry limit"
+fi
+
+printf 'ok: sysdiff fixture acceptance tests passed\n'

@@ -3,7 +3,9 @@
 ## Current architecture
 
 - Primary language: C.
-- Build system: `make`.
+- Build system: `make`; the quality target surface includes `test`,
+  `test-suite`, `check`, `sanitizer-test`, `valgrind-test`, `make-quality`, and
+  `clean`.
 - Default worker runtime: `codex_cli`.
 - Smoke surface: `scripts/smoke.sh` runs `make test`.
 - Smoke manifest surface: `tests/smoke_manifest.json` is the Agent-Orch
@@ -52,19 +54,27 @@
   typed line/append statuses and a centralized cleanup block for parse errors.
   The latest review found no memory-ownership defects in this structure.
 - `Makefile` keeps strict C17 warning-as-error builds and exposes
-  `sanitizer-test` for ASan/UBSan coverage when `clang` is present. The
-  aggregate `make-quality` target performs a clean GCC rebuild before
-  Valgrind.
-- Current caveat: standalone `make valgrind-test` depends on `build/sysdiff`
-  and does not force a non-sanitized rebuild. Running it immediately after
-  `make sanitizer-test` can reuse an ASan-instrumented binary and make
-  Valgrind abort. This is open review finding F003 in
-  `code-reviews/review-sysdiff-c-source.verdict.json`.
-- Current caveat: at the line limit boundary, CRLF-terminated lines effectively
-  allow one fewer data byte than LF-terminated lines. This is open review
-  finding F002.
-- Current test gap: CRLF-vs-LF equivalence and both resource-limit error paths
-  are not covered by tests. This is open review finding F001.
+  `sanitizer-test` for ASan/UBSan coverage when `clang` is present. `check`
+  delegates to `test-suite`. The aggregate `make-quality` target performs a
+  clean GCC rebuild before Valgrind.
+- `valgrind-test` always cleans and rebuilds a strict GCC binary, so it does
+  not reuse sanitizer instrumentation. CRLF/LF line-limit equivalence and both
+  resource-limit error paths are fixture-covered.
+
+## Craftsmanship Review State
+
+- Agent-Orch run `c434e00a3772` completed the required C craftsmanship review
+  before new feature selection. The verdict file is
+  `code-reviews/craftsmanship-review.verdict.json`; it reports `pass` at the
+  High/Critical threshold, with no High or Critical findings.
+- No product architecture expansion was approved during the craftsmanship
+  review. The explicit snapshot-only `sysdiff compare BEFORE_SNAPSHOT
+  AFTER_SNAPSHOT` scope remains in force.
+- Release preparation resolved the test and smoke infrastructure follow-ups:
+  pytest uses `$CC` with `cc` fallback and the smoke start helper exits
+  immediately. The remaining accepted Low limitation is presentation-only:
+  changed values containing ` -> ` are not reversibly delimited in format-1
+  output.
 
 ## Direction
 

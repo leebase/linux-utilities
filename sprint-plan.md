@@ -19,10 +19,10 @@
   docs record the minimal C quality-gate harness result, smoke pass, review
   pass verdict, and open findings F-01 through F-03; leave this open until
   Agent-Orch records the closeout step as passed.
-- [ ] Resolve minimal C harness review findings F-01 through F-03 where still
-  relevant. The changed-line ambiguity in F-01 remains open; the old dead
-  `copy_range` guard and missing sanitizer target concerns have been reworked
-  by later slices but should be reconciled against their original verdicts.
+- [ ] Resolve minimal C harness review finding F-01 where still relevant. The
+  changed-line ambiguity for values containing ` -> ` remains open; later
+  slices reworked sanitizer/target concerns and should be reconciled against
+  their original verdicts only as historical context.
 - [x] Deliver and review the sysdiff core parser/comparer slice. Resumed run
   `b14e0191e257` inherited implementation from `aa1eaef577cd`, passed the
   user smoke gate, and received a `pass` verdict at the High-severity threshold
@@ -33,13 +33,14 @@
   Agent-Orch records the closeout step as passed.
 - [x] Resolve the implementation side of sysdiff core F001 by adding
   deterministic line-length and entry-count limits in run `c02d741432d3`.
-  Follow-up tests are still required by the latest C-source review F001 before
-  treating the acceptance coverage as complete.
+- [x] Deliver fixture acceptance coverage for CRLF equivalence and
+  line/entry resource-limit failures in run `eab8bbd05f50`. The latest
+  fixture-acceptance review confirms those paths are exercised by
+  `tests/test_sysdiff_fixture.sh` (entry-limit skipped under Valgrind for
+  runtime).
 - [x] Resolve the latest C-source memory-ownership and sanitizer availability
   concerns: `parse_snapshot` now uses explicit centralized cleanup, and
   `make sanitizer-test` provides ASan/UBSan coverage when `clang` is present.
-  These are not open findings in
-  `code-reviews/review-sysdiff-c-source.verdict.json`.
 - [x] Deliver and review the routed tool-availability preflight. Run
   `b6deb04a6055`, `add-routed-tool-availability-check`, added
   `scripts/check_tools.py`, `tests/test_check_tools.py`, contract/plan/docs,
@@ -85,16 +86,40 @@
   of `step_09_closeout_handoff_docs` retried because the handoff did not match
   the current review verdict; attempt 2 preserved the current verdict details
   and Agent-Orch now records the run as `COMPLETED`.
-- [ ] Resolve current C-source review finding F001 by adding tests for
-  CRLF-vs-LF equivalence, line-too-long failure, and too-many-entries failure,
-  with exit status `2`, empty stdout, and contextual diagnostics for the limit
-  paths.
-- [ ] Resolve current C-source review finding F002 by fixing or explicitly
-  documenting the one-byte CRLF line-limit boundary discrepancy.
-- [ ] Resolve current C-source review finding F003 by making standalone
-  `make valgrind-test` robust after `make sanitizer-test`, or by documenting
-  the invocation constraint clearly enough for the review gate.
-- [ ] Complete a C craftsmanship review before selecting additional sysdiff
-  feature work. Lee approved this as the next quality gate on 2026-07-09; the
-  review must cover `src/sysdiff.c`, `Makefile`, tests, smoke manifest, and
-  user-facing docs, with Medium-or-higher findings blocking new features.
+- [x] Complete a C craftsmanship review before selecting additional sysdiff
+  feature work. Agent-Orch run `c434e00a3772` wrote
+  `code-reviews/craftsmanship-review.md` and
+  `code-reviews/craftsmanship-review.verdict.json`; the verdict is `pass` at
+  the High/Critical threshold with no High or Critical findings.
+- [x] Add the Makefile `check` alias required by the quality-gate surface.
+  `Makefile` now includes `check` in `.PHONY`, and `check` delegates to
+  `test-suite`; `code-reviews/review-makefile-quality-gates.verdict.json`
+  passed this narrow repair at the High threshold.
+- [x] Deliver and review Agent-Orch run `eab8bbd05f50`,
+  `sysdiff_fixture_diff_acceptance_tests`. Authored fixture acceptance tests,
+  verified fixture compare behavior, passed its then-current user smoke (whose
+  start helper timed out), and received a `pass`
+  verdict at the High threshold in
+  `code-reviews/review-sysdiff-fixture-acceptance-tests.verdict.json`.
+- [x] Finish closeout validation for Agent-Orch run `eab8bbd05f50`; Agent-Orch
+  records the run as `COMPLETED`.
+- [x] Resolve fixture-acceptance review F001 by making the pytest `sysdiff_bin`
+  fixture portable instead of hardcoding `gcc`; prefer `$CC`, `cc`, or
+  `clang`, keeping the same strict C17 warning flags.
+- [x] Resolve fixture-acceptance review F002 by making `tests/smoke_start.py`
+  exit immediately with status 0, or by keeping any intentional delay strictly
+  below `tests/smoke_manifest.json`'s 10-second `startup_timeout_seconds`.
+- [x] Resolve fixture-acceptance review F003 by treating whitespace-only
+  lines as blank (ignore them) to match the fixture-slice contract, or updating
+  the contract and README to state that whitespace-only lines are parse errors.
+- [x] Resolve fixture-acceptance review F004 by removing the unreachable
+  `copy_range` `SIZE_MAX` guard or replacing it with a comment/static assertion
+  that documents the call-site bound.
+- [x] Confirm `argc < 1` guard is present in `main` before `argv[1]` access
+  (noted by the fixture-acceptance review; supersedes craftsmanship F005 as
+  current evidence).
+- [x] Confirm standalone `make valgrind-test` cleans and rebuilds before
+  Valgrind (noted by the fixture-acceptance review; supersedes the earlier
+  Makefile/C-source Valgrind-after-sanitizer Medium as current evidence).
+- [x] Prepare and verify the `sysdiff` v0.1.0 public release candidate: fresh
+  Linux `make quality` pass, CI, curated release docs, and release review.

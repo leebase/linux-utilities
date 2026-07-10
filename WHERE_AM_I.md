@@ -6,10 +6,11 @@
 - AgentFlow docs are present and should be read at session start.
 - Agent-Orch scaffold and templates are present.
 - Product baseline is intentionally tiny: `sysdiff --help` and `--version` plus
-  a strict C build and smoke test.
+  a strict C build and smoke test, now with fixture-backed
+  `sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT`.
 - Run `fa24bb888cc0` produced the durable documentation contract for the first
-  release-oriented `sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT` slice. The
-  contract is explicit-snapshot-only and lives at
+  release-oriented `sysdiff compare` slice. The contract is
+  explicit-snapshot-only and lives at
   `docs/sysdiff-snapshot-format-and-scope.md`.
 - Run `3a9e56296af6` implemented the minimal C quality-gate harness and wired
   fixture-backed comparison tests into the smoke path.
@@ -20,67 +21,40 @@
   stdout on parse errors, and reports deterministic added, removed, changed,
   and no-change output.
 - Run `b6deb04a6055` delivered the routed tool-availability preflight for
-  Agent-Orch worker infrastructure. The implementation is
-  `scripts/check_tools.py` with tests in `tests/test_check_tools.py`, contract
-  and plan docs, operator docs, and README discoverability. The default checks
-  are `codex_cli` for `implementation_worker` via `codex` and `claude_code` for
-  `slice_reviewer` via `claude`. Closeout validation and two Low review
+  Agent-Orch worker infrastructure. Closeout validation and two Low review
   findings remain open.
-- Run `1a9f7726ff33`, `fix_smoke_manifest_and_rebuild_fixture_tests`, repaired
-  the first smoke manifest and fixture suite version, passed smoke and review,
-  but ended `FAILED` at closeout because semantic validation repeatedly
-  selected unavailable or inaccessible GPT-5.4 routing. Future OpenAI/Codex
-  routes should use `gpt-5.5`.
-- Run `5ff82aa95e06`, `sysdiff_fixture_smoke_repair`, completed closeout. It
-  fixed `tests/smoke_manifest.json` and `tests/test_sysdiff_fixture.sh`, passed
-  the governed smoke gate on attempt 1, passed review with no findings, and
-  resolved the prior smoke-fixture F-001 Medium and F-002 Low findings.
-- The latest governed product slice is run `c02d741432d3`,
-  `sysdiff_c_source_implementation`. It added
-  `docs/sysdiff-c-source-contract.md` and
-  `plans/sysdiff-c-source-implementation-plan.md`, hardened `src/sysdiff.c`,
-  updated `Makefile`, documented limits in `README.md`, passed smoke, and
-  passed review at the High severity threshold. Agent-Orch now records the run
-  as `COMPLETED` after closeout handoff attempt 2.
-- `c02d741432d3` defines resource limits of 65536 bytes per snapshot line and
-  65536 entries per snapshot. It reports line and entry limit failures with
-  exit status `2`, empty stdout, and contextual stderr. It also centralizes
-  parse cleanup in `parse_snapshot` and exposes ASan/UBSan coverage through
-  `make sanitizer-test` when `clang` is available.
-- The latest review verdict is
-  `code-reviews/review-sysdiff-c-source.verdict.json`. It is a pass at the
-  High threshold, with no High or Critical findings. Open findings are F001
-  Medium for missing CRLF and resource-limit tests, F002 Low for the one-byte
-  CRLF/LF line-limit boundary discrepancy, and F003 Medium for standalone
-  `make valgrind-test` being unreliable immediately after
-  `make sanitizer-test`.
-- Manual user-smoke replay requested by Agent-Orch note on 2026-07-09 passed
-  against `tests/smoke_manifest.json`. Fresh attempt-2 evidence is under
-  `artifacts/user-smoke/attempt-2-manifest-smoke-20260709T121723Z/` and
-  `artifacts/user-smoke/attempt-2-manifest-steps-20260709T121723Z/`.
+- Run `5ff82aa95e06`, `sysdiff_fixture_smoke_repair`, completed closeout and
+  resolved prior smoke-fixture F-001 Medium and F-002 Low findings.
+- Run `c02d741432d3`, `sysdiff_c_source_implementation`, hardened resource
+  limits and parse cleanup, passed smoke/review, and completed closeout.
+- Run `c434e00a3772`, `craftsmanship_review_closeout`, completed the required C
+  craftsmanship gate before further feature selection; verdict `pass` at
+  High/Critical with Medium test/smoke findings that overlap the current
+  fixture-acceptance backlog.
+- The latest governed product slice is run `eab8bbd05f50`,
+  `sysdiff_fixture_diff_acceptance_tests`. It authored fixture acceptance
+  tests, verified fixture compare behavior in `src/sysdiff.c`, passed the
+  pinned user smoke gate on attempt 1, and received a `pass` verdict at the
+  High threshold in
+  `code-reviews/review-sysdiff-fixture-acceptance-tests.verdict.json`.
+- Fixture acceptance coverage now includes status 0/1/2, exact sorted stdout,
+  ordering independence, comments/blank lines, CRLF equivalence, resource
+  limits, and empty stdout on errors. Review also notes `argc < 1` is guarded
+  and `make valgrind-test` cleans/rebuilds before Valgrind.
+- The release-preparation verification on 2026-07-10 resolved the former
+  F001–F004 findings and passed fresh Linux `make quality`. This is the release
+  evidence, not the earlier smoke artifact with `start_exit_code: -15`.
+- `sysdiff` v0.1.0 has Ubuntu CI and curated public release material. See
+  `docs/RELEASE_REVIEW.md` for scope, evidence, and the accepted Low
+  limitation.
 - Lee approved the current diff output format on 2026-07-09:
   `+ key=value`, `- key=value`, and `~ key: old -> new`. Future OpenAI/Codex
   routes should use `gpt-5.5`; do not add GPT-5.4 assignments.
 
 ## Next milestone
 
-Run a C craftsmanship review before selecting more feature work. The review
-must inspect `src/sysdiff.c`, `Makefile`, tests, smoke manifest, and docs for
-C quality, ownership, undefined behavior, portability, diagnostics, and
-maintainability. Start with F001: add tests for CRLF-vs-LF equivalence,
-line-too-long failure, and too-many-entries failure. Then address F002 by
-fixing or documenting the CRLF boundary discrepancy, and address F003 by making
-`make valgrind-test` reliable after `make sanitizer-test` or documenting its
-required clean non-sanitized build precondition.
-
-After the current C-source follow-up is handled, return to infrastructure
-cleanup for run `b6deb04a6055` and its two Low tool-availability findings.
-Keep older review findings visible while planning follow-up work: the
-snapshot-format decision summary still has a Low wording issue around key
-syntax, and the previous minimal harness review flagged the changed-line format
-`~ key: old -> new` as ambiguous when values contain ` -> `. The current
-implementation still uses that changed-line format.
-
-Do not enable the hourly mission or claim release readiness until remaining
-governed closeout work is complete and the required quality gates have actually
-run cleanly for the release candidate.
+The v0.1.0 release candidate passed its required local Linux gate. It is ready
+to be seeded as an independent public repository, but has not been pushed or
+published. Keep the accepted changed-line display ambiguity visible in public
+release notes. Internal Agent-Orch tool-availability Low findings remain out of
+scope for the public product seed.
