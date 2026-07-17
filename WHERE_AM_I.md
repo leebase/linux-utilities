@@ -63,5 +63,11 @@
 
 The v0.1.0 seed is public at `https://github.com/leebase/linux-utilities`.
 Ubuntu CI run `29119972847` passed `make quality` with checkout v6 and zero
-annotations. No v0.1.0 tag or GitHub release exists yet. Keep every accepted
-Low limitation visible; internal Agent-Orch findings remain outside the seed.
+annotations. `v0.1.0` is tagged and released on GitHub (2026-07-17), pointed at
+the curated public commit `fbdf071`, not the private governed repo's `main` —
+the two histories diverge; only the curated commit and its ancestry are
+public. Keep every accepted Low limitation visible; internal Agent-Orch
+findings remain outside the seed.
+
+Mission complete per the charter's release gate. Next: re-arm and move into
+Future Mission Discovery (seed list in `mission.md`).
