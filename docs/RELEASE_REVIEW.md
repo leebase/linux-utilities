@@ -59,10 +59,13 @@ successfully; that external CI run cannot exist before the remote exists.
 
 ## Evidence
 
-The canonical local Linux gate is `make quality`: strict GCC and Clang,
-clang-format, clang-tidy with warnings as errors, cppcheck with a failing error
-status, man-page lint via groff (`make man-check`), shell fixtures, pytest,
-ASan plus LeakSanitizer, UBSan, and Valgrind.
+The canonical local Linux gate is `make quality`: strict GCC and Clang link
+builds, clang-format, clang-tidy with warnings as errors, cppcheck with a
+failing error status, Clang static analysis (`clang --analyze` with
+analyzer-werror), man-page lint via groff (`make man-check`), shell fixtures,
+pytest (including malformed-input fuzz and benchmark contracts),
+`benchmark-check` (temp-dir JSON), ASan plus LeakSanitizer, UBSan, and
+Valgrind.
 The curated public suite contains 32 passing product tests. (The governed source
 repository also runs nine internal infrastructure tests; those are deliberately
 absent from the public seed.) Ubuntu CI installs the declared tools, including

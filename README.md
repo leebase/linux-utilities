@@ -37,8 +37,9 @@ written to stdout. Validation failures leave stdout empty. A stdout write or
 flush failure on compare or informational output (`--help`, `--version`, or
 no-argument usage) returns `2` with a `stdout write error: <strerror>`
 diagnostic (using `EIO` when errno is unset) and may leave partial stdout.
-On Linux, `SIGPIPE` is ignored so a closed stdout pipe becomes an `EPIPE`
-stdio failure on that same path instead of terminating the process.
+At startup, `SIGPIPE` is ignored (POSIX) so a closed stdout pipe becomes an
+`EPIPE` stdio failure on that same path instead of terminating the process.
+Supported runtime and CI focus is Linux (Ubuntu).
 
 ## Build and verify
 
@@ -64,12 +65,16 @@ Run the canonical full release quality gate:
 make quality
 ```
 
-`make check` is an alias for `make quality`. The quality gate runs strict GCC
-and Clang checks, clang-format, clang-tidy, cppcheck (findings fail the build),
-man-page lint via `make man-check`, fixture and pytest suites,
-AddressSanitizer, UndefinedBehaviorSanitizer, and Valgrind with a reserved
-error status that cannot collide with sysdiff exit codes `0`, `1`, or `2`.
-Ubuntu CI runs exactly `make quality`.
+`make check` is an alias for `make quality`. The quality gate cleans, then runs
+strict GCC and Clang link builds (`-Wall -Wextra -Wpedantic -Werror`),
+clang-format, clang-tidy, cppcheck (findings fail the build), the Clang static
+analyzer (`clang --analyze` with analyzer findings as errors), man-page lint via
+`make man-check`, the shell and pytest suites (unit, integration, regression,
+fixture, malformed-input fuzz, and benchmark contract tests), deterministic
+benchmark validation (`benchmark-check`, temp-dir JSON only), AddressSanitizer,
+UndefinedBehaviorSanitizer, and Valgrind with a reserved error status that
+cannot collide with sysdiff exit codes `0`, `1`, or `2`. Ubuntu CI runs exactly
+`make quality`.
 
 View the section-1 manual page locally:
 
@@ -88,6 +93,106 @@ python3 -m pytest tests/ -q
 bash tests/test_sysdiff_fixture.sh
 ./scripts/smoke.sh
 ```
+
+## Performance Benchmarks
+
+Run the deterministic Linux performance and resource harness with:
+
+```sh
+make benchmark
+```
+
+That target creates `artifacts/performance/` if needed and invokes
+`python3 scripts/benchmark_sysdiff.py --output artifacts/performance/sysdiff-benchmark.json`.
+The harness compiles `src/sysdiff.c` in a temporary directory (never the
+workspace `build/`), writes fixed before/after snapshots, then samples the
+metrics below. Compile and fixture setup are excluded from timed samples.
+`SYSDIFF_BIN` and similar environment hints are ignored. Every measured child
+must exit with an expected status (`--help` → 0; `compare` → 0 or 1); unexpected
+exits fail the harness instead of recording a deceptively fast sample.
+
+**Spawn baseline** (`baseline_ms_median`) is the median milliseconds of
+`/bin/true` under the same spawn path, so startup and fixture medians can be
+read net of Python fork/exec cost. **Startup time** (`startup_ms_median`) is
+the median wall time, in milliseconds, of running the built binary with
+`--help`, measured with a monotonic clock around the child only.
+**Controlled-fixture runtime** (`fixture_ms_median`) is the median milliseconds
+for `compare BEFORE AFTER` against a fixed 8000-entry deterministic snapshot
+pair (mix of added, removed, changed, and unchanged `bench.kNNNNNN` keys),
+sized so compare work exceeds the spawn floor. **Peak RSS** (`peak_rss_kib`) is
+the per-run peak resident set size in kibibytes during that same compare; the
+reported value is the maximum across samples. Measurement prefers GNU
+`/usr/bin/time -f %M`, then a tiny C fork/exec wrapper that writes RSS and
+child exit status to a dedicated report file while redirecting the measured
+child's stdout/stderr to `/dev/null` (so compare/`--help` output cannot
+collide with the report), so Python's fork-before-exec does not inflate
+`ru_maxrss` to interpreter size.
+
+Sampling is fixed: one untimed warmup of baseline, startup, and compare, then
+five timed samples (odd count so the median is a single middle value). Release
+thresholds fail the run when any gated measurement exceeds its inclusive limit:
+`startup_ms_median` ≤ 200 ms, `fixture_ms_median` ≤ 100 ms, and
+`peak_rss_kib` ≤ 32768 KiB (32 MiB). The JSON report uses schema version 1
+with sorted keys and includes `measurements`, `thresholds`, `samples`,
+`metadata` (including `work_dir_kind=tempdir`, not a host path), `passed`, and
+`schema_version`. Exit status is 0 when `passed` is true and nonzero on
+threshold failure or harness error.
+
+Expect a Linux host with a C compiler (`cc`, `gcc`, or `clang`), Python 3,
+and GNU `/usr/bin/time` on `PATH`. Results can vary with CPU load, thermal
+throttling, cgroup memory limits, and scheduler noise; treat thresholds as
+conservative release guardrails, not microbenchmark claims. If
+`make benchmark` fails a threshold, inspect
+`artifacts/performance/sysdiff-benchmark.json`: compare each measurement to
+its threshold, subtract `baseline_ms_median` when judging startup/fixture
+drift, review the raw `samples` lists for outliers, rerun on an idle machine,
+and investigate recent changes that could inflate `--help` latency, compare
+work, or peak memory before loosening limits.
+
+## Installation and uninstallation
+
+After `make` builds `build/sysdiff`, stage the executable and section-1 manual
+page with optional `DESTDIR` and a configurable `prefix` (default
+`/usr/local`):
+
+```sh
+make install DESTDIR=/path/to/stage prefix=/usr/local
+```
+
+That writes regular files `$(DESTDIR)$(prefix)/bin/sysdiff` mode `755` and
+`$(DESTDIR)$(prefix)/share/man/man1/sysdiff.1` mode `644`. Re-running
+`make install` with the same `DESTDIR` and `prefix` replaces those paths and,
+when the build inputs are unchanged, leaves their installed bytes identical.
+Remove only those installed files with:
+
+```sh
+make uninstall DESTDIR=/path/to/stage prefix=/usr/local
+```
+
+`make test` runs this install, documented `--help`/`--version`/`compare`
+checks, idempotent reinstall, and byte-clean uninstall round trip inside a
+temporary workspace `DESTDIR`. This is source Make staging only; the tree does
+not produce `.deb`, `.rpm`, or other package-manager formats.
+
+## Source releases
+
+Create a deterministic source archive with `make dist` from the git work-tree
+root. It writes `dist/sysdiff-source.tar.gz` and
+`dist/sysdiff-source.tar.gz.sha256` from tracked release inputs only (source,
+tests, Makefile metadata, docs, and license files) under a single `sysdiff/`
+prefix, with sorted members and normalized timestamps, ownership, permissions,
+and gzip headers. Untracked workspace state is never packaged. Nested copies
+inside another repository (for example a disposable quality-floor tree under
+scratch `TMPDIR`) are not a dist root; the suite skips those `make dist`
+regressions there instead of treating the parent work tree as the package
+source. Set `SOURCE_DATE_EPOCH` to a non-negative integer for bit-stable
+rebuilds. Verify with `make distcheck`, which rebuilds at a fixed epoch,
+compares digests, extracts outside the workspace, and runs `make` plus
+`make test` on the clean tree. Inspect members with
+`tar -tzf dist/sysdiff-source.tar.gz` or `sha256sum -c
+dist/sysdiff-source.tar.gz.sha256` from `dist/`. Remove the artifact with
+`rm -f dist/sysdiff-source.tar.gz dist/sysdiff-source.tar.gz.sha256` (or
+`rm -rf dist`).
 
 ## Snapshot Format
 
@@ -109,9 +214,12 @@ empty.value=
 
 Blank lines, including lines made only of spaces and tabs, and lines whose first
 non-space character is `#` are ignored.
-Keys are compared byte-for-byte and are not trimmed. Values are compared
-byte-for-byte after the trailing line ending is removed. Duplicate keys in one
-snapshot are errors.
+Keys are compared byte-for-byte and are not trimmed. Format-1 keys use only
+`A–Z`, `a–z`, `0–9`, `.`, `_`, `-`, and `/`; they must contain at least one `.`,
+must not contain consecutive dots (`..`), must not begin with `/`, and must not
+end with `.`. Values are compared byte-for-byte after the trailing line ending
+is removed. Duplicate keys in one snapshot are errors. When a total-byte limit
+overflow coincides with a NUL byte, the byte-limit error is reported first.
 
 Resource limits per snapshot input are 65,536 bytes per line, 65,536 entries,
 and 16 MiB total bytes read (including newlines, comments, and blank lines).
@@ -136,15 +244,28 @@ For identical snapshots, stdout is exactly:
 no changes
 ```
 
-## Project documents
+## Documentation
 
-- [Manual page](man/sysdiff.1)
-- [Snapshot format specification](docs/sysdiff-snapshot-format-and-scope.md)
-- [Design decisions](docs/DECISIONS.md)
-- [Release notes](CHANGELOG.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [AI-assisted development safeguards](docs/AI_DEVELOPMENT.md)
+Release and maintainer documentation lives at the repository root alongside the
+quick-start material above. Start with [STATUS.md](STATUS.md) for readiness and
+[docs/sysdiff-quality-floor-clean-checkout.md](docs/sysdiff-quality-floor-clean-checkout.md)
+for the declared `make quality` gate surface (Makefile order is the executable
+contract; that doc mirrors it). [TESTING.md](TESTING.md) covers how shell
+fixtures, pytest, smoke, sanitizers, and Valgrind compose.
+[HISTORY.md](HISTORY.md) and [DECISIONS.md](DECISIONS.md) record engineering
+timeline and durable product choices; [ROADMAP.md](ROADMAP.md) lists post-0.1.0
+ideas without expanding current scope. Architecture detail is in
+[architecture.md](architecture.md); user-facing CLI behavior is in
+[man/sysdiff.1](man/sysdiff.1). The durable snapshot-format contract remains
+[docs/sysdiff-snapshot-format-and-scope.md](docs/sysdiff-snapshot-format-and-scope.md).
+Also see [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md),
+[SECURITY.md](SECURITY.md), and [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md).
+When changing CLI semantics, key grammar, limits, exit statuses, or output
+lines, update the man page, CHANGELOG, contract docs, and these root files in
+the same change; do not leave README summaries or `man/sysdiff.1` behind the
+implementation. Ownership of parse buffers and portability notes for binary
+`fopen`, locale-independent sorting, and Linux-focused CI live in architecture
+and TESTING—follow those before claiming a host or packaging target is covered.
 
 ## License
 

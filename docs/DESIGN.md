@@ -150,14 +150,20 @@ release gate is:
 make quality
 ```
 
-`make check` aliases `make quality`. That target performs clean GCC and Clang
-builds, formatting and static analysis (including cppcheck with
-`--error-exitcode=1`), man-page lint via `make man-check` (groff with warnings
-enabled, no tracked output), the shell and Python test suites, ASan/UBSan
-coverage through `make sanitizer-test`, then a clean GCC rebuild before
-`make valgrind-test` with Valgrind `--error-exitcode=99`.
+`make check` aliases `make quality`. That target performs clean strict GCC and
+Clang link builds (`-Wall -Wextra -Wpedantic -Werror`), formatting, clang-tidy,
+cppcheck (`--error-exitcode=1`), Clang static analysis (`clang --analyze` with
+analyzer-werror), man-page lint via `make man-check` (groff with warnings
+enabled, no tracked output), the shell and Python test suites (including
+malformed-input fuzz and benchmark contract tests), `benchmark-check` (temp-dir
+JSON only), ASan/UBSan through `make sanitizer-test`, then a clean GCC rebuild
+before `make valgrind-test` with Valgrind `--error-exitcode=99`.
 
 The section-1 manual page lives at `man/sysdiff.1` and documents the
 implemented CLI, snapshot format, output, exit status, limits, and security
-behavior for public distribution. View it with `man -l man/sysdiff.1`. There
-is still no install target or package that installs the page system-wide.
+behavior for public distribution. View it with `man -l man/sysdiff.1`. Stage the
+binary and page system-wide (or into a package root) with `make install` using
+optional `DESTDIR` and `prefix`/`bindir`/`mandir`/`man1dir` (default prefix
+`/usr/local`); remove those files with `make uninstall`. This is Make staging
+only — the tree does not produce `.deb`, `.rpm`, or other package-manager
+formats.

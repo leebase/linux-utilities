@@ -1,6 +1,6 @@
 .\" Copyright (c) 2026 Lee Harrington
 .\" SPDX-License-Identifier: MIT
-.TH SYSDIFF 1 "2026-07-10" "sysdiff 0.1.0" "User Commands"
+.TH SYSDIFF 1 "2026-07-17" "sysdiff 0.1.0" "User Commands"
 .SH NAME
 sysdiff \(em compare explicit system snapshot files
 .SH SYNOPSIS
@@ -104,6 +104,8 @@ Keys and values are not trimmed.
 Duplicate keys within one snapshot are rejected.
 .IP \(bu 3
 Embedded NUL bytes are rejected.
+When a byte would exceed the total snapshot byte limit and that byte is NUL,
+the byte\-limit diagnostic takes precedence over the embedded\-NUL diagnostic.
 .IP \(bu 3
 Values are opaque byte strings after line\-ending removal and are compared
 byte\-for\-byte.
@@ -222,11 +224,14 @@ with a
 diagnostic (using
 .B EIO
 when errno is unset) and may leave partial stdout.
-On Linux,
+At startup,
+.B sysdiff
+ignores
 .B SIGPIPE
-is ignored so a closed stdout pipe follows that same failure path as
+(POSIX) so a closed stdout pipe follows that same failure path as
 .B EPIPE
 rather than terminating the process.
+Supported runtime and CI focus is Linux (Ubuntu); other hosts are not gated.
 .SH RESOURCE LIMITS
 Per snapshot input:
 .IP \(bu 3
@@ -255,6 +260,15 @@ described in
 Raw ESC, control, DEL, or non\-ASCII bytes from snapshot values, paths, or
 unknown commands do not reach stdout or stderr unescaped.
 .SH EXAMPLES
+Show usage and version:
+.P
+.RS
+.nf
+sysdiff \-\-help
+sysdiff \-\-version
+.fi
+.RE
+.P
 Compare two temporary snapshot files:
 .P
 .RS
@@ -262,6 +276,46 @@ Compare two temporary snapshot files:
 sysdiff compare /tmp/before.snap /tmp/after.snap
 .fi
 .RE
+.P
+Example snapshot fragment:
+.P
+.RS
+.nf
+# comment
+os.id=debian
+package.openssh\-server.version=1:9.2p1\-2
+service.ssh.enabled=true
+.fi
+.RE
+.SH FILES
+.TP
+.I BEFORE_SNAPSHOT
+Earlier explicit snapshot path supplied to
+.BR compare .
+Opened for binary reading with
+.BR fopen (3)
+mode
+.BR rb ;
+there is no separate regular\-file check.
+Unreadable paths, missing paths, and paths the host cannot open as a stream
+(for example a directory) fail with exit status
+.B 2
+and empty stdout.
+Contents must match
+.BR "SNAPSHOT FORMAT" .
+.TP
+.I AFTER_SNAPSHOT
+Later explicit snapshot path supplied to
+.BR compare .
+Same open and format rules as
+.IR BEFORE_SNAPSHOT .
+.P
+.B sysdiff
+does not invent default snapshot paths and does not write snapshot files.
+Build output is typically
+.I build/sysdiff
+when produced by the project
+.BR Makefile .
 .SH SEE ALSO
 .BR diff (1)
 .SH AUTHOR
@@ -271,4 +325,4 @@ Copyright \(co 2026 Lee Harrington.
 .B sysdiff
 is released under the MIT License.
 .SH VERSION
-sysdiff 0.1.0 (2026\-07\-10)
+sysdiff 0.1.0 (2026\-07\-17)

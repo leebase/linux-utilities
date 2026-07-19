@@ -1,7 +1,158 @@
 # Sprint Plan
 
+## First Consecutive Release-Blocking Independent Review
+
+Governed run `7eb4e29dee6e` (playbook
+`complete_first_consecutive_release_blocking_independent_review`) recorded the
+first consecutive clean release-blocking independent review. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors` (check.log: install/uninstall staging, fixtures ok, pytest
+`124 passed in 10.23s`). Exact full suite: `python3 -m pytest tests/ -q` →
+exit 0, `124 passed in 10.71s`. Review
+`code-reviews/sysdiff-independent-review-1.{md,verdict.json}` verdict `pass`
+with 0 Medium/High/Critical and 5 Low (L-1–L-5) preserved. Do not claim a
+second clean review, mission completion, or release readiness from this first
+consecutive clean pass; prior Medium backlogs remain separately open.
+
+## Reproducible Source Archive — Isolated Build Verification
+
+Governed run `939ee21b0d76` (playbook
+`verify_reproducible_source_archive_isolated_build`) completed isolated
+`make dist` verification and extracted-tree quality exercise. Exact archive
+identity at `SOURCE_DATE_EPOCH=946684800`: 89851 bytes; SHA-256
+`5de5b3d720f3871861593d270ad93966475b6c5e1ee00bf8c7d06560e9251544` (both
+builds; basename-only checksum matching); 44 members; empty member diff.
+Extracted-tree gates all exit 0 (including ASan/UBSan/Valgrind at 118
+passed / 6 skipped); install/uninstall 2→0 files. Smoke passed
+(`artifacts/user-smoke/result.json` start/check 0). Review verdict `pass`
+with 0 High/Critical, 5 Medium (F1–F5), 4 Low (F6–F9); allowlisted
+`python3 -m pytest tests/ -q` → 124 passed in 10.71 s. Closeout handoff
+recorded; next is repair F1–F5. Do not claim `.deb`/`.rpm`, commit-identical
+dirty-tree archives, or full release closure.
+
+## Reproducible sysdiff Source Release (`make dist` / `make distcheck`)
+
+Governed run `240bfcbc634e` delivered conventional reproducible source
+packaging (`make dist` / `make distcheck`; artifacts
+`dist/sysdiff-source.tar.gz` and `dist/sysdiff-source.tar.gz.sha256` with
+digest `970694ed1d8dc929ab2d3f9642c734dc04536742b043f59b30ed8a201a4c919a`;
+six `test_dist_*` regressions; README "Source releases"). Exact verification:
+`python3 -m pytest -p no:cacheprovider tests/test_sysdiff.py -q` → 38 passed
+in 5.80 s (impl) / ~5.8 s (review); `make clean && make test` → 0;
+`make dist && make distcheck` → 0; Clang `-fsyntax-only` → 0. User smoke
+passed (`artifacts/user-smoke/result.json` start/check 0). Review verdict
+`pass` with 0 High/Critical, 5 Medium (F1–F5), 5 Low (F6–F10). Closeout
+handoff recorded; next is repair F1–F5. Do not claim `.deb`/`.rpm`,
+commit-identical dirty-tree archives, `make quality`, or release closure.
+Prior run `b54d61531266` (`source-release` naming) is superseded by this
+`dist`/`distcheck` workflow.
+
+## Deterministic sysdiff Performance Benchmarks
+
+Governed run `a0eda97cd039` delivered the Linux performance/resource harness
+(`scripts/benchmark_sysdiff.py`, `tests/test_sysdiff_benchmark.py`,
+`make benchmark`, README section, committed
+`artifacts/performance/sysdiff-benchmark.json`). Exact evidence:
+`startup_ms_median` 1.2422580039128661 <= 200.0;
+`fixture_ms_median` 7.362931006355211 <= 100.0;
+`peak_rss_kib` 2540.0 <= 32768.0; `baseline_ms_median` 1.3354689872357994;
+8000-entry fixture; `passed: true`. Exact verification: pytest 25 passed in
+1.73 s (repair) / 1.62 s (review); `make -n benchmark` → 0; harness
+`--output` → 0. User smoke passed (`artifacts/user-smoke/result.json`
+start/check 0). Review verdict `pass` with 0 High/Critical/Medium, 9 Low
+(B1–B9). Closeout handoff recorded; optional Low B1–B9 polish remains. Do
+not claim microbenchmarks, cross-host bit-stable timings, `make quality`, or
+release closure.
+
+## Deterministic Malformed-Snapshot Fuzz Regression Coverage
+
+Governed run `feb8e707ea28` delivered the deterministic malformed-snapshot fuzz
+regression contract and pytest corpus (`docs/malformed-snapshot-fuzz-regression-
+contract.md`, `tests/test_sysdiff_malformed_fuzz.py`). Exact verification:
+`python3 -m pytest tests/test_sysdiff_malformed_fuzz.py -q` → 40 passed in
+0.18 s (impl) / 0.19 s (review); `clang -std=c17 -Wall -Wextra -Wpedantic
+-Werror -fsyntax-only src/sysdiff.c` → exit 0. User smoke passed
+(`artifacts/user-smoke/result.json` start/check 0). Review verdict `pass` at
+High with 0 High/Critical, 4 Medium (F1–F4), 3 Low (F5–F7). Finish closeout,
+then repair F1–F4; do not claim open-ended fuzzing, sanitizer product readiness,
+or release closure from this slice.
+
 ## Current sprint
 
+- [x] Deliver and record the first consecutive clean release-blocking
+  independent review in run `7eb4e29dee6e`,
+  `complete_first_consecutive_release_blocking_independent_review`. Exact
+  smoke: start/check 0, no blocking errors. Exact full suite:
+  `python3 -m pytest tests/ -q` → 124 passed in 10.71 s. Review verdict
+  `pass` with 0 Medium/High/Critical and 5 Low (L-1–L-5). This is the
+  first consecutive clean review only—not a second clean review, not
+  mission completion, and not release readiness.
+- [ ] Keep Low findings L-1–L-5 visible after the first consecutive clean
+  review; do not treat them as blocking. A second consecutive clean
+  release-blocking independent review has not been claimed or completed.
+- [x] Deliver and review isolated source-archive verification in run
+  `939ee21b0d76`, `verify_reproducible_source_archive_isolated_build`.
+  Report `docs/reproducible-source-archive-isolated-build.md` records
+  byte-identical archives (SHA-256
+  `5de5b3d720f3871861593d270ad93966475b6c5e1ee00bf8c7d06560e9251544`,
+  89851 bytes, 44 members) and extracted-tree quality gates exit 0
+  (including ASan/UBSan/Valgrind). User smoke passed; review verdict
+  `pass` with 0 High/Critical, 5 Medium (F1–F5), and 4 Low (F6–F9).
+- [x] Finish closeout for run `939ee21b0d76`. Recorded exact archive
+  hashes, quality results, pytest provisioning recovery, smoke
+  start/check 0, independent review `pass` with Medium F1–F5 still open,
+  and that this is isolated verification evidence—not a `.deb`/`.rpm`,
+  not commit-identical dirty-tree provenance, and not full release
+  readiness.
+- [ ] Repair isolated-archive / source-release Medium findings F1–F5 from
+  `review-reproducible-source-archive-isolated-build.verdict.json`:
+  clean-tree or committed-object packaging plus honest provenance; name
+  (or split) the six git-gated `test_dist_*` skips in extracts; make
+  `dist`/`distcheck` usable or honestly unavailable from the tarball; add
+  `dist/` to `.gitignore`; allowlist user-facing docs instead of shipping
+  all of `docs/`. Consider Low F6–F9 afterward. Prefer this Medium
+  backlog next. Overlaps prior `240bfcbc634e` packaging Medium themes.
+- [x] Deliver and review reproducible sysdiff source release in run
+  `240bfcbc634e`, `build_verify_reproducible_sysdiff_source_release`. Added
+  Makefile `dist` / `distcheck`, six `test_dist_*` regressions, README
+  "Source releases", and artifacts `dist/sysdiff-source.tar.gz` +
+  `dist/sysdiff-source.tar.gz.sha256` (digest
+  `970694ed1d8dc929ab2d3f9642c734dc04536742b043f59b30ed8a201a4c919a`).
+  Implementation validation and user smoke passed; review verdict `pass`
+  with 0 High/Critical, 5 Medium (F1–F5), and 5 Low (F6–F10).
+- [x] Finish closeout for run `240bfcbc634e`. Recorded exact artifact/
+  checksum paths, verification (`make dist && make distcheck`, pytest 38
+  passed, smoke start/check 0), independent review `pass` with Medium
+  F1–F5 still open, and that this is a bounded source-archive
+  workflow—not a `.deb`/`.rpm`, not a fresh `make quality`, and not full
+  release readiness.
+- [x] Deliver and review deterministic sysdiff performance benchmarks in run
+  `a0eda97cd039`, `sysdiff_deterministic_performance_benchmarks`. Added
+  `scripts/benchmark_sysdiff.py`, `tests/test_sysdiff_benchmark.py`, Makefile
+  `benchmark`, README "Performance Benchmarks", and
+  `artifacts/performance/sysdiff-benchmark.json` (`passed: true`; thresholds
+  startup 200.0 ms / fixture 100.0 ms / peak RSS 32768 KiB; measured
+  ~1.24 ms / ~7.36 ms / 2540 KiB; baseline ~1.34 ms; 8000-entry fixture).
+  Repair closed prior Medium B1/B2; implementation validation and user smoke
+  passed; review verdict `pass` with 0 High/Critical/Medium and 9 Low
+  (B1–B9).
+- [x] Finish closeout for run `a0eda97cd039`. Recorded exact JSON
+  measurements/thresholds, verification (pytest 25 passed, `make -n
+  benchmark`, harness `--output`, smoke start/check 0), independent review
+  `pass` with Low B1–B9 only, remaining host/scheduler/RSS variability, and
+  that this is a conservative release guardrail—not a microbenchmark, not a
+  fresh `make quality`, and not full release readiness.
+- [ ] Optionally polish performance-benchmark Low findings B1–B9 (exit-status
+  short-circuit in RSS fallback; `--output` test; tighter or relabeled
+  startup gate; real build-isolation test; VmHWM race; `/bin/true`
+  preflight; drop dead global; threshold-map extensibility; hard-fail if
+  harness script missing). Non-blocking.
+- [x] Deliver and review earlier source-release naming slice in run
+  `b54d61531266`, `sysdiff_reproducible_source_release` (`source-release` /
+  `source-release-verify`). Superseded by `240bfcbc634e` `dist`/`distcheck`.
+- [x] Finish closeout for run `b54d61531266` (historical; current packaging
+  surface is `make dist` / `make distcheck` from `240bfcbc634e`).
 - [x] Bootstrap a smokeable `sysdiff` workspace for auto-orch Author grounding.
 - [x] Embed AgentFlow and Agent-Orch onboarding scaffold.
 - [x] Run Agent-Orch doctor and resolve readiness findings.
@@ -135,3 +286,61 @@
 - [x] Add and review `man/sysdiff.1`, integrate warning-gated groff rendering
   into `make quality`/Ubuntu CI, reconcile public docs, and pass the governed
   quality gate with 41 tests.
+- [x] Complete the sysdiff release documentation set
+- [x] Implement deterministic ASan, UBSan, and Valgrind regression targets in
+  run `5665167f1c1d`; implementation validation passed both memory gates and
+  the independent review verdict passed at the High threshold with no
+  High/Critical findings.
+- [ ] Finish closeout for run `5665167f1c1d`. Preserve the distinction between
+  fresh governed smoke (`artifacts/user-smoke/result.json`) and review finding
+  F1's stale legacy `.agent-orch/user-smoke/result.json`; do not claim a fresh
+  release or full quality gate from this slice.
+- [ ] Repair deterministic-memory-gate Medium findings F1-F4: refresh legacy
+  smoke pins, declare the POSIX `SIGPIPE` dependency portably, route
+  `/dev/full` and closed-pipe fixture helpers through Valgrind, and add
+  negative controls that prove ASan/UBSan/Valgrind fail on injected defects.
+- [ ] Consider the six Low findings from
+  `review-deterministic-memory-gates.verdict.json` after the Medium repair;
+  retain explicit Linux/Clang/GCC/Valgrind host prerequisites and loud
+  preflight failures.
+- [x] Deliver and review reproducible install/uninstall packaging checks in
+  run `a2d750c92da3`, `sysdiff_reproducible_install_uninstall_packaging_checks`.
+  Added Makefile `install`/`uninstall` with `DESTDIR`/`prefix` path variables,
+  shell packaging assertions (exact manifest, modes, installed behavior,
+  reinstall, uninstall), and README installation docs. Implementation
+  validation and user smoke passed; review verdict `pass` with 0 High/Critical,
+  1 Medium (F1), and 6 Low (F2–F7) findings.
+- [ ] Finish closeout for run `a2d750c92da3`. Record smoke
+  (`artifacts/user-smoke/result.json` start/check 0, no blocking errors) and
+  that smoke covers fixtures while packaging is covered by `make test`/shell.
+  Do not claim a release, complete packaging, or a zero-finding clean review.
+- [ ] Repair packaging-slice Medium F1: guard or extract the packaging block so
+  sanitizer/Valgrind gates do not ignore `SYSDIFF_BIN` and re-run uninstrumented
+  staged install three extra times; optionally address Low F2–F7 afterward.
+- [x] Deliver and review deterministic malformed-snapshot fuzz regression
+  coverage in run `feb8e707ea28`. Added
+  `docs/malformed-snapshot-fuzz-regression-contract.md` and
+  `tests/test_sysdiff_malformed_fuzz.py`; no `src/sysdiff.c` edits required.
+  Implementation validation and user smoke passed; review verdict `pass` with
+  0 High/Critical, 4 Medium (F1–F4), and 3 Low (F5–F7) findings.
+- [ ] Finish closeout for run `feb8e707ea28`. Record exact commands
+  (`pytest …malformed_fuzz.py -q` → 40 passed; Clang `-fsyntax-only` → 0),
+  smoke (`artifacts/user-smoke/result.json` start/check 0), and that this is a
+  bounded deterministic corpus—not open-ended fuzzing, not a fresh sanitizer
+  gate, and not a release.
+- [ ] Repair malformed-fuzz Medium findings F1–F4: add a 16 MiB total-byte
+  over-limit case; make the LINE_TOO_LONG case actually hit `read_line`'s
+  guard; add a positive-control compare; honor `SYSDIFF_UNDER_VALGRIND` with
+  scaled timeouts. Consider Low F5–F7 afterward.
+
+## Complete the sysdiff release documentation set
+
+Governed run `e7bbd28465b5` delivered the required root release documentation
+(HISTORY, DECISIONS, QUALITY, TESTING, ROADMAP, STATUS), reconciled README,
+CHANGELOG, architecture, and `man/sysdiff.1`, passed the pinned user smoke
+gate on attempt 1 (`start_exit_code`/`check_exit_code` 0, no blocking errors),
+and received review verdict `pass` in
+`code-reviews/sysdiff-release-documentation-review.verdict.json`. Open follow-ups
+are Low only: man-page NAME whatis separator (F1) and FILES directory
+open-vs-read wording (F2). Do not treat this docs cycle as a fresh
+`make quality` product gate; prior release evidence still stands separately.

@@ -1,12 +1,25 @@
 # Architecture
 
+`sysdiff` is a single-file C17 command-line utility that compares two explicit
+plain-text snapshot files and emits a deterministic, key-sorted map diff. The
+executable is built from `src/sysdiff.c` into `build/sysdiff` by `make`. The
+product surface is intentionally narrow: informational `--help` / `--version`
+(and no-argument usage), plus `sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT`.
+The compare path opens only those two paths, validates both snapshots fully
+before any diff output, then walks sorted key/value maps. There is no live
+system capture, directory scan, package or service probing, persistence,
+networking, or background work in this architecture.
+
 ## Current architecture
 
-- Primary language: C.
+- Primary language: C (ISO C17 via `-std=c17`).
 - Build system: `make`; the quality target surface includes `test`,
-  `test-suite`, `check`, `sanitizer-test`, `valgrind-test`, `make-quality`, and
-  `clean`.
-- Default worker runtime: `codex_cli`.
+  `test-suite`, `check`, `gcc-strict`, `clang-strict`, `clang-analyzer-check`,
+  `benchmark-check`, `sanitizer-test`, `valgrind-test`, `make-quality`,
+  `man-check`, and `clean`. The ordered aggregate contract is
+  `docs/sysdiff-quality-floor-clean-checkout.md` (mirrors `make quality`).
+- Default worker runtime for governed work: `codex_cli` (infrastructure only;
+  not part of the `sysdiff` runtime).
 - Smoke surface: `scripts/smoke.sh` runs `make test`.
 - Smoke manifest surface: `tests/smoke_manifest.json` is the Agent-Orch
   manifest for user smoke. It points at `tests/smoke_start.py`,
@@ -40,6 +53,28 @@
   checked against that contract before relying on README summaries or local
   assumptions.
 
+## Runtime pipeline
+
+1. Command dispatch recognizes no-arg usage, `--help`, `--version`, and
+   `compare` with exactly two path operands. Unknown commands and bad arity
+   return status `2` with stderr diagnostics (paths/commands escaped).
+2. At startup, `SIGPIPE` is ignored (POSIX, unconditional in `src/sysdiff.c`)
+   so a closed stdout pipe surfaces as stdio `EPIPE` rather than process
+   termination. Product support and CI remain Linux (Ubuntu) focused.
+3. Each snapshot is opened with `fopen` mode `rb` (binary; no separate
+   regular-file check), read line-by-line with total-byte accounting, stripped
+   of LF or CRLF endings, filtered for blanks/comments, split on the first
+   `=`, key-validated, and appended into a growable array. Byte-limit rejection
+   precedes embedded-NUL when the overflowing byte is NUL.
+4. Records are sorted with bytewise `strcmp` ordering (locale-independent);
+   duplicate keys fail closed. Resource limits reject oversized lines, entry
+   counts, or total bytes without truncation.
+5. Only after both snapshots validate does the comparator emit `+` / `-` / `~`
+   lines or `no changes`. Diff values and untrusted diagnostic text use
+   printable-ASCII escaping; comparison remains raw and opaque.
+6. Stdout write/flush failures return status `2` and may leave partial stdout;
+   validation failures leave stdout empty.
+
 ## C Source Hardening
 
 - The current hardening slice is governed by
@@ -51,18 +86,25 @@
 - Inputs that exceed line, entry, or total-byte limits are rejected. They are not
   truncated. `compare` returns exit status `2`, leaves stdout empty, and emits
   contextual stderr naming the limit and affected location.
-- `parse_snapshot` owns snapshot resources until successful return. It uses
-  typed line/append statuses and a centralized cleanup block for parse errors.
-  The latest review found no memory-ownership defects in this structure.
+- Ownership: `parse_snapshot` owns the open `FILE` and all heap entries until
+  it returns success (then the caller owns the `Snapshot` until
+  `snapshot_free`). On any parse error it uses a single `cleanup:` path to
+  close the file and free partial state; `snapshot_free` is idempotent for
+  initialized snapshots. The latest review found no memory-ownership defects
+  in this structure.
 - Diff values and untrusted path/command diagnostics render as printable ASCII;
   comparison remains byte-opaque. Stdout failures and closed pipes return `2`.
 - `Makefile` keeps strict C17 warning-as-error builds. `make` builds, `test`
   runs functional coverage, and `check` delegates to `quality`. The full gate
-  includes gating clang-tidy/cppcheck, ASan with leak detection, UBSan, and a
-  clean GCC rebuild before Valgrind.
+  includes strict GCC and Clang links, clang-format, clang-tidy, cppcheck, the
+  Clang static analyzer, man-check, shell/pytest coverage (including malformed
+  fuzz and benchmark contracts), temp-dir benchmark validation, ASan with leak
+  detection, UBSan, and a clean GCC rebuild before Valgrind.
 - `valgrind-test` always cleans and rebuilds a strict GCC binary, so it does
-  not reuse sanitizer instrumentation. CRLF/LF line-limit equivalence and both
-  resource-limit error paths are fixture-covered.
+  not reuse sanitizer instrumentation. Fixture entry-count and 16 MiB total-byte
+  limit cases skip under `SYSDIFF_UNDER_VALGRIND=1` for runtime; CRLF/LF
+  line-limit equivalence and both resource-limit error paths remain covered on
+  normal and sanitizer paths.
 
 ## Craftsmanship Review State
 

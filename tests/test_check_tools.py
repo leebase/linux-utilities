@@ -1,7 +1,9 @@
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -271,3 +273,165 @@ def test_availability_check_is_read_only_and_does_not_launch_workflows(
 
     assert status == 0
     assert forbidden_commands == []
+
+
+def test_asan_compile_command_includes_strict_warnings_and_sanitize():
+    module = load_check_tools_module()
+    command = module.build_asan_compile_command(
+        "clang", "src/sysdiff.c", "/tmp/sysdiff-asan"
+    )
+
+    assert command[0] == "clang"
+    assert command[-3:] == ["-o", "/tmp/sysdiff-asan", "src/sysdiff.c"]
+    for flag in ("-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror"):
+        assert flag in command
+    assert "-fsanitize=address" in command
+    assert "-fno-omit-frame-pointer" in command
+
+
+def test_ubsan_compile_command_includes_undefined_sanitize():
+    module = load_check_tools_module()
+    command = module.build_ubsan_compile_command(
+        "clang", "src/sysdiff.c", "/tmp/sysdiff-ubsan"
+    )
+
+    assert "-fsanitize=undefined" in command
+    for flag in ("-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror"):
+        assert flag in command
+
+
+def test_valgrind_compile_and_run_command_construction():
+    module = load_check_tools_module()
+    compile_command = module.build_valgrind_compile_command(
+        "gcc", "src/sysdiff.c", "/tmp/sysdiff-valgrind"
+    )
+    run_command = module.build_valgrind_run_command(
+        "/tmp/sysdiff-valgrind", ["compare", "a", "b"], "/tmp/vg.log"
+    )
+
+    assert compile_command[0] == "gcc"
+    for flag in ("-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-g"):
+        assert flag in compile_command
+    assert "-fsanitize=address" not in compile_command
+
+    assert run_command[0] == "valgrind"
+    assert "--quiet" in run_command
+    assert "--error-exitcode=99" in run_command
+    assert "--leak-check=full" in run_command
+    assert "--errors-for-leak-kinds=definite,possible" in run_command
+    assert "--log-file=/tmp/vg.log" in run_command
+    assert run_command[-4:] == ["/tmp/sysdiff-valgrind", "compare", "a", "b"]
+
+
+def test_memory_gate_platform_preflight_rejects_non_linux():
+    module = load_check_tools_module()
+    result = module.require_linux_platform(platform="darwin")
+
+    assert result.available is False
+    assert "Linux" in result.detail
+
+
+def test_memory_gate_sanitize_preflight_fails_when_clang_missing(tmp_path):
+    module = load_check_tools_module()
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+
+    results = module.preflight_memory_gate(
+        "sanitize",
+        env={"PATH": os.fspath(empty)},
+        platform="linux",
+    )
+    missing = {result.name for result in results if not result.available}
+
+    assert "clang" in missing
+
+    err = StringIO()
+    status = module.main(
+        ["--memory-gate", "sanitize"],
+        env={"PATH": os.fspath(empty)},
+        stdout=StringIO(),
+        stderr=err,
+    )
+    assert status != 0
+    assert "clang" in err.getvalue()
+
+
+def test_memory_gate_valgrind_preflight_fails_when_valgrind_missing(tmp_path):
+    module = load_check_tools_module()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    make_fake_executable(bin_dir, "gcc")
+
+    results = module.preflight_memory_gate(
+        "valgrind",
+        env={"PATH": os.fspath(bin_dir)},
+        platform="linux",
+    )
+    missing_names = {result.name for result in results if not result.available}
+
+    assert "valgrind" in missing_names
+
+    err = StringIO()
+    failure = module.main(
+        ["--memory-gate", "valgrind"],
+        env={"PATH": os.fspath(bin_dir)},
+        stdout=StringIO(),
+        stderr=err,
+    )
+    assert failure != 0
+    assert "valgrind" in err.getvalue()
+
+
+def test_memory_gate_cli_failure_stays_on_stderr(tmp_path):
+    module = load_check_tools_module()
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+
+    out = StringIO()
+    err = StringIO()
+    status = module.main(
+        ["--memory-gate", "sanitize"],
+        env={"PATH": os.fspath(empty)},
+        stdout=out,
+        stderr=err,
+    )
+
+    assert status != 0
+    assert out.getvalue() == ""
+    assert "memory-gate sanitize" in err.getvalue()
+    assert "clang" in err.getvalue()
+    assert "silently skip" in err.getvalue()
+
+
+def test_memory_gate_sanitize_preflight_passes_on_real_linux_toolchain():
+    module = load_check_tools_module()
+    if not sys.platform.startswith("linux"):
+        pytest.skip("sanitize preflight requires Linux")
+    if shutil.which("clang") is None:
+        pytest.skip("clang is required for sanitize preflight success path")
+
+    out = StringIO()
+    status = module.main(
+        ["--memory-gate", "sanitize"],
+        stdout=out,
+        stderr=StringIO(),
+    )
+    assert status == 0
+    assert "memory-gate sanitize" in out.getvalue()
+
+
+def test_memory_gate_valgrind_preflight_passes_on_real_linux_toolchain():
+    module = load_check_tools_module()
+    if not sys.platform.startswith("linux"):
+        pytest.skip("valgrind preflight requires Linux")
+    if shutil.which("gcc") is None or shutil.which("valgrind") is None:
+        pytest.skip("gcc and valgrind are required for valgrind preflight success")
+
+    out = StringIO()
+    status = module.main(
+        ["--memory-gate", "valgrind"],
+        stdout=out,
+        stderr=StringIO(),
+    )
+    assert status == 0
+    assert "memory-gate valgrind" in out.getvalue()

@@ -1,6 +1,9 @@
 import errno as errno_mod
 import os
 import subprocess
+import tarfile
+import tempfile
+import types
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,13 @@ EPIPE_MESSAGE = os.strerror(errno_mod.EPIPE).encode()
 
 @pytest.fixture(scope="session")
 def sysdiff_bin(tmp_path_factory):
+    env_bin = os.environ.get("SYSDIFF_BIN")
+    if env_bin:
+        binary = Path(env_bin)
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            pytest.fail(f"SYSDIFF_BIN is not an executable file: {env_bin}")
+        return binary
+
     build_dir = tmp_path_factory.mktemp("build")
     binary = build_dir / "sysdiff"
     subprocess.run(
@@ -23,7 +33,6 @@ def sysdiff_bin(tmp_path_factory):
             "-Wextra",
             "-Wpedantic",
             "-Werror",
-            "-D_POSIX_C_SOURCE=200809L",
             "-o",
             str(binary),
             str(SRC),
@@ -33,21 +42,62 @@ def sysdiff_bin(tmp_path_factory):
     return binary
 
 
+def _valgrind_command(cmd):
+    """Wrap cmd in Valgrind when SYSDIFF_UNDER_VALGRIND=1; logs use TMPDIR."""
+
+    if os.environ.get("SYSDIFF_UNDER_VALGRIND") != "1":
+        return cmd, None
+
+    fd, vg_log = tempfile.mkstemp(prefix="sysdiff-valgrind.")
+    os.close(fd)
+    wrapped = [
+        "valgrind",
+        "--quiet",
+        "--error-exitcode=99",
+        "--leak-check=full",
+        "--errors-for-leak-kinds=definite,possible",
+        f"--log-file={vg_log}",
+        *cmd,
+    ]
+    return wrapped, vg_log
+
+
+def _finish_valgrind(result, vg_log):
+    if vg_log is None:
+        return result
+    try:
+        log_size = os.path.getsize(vg_log)
+        if result.returncode == 99 or log_size > 0:
+            with open(vg_log, "rb") as handle:
+                log_bytes = handle.read()
+            detail = log_bytes.decode("utf-8", errors="replace")
+            raise AssertionError(
+                f"valgrind reported errors (status {result.returncode}):\n{detail}"
+            )
+    finally:
+        os.unlink(vg_log)
+    return result
+
+
 def run_sysdiff(binary, *args):
-    return subprocess.run(
-        [str(binary), *map(str, args)],
+    cmd, vg_log = _valgrind_command([str(binary), *map(str, args)])
+    result = subprocess.run(
+        cmd,
         capture_output=True,
         text=True,
         check=False,
     )
+    return _finish_valgrind(result, vg_log)
 
 
 def run_sysdiff_bytes(binary, *args):
-    return subprocess.run(
-        [str(binary), *map(str, args)],
+    cmd, vg_log = _valgrind_command([str(binary), *map(str, args)])
+    result = subprocess.run(
+        cmd,
         capture_output=True,
         check=False,
     )
+    return _finish_valgrind(result, vg_log)
 
 
 def write_snapshot(path, text):
@@ -394,13 +444,15 @@ def test_path_with_non_ascii_ff_is_safely_escaped(sysdiff_bin, tmp_path):
 def run_with_closed_stdout_pipe(binary, *args):
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
+    cmd, vg_log = _valgrind_command([str(binary), *map(str, args)])
     proc = subprocess.Popen(
-        [str(binary), *map(str, args)],
+        cmd,
         stdout=write_fd,
         stderr=subprocess.PIPE,
     )
     os.close(write_fd)
     _, stderr = proc.communicate()
+    _finish_valgrind(types.SimpleNamespace(returncode=proc.returncode), vg_log)
     return proc.returncode, stderr
 
 
@@ -461,3 +513,305 @@ def test_snapshot_byte_limit_boundary(sysdiff_bin, tmp_path):
     assert b"snapshot byte limit exceeded" in nul_result.stderr
     assert b"embedded NUL" not in nul_result.stderr
     assert str(nul_over).encode() in nul_result.stderr
+
+
+DIST_ARCHIVE_NAME = "sysdiff-source.tar.gz"
+DIST_CHECKSUM_NAME = "sysdiff-source.tar.gz.sha256"
+DIST_EPOCH = "946684800"
+REQUIRED_ARCHIVE_MEMBERS = (
+    "sysdiff/Makefile",
+    "sysdiff/LICENSE",
+    "sysdiff/README.md",
+    "sysdiff/CHANGELOG.md",
+    "sysdiff/src/sysdiff.c",
+    "sysdiff/man/sysdiff.1",
+    "sysdiff/tests/test_sysdiff.sh",
+    "sysdiff/tests/test_sysdiff.py",
+    "sysdiff/tests/test_sysdiff_fixture.sh",
+    "sysdiff/scripts/check_tools.py",
+    "sysdiff/docs/sysdiff-snapshot-format-and-scope.md",
+)
+EXCLUDED_ARCHIVE_FRAGMENTS = (
+    ".git/",
+    "code-reviews/",
+    "playbooks/",
+    "plans/",
+    "dist/",
+    ".pytest_cache",
+    "__pycache__",
+    ".agent-orch",
+    "artifacts/",
+)
+
+
+def _git_show_toplevel(path: Path):
+    """Return the enclosing git work-tree root for path, or None."""
+
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=str(path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    toplevel = result.stdout.strip()
+    if not toplevel:
+        return None
+    return Path(toplevel).resolve()
+
+
+def _path_is_git_worktree_root(path: Path) -> bool:
+    """True only when path itself is the git work-tree root.
+
+    Nested disposable trees under an enclosing repository still report
+    ``git rev-parse --is-inside-work-tree=true`` against the parent. Those
+    trees have no tracked release pathspecs at their own root, so ``make dist``
+    must not run there. Quality-floor clean copies often land under Agent-Orch
+    scratch ``TMPDIR`` inside the governed workspace and hit this case.
+    """
+
+    toplevel = _git_show_toplevel(path)
+    return toplevel is not None and toplevel == path.resolve()
+
+
+def _in_git_worktree():
+    return _path_is_git_worktree_root(ROOT)
+
+
+def _require_git_worktree():
+    if not _in_git_worktree():
+        pytest.skip(
+            "make dist regression coverage requires the suite root to be a "
+            "git work-tree root (nested copies under an enclosing repository skip)"
+        )
+
+
+def test_dist_git_root_detection_rejects_nested_enclosing_worktree_copy():
+    """Nested paths under a parent git repo must not look like dist roots.
+
+    Regression for the clean-checkout quality floor: a tar copy under workspace
+    scratch TMPDIR is inside the parent work tree, so a bare
+    ``--is-inside-work-tree`` check is a false positive and used to drive
+    ``make dist`` into ``found no tracked release files``.
+    """
+
+    parent_toplevel = _git_show_toplevel(ROOT)
+    if parent_toplevel is None:
+        pytest.skip("requires an enclosing git work tree to exercise nested detection")
+
+    inside = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inside.returncode == 0
+    assert inside.stdout.strip() == "true"
+
+    if not _path_is_git_worktree_root(ROOT):
+        # Disposable quality-floor / scratch copy: ROOT is nested already.
+        assert parent_toplevel != ROOT.resolve()
+        assert not _in_git_worktree()
+        return
+
+    nested = Path(
+        tempfile.mkdtemp(prefix="sysdiff-nested-dist-root.", dir=str(ROOT))
+    )
+    try:
+        (nested / "Makefile").write_text("# decoy\n", encoding="utf-8")
+        nested_inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(nested),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert nested_inside.returncode == 0
+        assert nested_inside.stdout.strip() == "true"
+        assert _git_show_toplevel(nested) == ROOT.resolve()
+        assert not _path_is_git_worktree_root(nested)
+    finally:
+        subprocess.run(["rm", "-rf", str(nested)], check=False)
+
+
+def _run_make(*args, check=True):
+    return subprocess.run(
+        ["make", "-C", str(ROOT), *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def _dist_paths():
+    dist_dir = ROOT / "dist"
+    return dist_dir / DIST_ARCHIVE_NAME, dist_dir / DIST_CHECKSUM_NAME
+
+
+def _build_dist(epoch=DIST_EPOCH):
+    _require_git_worktree()
+    result = _run_make(f"SOURCE_DATE_EPOCH={epoch}", "dist")
+    archive, checksum = _dist_paths()
+    assert archive.is_file(), result.stderr
+    assert checksum.is_file(), result.stderr
+    return archive, checksum, result
+
+
+def _archive_member_names(archive_path):
+    listing = subprocess.run(
+        ["tar", "-tzf", str(archive_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in listing.stdout.splitlines() if line]
+
+
+def _gzip_mtime(archive_path):
+    with archive_path.open("rb") as handle:
+        header = handle.read(10)
+    assert len(header) >= 10
+    assert header[0:2] == b"\x1f\x8b"
+    return int.from_bytes(header[4:8], "little")
+
+
+def test_dist_is_reproducible_for_fixed_epoch():
+    archive, checksum, _ = _build_dist()
+    first_archive = archive.read_bytes()
+    first_checksum = checksum.read_text(encoding="utf-8")
+    first_digest = first_checksum.split()[0]
+
+    archive, checksum, _ = _build_dist()
+    assert archive.read_bytes() == first_archive
+    assert checksum.read_text(encoding="utf-8") == first_checksum
+    assert checksum.read_text(encoding="utf-8").split()[0] == first_digest
+
+
+def test_dist_checksum_matches_archive_basename_only():
+    archive, checksum, _ = _build_dist()
+    digest_line = checksum.read_text(encoding="utf-8").strip()
+    assert digest_line.endswith(f"  {DIST_ARCHIVE_NAME}")
+    assert "/" not in digest_line.split()[-1]
+    expected = subprocess.run(
+        ["sha256sum", str(archive)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()[0]
+    assert digest_line.split()[0] == expected
+    check = subprocess.run(
+        ["sha256sum", "-c", DIST_CHECKSUM_NAME],
+        cwd=str(ROOT / "dist"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, check.stderr
+
+
+def test_dist_archive_layout_and_normalized_metadata():
+    archive, _, _ = _build_dist()
+    assert _gzip_mtime(archive) == 0
+
+    with tarfile.open(archive, "r:gz") as tar:
+        members = tar.getmembers()
+        names = [member.name for member in members]
+        assert names == sorted(names)
+        for member in members:
+            assert not member.name.startswith("/")
+            assert ".." not in Path(member.name).parts
+            assert member.name == "sysdiff" or member.name.startswith("sysdiff/")
+            assert member.uid == 0
+            assert member.gid == 0
+            assert member.uname in ("", "root")
+            assert member.gname in ("", "root")
+            assert member.mtime == int(DIST_EPOCH)
+            if member.isdir():
+                assert member.mode & 0o777 == 0o755
+            elif member.isfile():
+                if member.name.endswith(".sh"):
+                    assert member.mode & 0o777 == 0o755
+                else:
+                    assert member.mode & 0o777 == 0o644
+
+    name_set = set(_archive_member_names(archive))
+    for required in REQUIRED_ARCHIVE_MEMBERS:
+        assert required in name_set
+
+    joined = "\n".join(name_set)
+    for fragment in EXCLUDED_ARCHIVE_FRAGMENTS:
+        assert fragment not in joined
+    assert "sysdiff/code-reviews" not in joined
+    assert "sysdiff/playbooks" not in joined
+    assert "sysdiff/plans" not in joined
+
+
+def test_dist_excludes_untracked_files():
+    _require_git_worktree()
+    decoy = ROOT / "UNTRACKED_DIST_DECOY.txt"
+    decoy.write_text("untracked decoy must not enter the archive\n", encoding="utf-8")
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", str(decoy.relative_to(ROOT))],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert status.stdout.strip().startswith("??"), status.stdout
+        archive, _, _ = _build_dist()
+        names = _archive_member_names(archive)
+        joined = "\n".join(names)
+        assert "UNTRACKED_DIST_DECOY.txt" not in joined
+        assert decoy.name not in {Path(name).name for name in names}
+    finally:
+        decoy.unlink(missing_ok=True)
+
+
+def test_dist_extracts_builds_and_tests_outside_workspace():
+    archive, _, _ = _build_dist()
+    extract_root = Path(
+        tempfile.mkdtemp(prefix="sysdiff-dist-extract.", dir="/tmp")
+    )
+    try:
+        assert ROOT not in extract_root.parents and extract_root != ROOT
+        subprocess.run(
+            ["tar", "-xzf", str(archive), "-C", str(extract_root)],
+            check=True,
+        )
+        sourcedir = extract_root / "sysdiff"
+        assert (sourcedir / "Makefile").is_file()
+        assert (sourcedir / "src" / "sysdiff.c").is_file()
+        assert (sourcedir / "tests" / "test_sysdiff.sh").is_file()
+        build = subprocess.run(
+            ["make", "-C", str(sourcedir)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert build.returncode == 0, build.stderr
+        binary = sourcedir / "build" / "sysdiff"
+        assert binary.is_file()
+        version = run_sysdiff(binary, "--version")
+        assert version.returncode == 0
+        assert version.stdout == "sysdiff 0.1.0\n"
+        tested = subprocess.run(
+            ["make", "-C", str(sourcedir), "test"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert tested.returncode == 0, tested.stderr + tested.stdout
+    finally:
+        subprocess.run(["rm", "-rf", str(extract_root)], check=False)
+
+
+def test_dist_rejects_malformed_source_date_epoch():
+    _require_git_worktree()
+    for bad_epoch in ("", "abc", "12.5", "-1", "1e6", "946684800 "):
+        result = _run_make(f"SOURCE_DATE_EPOCH={bad_epoch}", "dist", check=False)
+        assert result.returncode != 0, bad_epoch
+        assert "SOURCE_DATE_EPOCH" in result.stderr

@@ -14,12 +14,21 @@ fail() {
     exit 1
 }
 
+if [ "${1:-}" = "--bin" ]; then
+    if [ "$#" -lt 2 ]; then
+        fail "--bin requires a path to a sysdiff binary"
+    fi
+    BIN="$2"
+    export SYSDIFF_BIN="$BIN"
+    shift 2
+fi
+
 if [ ! -x "$BIN" ]; then
     printf 'skip: sysdiff binary not found or not executable: %s\n' "$BIN" >&2
     exit 77
 fi
 
-WORKDIR="$(mktemp -d -t sysdiff-fixture.XXXXXXXXXX)"
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/sysdiff-fixture.XXXXXXXXXX")"
 cleanup() {
     rm -rf "$WORKDIR"
 }
@@ -500,8 +509,10 @@ assert_nonempty "$stderr"
 assert_contains "$stderr" "$line_over_limit"
 assert_contains "$stderr" "line length limit"
 
-# Parsing 65536 entries under Valgrind is prohibitively slow; keep full
-# coverage on the normal and sanitizer paths that make test already runs.
+# Parsing 65536 entries under Valgrind is prohibitively slow in this shell
+# fixture. pytest still covers the aggregate byte-limit boundary under
+# Valgrind via test_snapshot_byte_limit_boundary; keep the large entry-count
+# workload on the normal and sanitizer paths that make test already runs.
 if [ "${SYSDIFF_UNDER_VALGRIND:-0}" != "1" ]; then
     entries_at_limit="$WORKDIR/entries-at-limit.snapshot"
     entries_over_limit="$WORKDIR/entries-over-limit.snapshot"
@@ -631,6 +642,8 @@ assert_closed_stdout_pipe "--help" --help
 assert_closed_stdout_pipe "changed-compare" compare "$before" "$after"
 
 # --- Aggregate snapshot byte limit (16 MiB), including comment-only bypass.
+# Skipped under Valgrind here for shell runtime; pytest covers the same
+# boundary under memcheck via test_snapshot_byte_limit_boundary.
 MAX_SNAPSHOT_BYTES=16777216
 if [ "${SYSDIFF_UNDER_VALGRIND:-0}" != "1" ]; then
     bytes_at_limit="$WORKDIR/bytes-at-limit.snapshot"
