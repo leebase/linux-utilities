@@ -19,3 +19,4 @@ core
 vgcore.*
 dist/
 code-reviews/
+.agent-orch/
