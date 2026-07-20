@@ -1,5 +1,6 @@
 import errno as errno_mod
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -317,8 +318,39 @@ def test_mixed_case_keys_are_sorted_bytewise_in_both_input_orders(
     _assert_mixed_case_bytewise_order(sysdiff_bin, tmp_path)
 
 
+def _temp_parent_outside_workspace() -> str:
+    """Return a temp parent directory that is not under the governed workspace."""
+
+    root = ROOT.resolve()
+    candidates = []
+    env_tmpdir = os.environ.get("TMPDIR")
+    if env_tmpdir:
+        candidates.append(env_tmpdir)
+    # Prefer the process default only when it is not just TMPDIR echoed back.
+    default_tmp = tempfile.gettempdir()
+    if default_tmp not in candidates:
+        candidates.append(default_tmp)
+    for fallback in ("/tmp", "/var/tmp"):
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    for candidate in candidates:
+        try:
+            resolved = Path(candidate).resolve()
+        except OSError:
+            continue
+        if resolved == root or resolved.is_relative_to(root):
+            continue
+        if resolved.is_dir() and os.access(resolved, os.W_OK | os.X_OK):
+            return str(resolved)
+
+    raise RuntimeError(
+        "no writable temporary directory outside the governed workspace"
+    )
+
+
 def test_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
-    """Copy sources to /tmp, prove baseline, mutate only the copy, kill mutant.
+    """Copy src to an out-of-tree scratch, prove baseline, mutate copy, kill it.
 
     Replaces strcmp with strcasecmp solely in compare_entries_by_key inside the
     scratch tree. The governed workspace source must remain untouched.
@@ -328,18 +360,26 @@ def test_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
     assert COMPARE_ENTRIES_STRCMP in original_text
     assert COMPARE_ENTRIES_STRCASECMP not in original_text
 
-    scratch = Path(
-        tempfile.mkdtemp(prefix="sysdiff-rc001-mutant.", dir="/tmp")
+    # Keep pytest and shell fixture goldens from drifting apart (RC-001 oracle).
+    fixture_text = (ROOT / "tests" / "test_sysdiff_fixture.sh").read_text(
+        encoding="utf-8"
     )
+    assert MIXED_CASE_BYTEWISE_EXPECTED.rstrip("\n") in fixture_text
+
+    # Outside the workspace (may skip an in-tree TMPDIR), then always cleaned.
+    scratch = Path(
+        tempfile.mkdtemp(
+            prefix="sysdiff-rc001-mutant.",
+            dir=_temp_parent_outside_workspace(),
+        )
+    )
+    assert not scratch.resolve().is_relative_to(ROOT.resolve())
+
     try:
         scratch_src_dir = scratch / "src"
         scratch_src_dir.mkdir()
         scratch_src = scratch_src_dir / "sysdiff.c"
-        scratch_makefile = scratch / "Makefile"
         scratch_src.write_text(original_text, encoding="utf-8")
-        scratch_makefile.write_text(
-            (ROOT / "Makefile").read_text(encoding="utf-8"), encoding="utf-8"
-        )
 
         baseline_bin = scratch / "sysdiff-baseline"
         _compile_sysdiff(scratch_src, baseline_bin)
@@ -369,21 +409,24 @@ def test_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
         before = write_snapshot(
             scratch / "mutant-before.snapshot", "same.keep=stable\n"
         )
-        after_reversed = write_snapshot(
-            scratch / "mutant-after-reversed.snapshot",
-            "same.keep=stable\n" + MIXED_CASE_AFTER_REVERSED,
-        )
-        mutant_result = run_sysdiff(
-            mutant_bin, "compare", before, after_reversed
-        )
-        assert mutant_result.returncode == 1
-        assert mutant_result.stdout != MIXED_CASE_BYTEWISE_EXPECTED, (
-            "strcasecmp mutant must not satisfy RC-001 bytewise golden; "
-            f"got {mutant_result.stdout!r}"
-        )
+        for label, after_body in (
+            ("bytewise", MIXED_CASE_AFTER_BYTEWISE),
+            ("reversed", MIXED_CASE_AFTER_REVERSED),
+        ):
+            after = write_snapshot(
+                scratch / f"mutant-after-{label}.snapshot",
+                "same.keep=stable\n" + after_body,
+            )
+            mutant_result = run_sysdiff(mutant_bin, "compare", before, after)
+            assert mutant_result.returncode == 1
+            assert mutant_result.stdout != MIXED_CASE_BYTEWISE_EXPECTED, (
+                "strcasecmp mutant must not satisfy RC-001 bytewise golden "
+                f"for {label} input order; got {mutant_result.stdout!r}"
+            )
     finally:
-        subprocess.run(["rm", "-rf", str(scratch)], check=False)
-        assert SRC.read_text(encoding="utf-8") == original_text
+        shutil.rmtree(scratch, ignore_errors=True)
+
+    assert SRC.read_text(encoding="utf-8") == original_text
 
 
 @pytest.mark.parametrize(
