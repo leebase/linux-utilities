@@ -22,9 +22,7 @@ runs the complete quality floor in this order:
 11. `make test-sanitize` — AddressSanitizer then UndefinedBehaviorSanitizer
     (Clang instrumented binaries; leak-fatal ASan; halt-on-error UBSan)
 12. `make test-valgrind` — GCC debug rebuild under Valgrind memcheck with
-    `--error-exitcode=99`; runs the shell suite and full `pytest tests/ -q`
-    with `SYSDIFF_UNDER_VALGRIND=1`, but memcheck wrapping applies only where
-    helpers honor that flag (see Valgrind Hostile-Input Coverage)
+    `--error-exitcode=99` and `SYSDIFF_UNDER_VALGRIND=1` (see Valgrind Coverage)
 
 Standalone `make benchmark` still writes
 `artifacts/performance/sysdiff-benchmark.json` for local inspection. Default
@@ -36,6 +34,32 @@ tools (including groff) and runs exactly `make quality`. AGENTS.md lists the
 intended release-quality toolset; treat Makefile targets as the executable
 contract for what this repository actually gates today. See also
 `docs/sysdiff-quality-floor-clean-checkout.md`.
+
+## Valgrind Coverage
+
+`make test-valgrind` rebuilds `sysdiff` with GCC debug flags into a mktemp
+binary, sets `SYSDIFF_BIN` to that path and `SYSDIFF_UNDER_VALGRIND=1`, then
+runs `./tests/test_sysdiff.sh` followed by `python3 -m pytest tests/ -q`.
+Memcheck is applied only where harness helpers honor the flag.
+
+The shell suite (`tests/test_sysdiff.sh`) wraps each `run_sysdiff` invocation
+in Valgrind memcheck (`--error-exitcode=99`, full leak check). Under that flag
+it skips the DESTDIR install/reinstall/uninstall packaging block, then
+delegates to `tests/test_sysdiff_fixture.sh`. The fixture suite wraps compare
+and most acceptance cases through its `run_status` helper under the same
+flag, while omitting the heaviest entry-count and 16 MiB aggregate byte-limit
+cases for runtime; those boundaries remain covered by ordinary and sanitizer
+paths (and by pytest `test_snapshot_byte_limit_boundary` under memcheck).
+
+In `tests/test_sysdiff.py`, only call sites that go through `_valgrind_command`
+(via `run_sysdiff`, `run_sysdiff_bytes`, and `run_with_closed_stdout_pipe`)
+run the product binary under memcheck: help/version, compare diffs, malformed
+and NUL rejection, safe escaping, closed-stdout EPIPE, and the snapshot
+byte-limit boundary. Other pytest modules executed by the same gate
+(`tests/test_sysdiff_malformed_fuzz.py`, `tests/test_sysdiff_benchmark.py`,
+`tests/test_check_tools.py`) and dist/`make` subprocess helpers that do not
+call `_valgrind_command` do not prepend Valgrind; nested extract builds
+explicitly unset `SYSDIFF_UNDER_VALGRIND`.
 
 ## Valgrind Hostile-Input Coverage
 
