@@ -310,7 +310,15 @@ def test_valgrind_compile_and_run_command_construction():
     )
 
     assert compile_command[0] == "gcc"
-    for flag in ("-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-g"):
+    for flag in (
+        "-std=c17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-g",
+        "-fno-omit-frame-pointer",
+    ):
         assert flag in compile_command
     assert "-fsanitize=address" not in compile_command
 

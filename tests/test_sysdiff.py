@@ -786,8 +786,15 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
         assert (sourcedir / "Makefile").is_file()
         assert (sourcedir / "src" / "sysdiff.c").is_file()
         assert (sourcedir / "tests" / "test_sysdiff.sh").is_file()
+        # Nested extract must not inherit workspace/memory-gate binary routing;
+        # otherwise test-shell packaging compares against the wrong ORDINARY_BIN
+        # and silently skips DESTDIR install/reinstall/uninstall coverage.
+        nested_env = os.environ.copy()
+        nested_env.pop("SYSDIFF_BIN", None)
+        nested_env.pop("SYSDIFF_UNDER_VALGRIND", None)
         build = subprocess.run(
             ["make", "-C", str(sourcedir)],
+            env=nested_env,
             capture_output=True,
             text=True,
             check=False,
@@ -800,6 +807,7 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
         assert version.stdout == "sysdiff 0.1.0\n"
         tested = subprocess.run(
             ["make", "-C", str(sourcedir), "test"],
+            env=nested_env,
             capture_output=True,
             text=True,
             check=False,

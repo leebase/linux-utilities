@@ -69,6 +69,11 @@ rm -f "$noarg_out"
 trap - EXIT HUP INT TERM
 
 # Workspace-confined DESTDIR install / reinstall / uninstall packaging checks.
+# Packaging always stages the ordinary Makefile install target (build/sysdiff).
+# Skip when an alternate/instrumented binary is under test so ASan/UBSan/Valgrind
+# gates do not silently re-run uninstrumented install coverage.
+ORDINARY_BIN="$ROOT/build/sysdiff"
+if [ "$BIN" = "$ORDINARY_BIN" ] && [ "${SYSDIFF_UNDER_VALGRIND:-0}" != "1" ]; then
 mkdir -p "$ROOT/build"
 PKG_WORKDIR="$(mktemp -d "$ROOT/build/sysdiff-pkg.XXXXXXXXXX")"
 cleanup_pkg() {
@@ -173,5 +178,6 @@ fi
 
 rm -rf "$PKG_WORKDIR"
 trap - EXIT HUP INT TERM
+fi
 
 "$ROOT/tests/test_sysdiff_fixture.sh"

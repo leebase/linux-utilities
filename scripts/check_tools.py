@@ -82,7 +82,11 @@ UBSAN_CFLAGS: tuple[str, ...] = STRICT_WARNING_FLAGS + (
     "-fsanitize=undefined",
     "-fno-omit-frame-pointer",
 )
-VALGRIND_CFLAGS: tuple[str, ...] = STRICT_WARNING_FLAGS + ("-O1", "-g")
+VALGRIND_CFLAGS: tuple[str, ...] = STRICT_WARNING_FLAGS + (
+    "-O1",
+    "-g",
+    "-fno-omit-frame-pointer",
+)
 
 ASAN_OPTIONS: str = "detect_leaks=1:abort_on_error=1"
 UBSAN_OPTIONS: str = "halt_on_error=1:print_stacktrace=1"

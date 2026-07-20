@@ -1,4 +1,11 @@
+# Ordinary Make output lives under build/ (BIN := build/sysdiff). Never commit it.
 build/
+
+# Defense in depth: ignore accidental top-level build leftovers without
+# affecting man/sysdiff.1 or src/sysdiff.c. Memory-gate binaries stay in mktemp.
+/sysdiff
+/sysdiff.o
+
 .agent-orch-scratch/
 .agent-orch/user-smoke/
 artifacts/

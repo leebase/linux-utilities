@@ -4,13 +4,15 @@ PYTHON ?= python3
 SHELL := /bin/bash
 
 SRC := src/sysdiff.c
+# Ordinary product binary. Keep under build/ so .gitignore covers it; do not
+# emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
 BIN := build/sysdiff
 MANPAGE := man/sysdiff.1
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
 ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
 UBSAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=undefined -fno-omit-frame-pointer
-VALGRIND_CFLAGS := $(STRICT_WARNINGS) -O1 -g
+VALGRIND_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fno-omit-frame-pointer
 CLANG_TIDY_CHECKS := clang-analyzer-*,bugprone-*,performance-*,portability-*,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
 PYTEST_NO_CACHE := PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m pytest -p no:cacheprovider
 
@@ -148,8 +150,10 @@ man-check:
 	rm -f "$$warnfile"; \
 	exit "$$status"
 
+# Pin the ordinary product binary so an inherited SYSDIFF_BIN (e.g. from an
+# outer sanitizer/Valgrind/pytest invocation) cannot redirect or skip packaging.
 test-shell: $(BIN)
-	./tests/test_sysdiff.sh
+	SYSDIFF_BIN="$(CURDIR)/$(BIN)" ./tests/test_sysdiff.sh
 
 test-suite: $(BIN)
 	$(MAKE) test-shell
@@ -375,6 +379,6 @@ distcheck:
 			exit 1; \
 			;; \
 	esac; \
-	$(MAKE) -C "$$sourcedir"; \
-	$(MAKE) -C "$$sourcedir" test; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
 	printf 'distcheck: ok\n'
