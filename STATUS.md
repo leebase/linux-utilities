@@ -16,6 +16,20 @@ explicit-snapshot-only scope) remain in force. This documentation-completion
 and repair slice updates root release docs and the man page only; it does not
 modify `src/sysdiff.c` or re-run compilers/tests as part of the write step.
 
+## Clean Review Cycle Counter
+
+Consecutive clean independent release-candidate review cycles currently stand
+at **2**. Cycle 1 is governed run `8a3470eff7d3` with
+`code-reviews/sysdiff-rc-review-cycle-1.verdict.json` = `pass` (0
+Medium/High/Critical). Cycle 2 is governed run `c84986cf0c81` with
+`code-reviews/sysdiff-rc-second-independent-cycle.verdict.json` = `pass` under
+the Medium threshold (0 Medium/High/Critical, 9 Low L1–L9). The failed
+pre-remediation RC cycle (`sysdiff-release-candidate-review-cycle-1.verdict.json`
+fail on Medium RC-001) does not count toward the consecutive total; RC-001's
+strcasecmp-mutant kill was re-verified in cycle 2. This counter records
+consecutive clean RC reviews only and does not authorize publication or claim
+that `sysdiff` is released without Lee-controlled release authorization.
+
 ## Release Readiness
 
 Product readiness for 0.1.0 remains grounded in previously recorded evidence,

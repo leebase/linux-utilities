@@ -1,5 +1,29 @@
 # Result Review
 
+## Second Independent Release-Candidate Review Cycle
+
+Governed run `c84986cf0c81` (playbook
+`sysdiff_second_independent_release_candidate_review_cycle`) completed user
+smoke, the second independent release-candidate review, and this handoff
+record. Verdict `code-reviews/sysdiff-rc-second-independent-cycle.verdict.json`
+is `pass` under the Medium threshold: 0 Medium/High/Critical, 9 Low (L1–L9).
+Exact smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors`. `artifacts/user-smoke/check.log` confirms DESTDIR
+install/uninstall staging, fixture acceptance ok, and smoke-bound pytest
+`127 passed in 10.84s`. Exact review check:
+`python3 -m pytest -p no:cacheprovider tests/ -q` exited 0 with
+`127 passed in 10.96s`. RC-001 strcasecmp-mutant result: independently
+reconstructed (`strcmp` → `strcasecmp` in `compare_entries_by_key`); kill is
+behavioral and robust to qsort Alpha/alpha tie-breaking; full suite with
+`SYSDIFF_BIN` on the mutant reports `1 failed, 126 passed` on the mixed-case
+bytewise ordering test. Consecutive clean RC review cycles now stand at 2
+(prior: `sysdiff-rc-review-cycle-1.verdict.json` pass). Fresh quality evidence
+this cycle: step-1 non-writing gates (pytest 127; gcc/clang `-fsyntax-only`;
+cppcheck; shell `bash -n`; `check_tools.py`) plus smoke/review pytest—not a
+fresh full `make quality`. Remaining Low L1–L9 stay visible. This records the
+second consecutive clean RC cycle; it does not declare `sysdiff` released.
+
 ## First Independent Release-Candidate Review Cycle
 
 Governed run `8a3470eff7d3` (playbook `sysdiff_first_independent_rc_review_cycle`)

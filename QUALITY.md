@@ -35,6 +35,25 @@ intended release-quality toolset; treat Makefile targets as the executable
 contract for what this repository actually gates today. See also
 `docs/sysdiff-quality-floor-clean-checkout.md`.
 
+## Fresh Quality-Floor Evidence
+
+For governed run `c84986cf0c81` (second independent RC review cycle), fresh
+executable evidence is recorded as follows—not as a silent claim of a full
+`make quality` re-run inside this playbook. Step 1 (verify/repair) exited 0
+on non-writing checks: `python3 -m pytest -p no:cacheprovider tests/ -q`
+(**127 passed**), `gcc`/`clang` `-fsyntax-only` on `src/sysdiff.c`,
+`cppcheck`, `bash -n` on both shell suites, and `python3 scripts/check_tools.py`;
+pinned smoke hashes were unchanged and no source repair was required. Step 2
+user smoke (`artifacts/user-smoke/result.json`) recorded start/check exit 0
+with empty `blocking_errors`; `check.log` shows DESTDIR install/uninstall
+staging, fixture acceptance ok, and smoke-bound pytest **`127 passed in
+10.84s`**. Step 3 allowlisted review check repeated
+`python3 -m pytest -p no:cacheprovider tests/ -q` → exit 0, **`127 passed in
+10.96s`**. RC-001 strcasecmp-mutant kill was independently reconstructed and
+confirmed. Prior complete clean-checkout `make quality` provenance remains in
+`docs/sysdiff-quality-floor-clean-checkout.md`; do not conflate that historical
+floor with this cycle's fresh subset evidence.
+
 ## Valgrind Coverage
 
 `make test-valgrind` rebuilds `sysdiff` with GCC debug flags into a mktemp

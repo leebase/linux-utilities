@@ -68,3 +68,21 @@ Medium/High/Critical, 7 Low F1–F7); allowlisted `python3 -m pytest tests/ -q`
 exited 0 with `127 passed in 11.06s`. This cycle does not claim that `sysdiff`
 is released or that the mission is complete. A second consecutive review cycle
 with no release-blocking findings is still required before mission completion.
+
+## Second Independent Release-Candidate Review Cycle
+
+Governed run `c84986cf0c81`
+(`sysdiff_second_independent_release_candidate_review_cycle`) recorded the
+second independent release-candidate review cycle. User smoke passed with
+start/check exit 0 and empty blocking errors; smoke-bound pytest reported
+`127 passed in 10.84s`. Independent review
+`code-reviews/sysdiff-rc-second-independent-cycle.verdict.json` is `pass`
+under the Medium threshold (0 Medium/High/Critical, 9 Low L1–L9); allowlisted
+`python3 -m pytest -p no:cacheprovider tests/ -q` exited 0 with
+`127 passed in 10.96s`. RC-001 strcasecmp-mutant kill was re-verified
+independently (behavioral divergence on mixed-case fixtures; robust to qsort
+ties; full suite detects mutant return with 1 failed / 126 passed). Fresh
+quality evidence this cycle covers step-1 non-writing validation plus
+smoke/review pytest suites, not a fresh full `make quality` re-run.
+Consecutive clean RC review cycles: 2. This cycle does not by itself declare
+`sysdiff` released or authorize publication.
