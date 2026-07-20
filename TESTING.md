@@ -13,15 +13,37 @@ of values/paths/commands, closed-stdout `EPIPE` behavior, and snapshot
 byte-limit boundaries. Smoke (`scripts/smoke.sh` via `make test`, plus
 Agent-Orch `tests/smoke_manifest.json`) exercises the same functional path
 without special privileges. Dynamic analysis is separate: ASan/UBSan rebuild
-and re-run the suite; Valgrind wraps the shell suite with reserved status `99`.
-Under `SYSDIFF_UNDER_VALGRIND=1`, the fixture suite skips the 65,536-entry and
-16 MiB total-byte limit cases for runtime; those paths still run on normal and
-sanitizer gates. Write-to-`/dev/full` checks run only when `/dev/full` is
-writable (Linux-oriented). Shell fixtures export `LC_ALL=C` for locale-stable
-diagnostics and honor `SYSDIFF_BIN` to select the binary under test. Internal
-`tests/test_check_tools.py` covers routed-tool preflight and is infrastructure,
-not product compare behavior. Defects should land as failing regressions before
-fixes.
+and re-run the suite; Valgrind wraps the shell suite and `tests/test_sysdiff.py`
+with reserved status `99` (not the malformed-fuzz corpus; see Valgrind
+Hostile-Input Coverage). Under `SYSDIFF_UNDER_VALGRIND=1`, the fixture suite
+skips the 65,536-entry and 16 MiB total-byte limit cases for runtime; those
+paths still run on normal and sanitizer gates. Write-to-`/dev/full` checks run
+only when `/dev/full` is writable (Linux-oriented). Shell fixtures export
+`LC_ALL=C` for locale-stable diagnostics and honor `SYSDIFF_BIN` to select the
+binary under test. Internal `tests/test_check_tools.py` covers routed-tool
+preflight and is infrastructure, not product compare behavior. Defects should
+land as failing regressions before fixes.
+
+## Valgrind Hostile-Input Coverage
+
+Distinguish two layers: ordinary hostile-input regression coverage proves the
+parser reject-closes malformed snapshots (exit 2, empty stdout) via
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_sysdiff_malformed_fuzz.py -q`,
+and memcheck coverage proves the same paths under Valgrind. Evidence for the
+ordinary corpus requires both pytest collection and execution of at least one
+test; collecting without running is not proof. Under `make test-valgrind`,
+the full `pytest tests/ -q` tree runs with `SYSDIFF_UNDER_VALGRIND=1`, and
+shell fixtures plus `tests/test_sysdiff.py` prepend Valgrind, but
+`tests/test_sysdiff_malformed_fuzz.py` ignores that flag and invokes `sysdiff`
+directly, so the malformed-snapshot corpus is not covered by Valgrind unless
+existing executable evidence proves otherwise (none does today; corpus cases
+may still execute unwrapped under that gate). Residual risk is that leak or
+use-after-free defects unique to hostile parse cleanup can escape the
+Valgrind gate while the ordinary corpus still passes. Smallest future action
+to close the gap: wrap `run_compare_case` with the existing Valgrind helpers
+from `tests/test_sysdiff.py` and raise timeouts when
+`SYSDIFF_UNDER_VALGRIND=1`. This section does not claim a Valgrind or
+`make quality` gate was executed in the documentation repair step.
 
 ## Running the Tests
 
