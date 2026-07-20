@@ -55,3 +55,16 @@ evidence: append new cycles; do not erase prior engineering record.
   review check `python3 -m compileall tests/test_check_tools.py` exited 0.
   This cycle verifies documentation accuracy and smoke continuity; it does
   not itself re-execute `make quality` or assert a new product release gate.
+
+## First Independent Release-Candidate Review Cycle
+
+Governed run `8a3470eff7d3` (`sysdiff_first_independent_rc_review_cycle`)
+recorded the first independent release-candidate review cycle for `sysdiff`
+after closing the mixed-case ordering regression gap (RC-001) in tests and
+fixtures. User smoke passed with start/check exit 0 and empty blocking errors;
+smoke-bound pytest reported `127 passed in 10.58s`. Independent review
+`code-reviews/sysdiff-rc-review-cycle-1.verdict.json` is `pass` (0
+Medium/High/Critical, 7 Low F1–F7); allowlisted `python3 -m pytest tests/ -q`
+exited 0 with `127 passed in 11.06s`. This cycle does not claim that `sysdiff`
+is released or that the mission is complete. A second consecutive review cycle
+with no release-blocking findings is still required before mission completion.

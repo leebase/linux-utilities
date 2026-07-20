@@ -307,6 +307,52 @@ assert_file_equals "$expected_order" "$stdout_order_cd"
 assert_empty "$stderr"
 assert_file_equals "$stdout_order_ab" "$stdout_order_cd"
 
+# --- RC-001: mixed-case Alpha/alpha (with Zebra/beta) must sort bytewise
+# (uppercase before lowercase). Both input orders must match the golden.
+mixed_before="$WORKDIR/mixed-before.snapshot"
+mixed_after_bytewise="$WORKDIR/mixed-after-bytewise.snapshot"
+mixed_after_reversed="$WORKDIR/mixed-after-reversed.snapshot"
+expected_mixed="$WORKDIR/expected.mixed.golden"
+stdout_mixed_a="$WORKDIR/stdout.mixed.a"
+stdout_mixed_b="$WORKDIR/stdout.mixed.b"
+
+cat >"$mixed_before" <<'EOF'
+same.keep=stable
+EOF
+
+cat >"$mixed_after_bytewise" <<'EOF'
+same.keep=stable
+Alpha.item=1
+Zebra.item=1
+alpha.item=1
+beta.item=1
+EOF
+
+cat >"$mixed_after_reversed" <<'EOF'
+same.keep=stable
+beta.item=1
+alpha.item=1
+Zebra.item=1
+Alpha.item=1
+EOF
+
+cat >"$expected_mixed" <<'EOF'
++ Alpha.item=1
++ Zebra.item=1
++ alpha.item=1
++ beta.item=1
+EOF
+
+run_status 1 "$stdout_mixed_a" "$stderr" "$BIN" compare "$mixed_before" "$mixed_after_bytewise"
+assert_file_equals "$expected_mixed" "$stdout_mixed_a"
+assert_empty "$stderr"
+assert_diff_prefixes "$stdout_mixed_a"
+
+run_status 1 "$stdout_mixed_b" "$stderr" "$BIN" compare "$mixed_before" "$mixed_after_reversed"
+assert_file_equals "$expected_mixed" "$stdout_mixed_b"
+assert_empty "$stderr"
+assert_file_equals "$stdout_mixed_a" "$stdout_mixed_b"
+
 # --- Status 2: missing files. Empty stdout, non-empty contextual stderr.
 missing="$WORKDIR/does-not-exist.snapshot"
 run_status 2 "$stdout" "$stderr" "$BIN" compare "$before" "$missing"

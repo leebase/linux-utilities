@@ -243,6 +243,149 @@ def test_input_order_does_not_affect_diff_output(sysdiff_bin, tmp_path):
     assert second.stderr == ""
 
 
+# RC-001: bytewise order places uppercase before lowercase (A < a). Keys Alpha
+# and alpha are required; Zebra/beta make a strcasecmp sort invert Zebra vs
+# alpha deterministically (case-fold puts alpha before Zebra).
+MIXED_CASE_BYTEWISE_EXPECTED = (
+    "+ Alpha.item=1\n"
+    "+ Zebra.item=1\n"
+    "+ alpha.item=1\n"
+    "+ beta.item=1\n"
+)
+MIXED_CASE_AFTER_BYTEWISE = (
+    "Alpha.item=1\nZebra.item=1\nalpha.item=1\nbeta.item=1\n"
+)
+MIXED_CASE_AFTER_REVERSED = (
+    "beta.item=1\nalpha.item=1\nZebra.item=1\nAlpha.item=1\n"
+)
+COMPARE_ENTRIES_STRCMP = (
+    "return strcmp(left_entry->key, right_entry->key);"
+)
+COMPARE_ENTRIES_STRCASECMP = (
+    "return strcasecmp(left_entry->key, right_entry->key);"
+)
+
+
+def _compile_sysdiff(source: Path, binary: Path):
+    subprocess.run(
+        [
+            os.environ.get("CC", "cc"),
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-o",
+            str(binary),
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _assert_mixed_case_bytewise_order(binary: Path, work: Path):
+    work.mkdir(parents=True, exist_ok=True)
+    before = write_snapshot(work / "before.snapshot", "same.keep=stable\n")
+    after_bytewise = write_snapshot(
+        work / "after-bytewise.snapshot",
+        "same.keep=stable\n" + MIXED_CASE_AFTER_BYTEWISE,
+    )
+    after_reversed = write_snapshot(
+        work / "after-reversed.snapshot",
+        "same.keep=stable\n" + MIXED_CASE_AFTER_REVERSED,
+    )
+
+    first = run_sysdiff(binary, "compare", before, after_bytewise)
+    second = run_sysdiff(binary, "compare", before, after_reversed)
+
+    assert first.returncode == 1
+    assert second.returncode == 1
+    assert first.stderr == ""
+    assert second.stderr == ""
+    assert first.stdout == MIXED_CASE_BYTEWISE_EXPECTED
+    assert second.stdout == MIXED_CASE_BYTEWISE_EXPECTED
+    assert first.stdout == second.stdout
+
+
+def test_mixed_case_keys_are_sorted_bytewise_in_both_input_orders(
+    sysdiff_bin, tmp_path
+):
+    """RC-001: Alpha/alpha (and Zebra/beta) pin locale-independent byte order."""
+
+    _assert_mixed_case_bytewise_order(sysdiff_bin, tmp_path)
+
+
+def test_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
+    """Copy sources to /tmp, prove baseline, mutate only the copy, kill mutant.
+
+    Replaces strcmp with strcasecmp solely in compare_entries_by_key inside the
+    scratch tree. The governed workspace source must remain untouched.
+    """
+
+    original_text = SRC.read_text(encoding="utf-8")
+    assert COMPARE_ENTRIES_STRCMP in original_text
+    assert COMPARE_ENTRIES_STRCASECMP not in original_text
+
+    scratch = Path(
+        tempfile.mkdtemp(prefix="sysdiff-rc001-mutant.", dir="/tmp")
+    )
+    try:
+        scratch_src_dir = scratch / "src"
+        scratch_src_dir.mkdir()
+        scratch_src = scratch_src_dir / "sysdiff.c"
+        scratch_makefile = scratch / "Makefile"
+        scratch_src.write_text(original_text, encoding="utf-8")
+        scratch_makefile.write_text(
+            (ROOT / "Makefile").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        baseline_bin = scratch / "sysdiff-baseline"
+        _compile_sysdiff(scratch_src, baseline_bin)
+        _assert_mixed_case_bytewise_order(baseline_bin, scratch / "baseline-work")
+
+        mutant_text = scratch_src.read_text(encoding="utf-8")
+        assert COMPARE_ENTRIES_STRCMP in mutant_text
+        if "#include <strings.h>" not in mutant_text:
+            mutant_text = mutant_text.replace(
+                "#include <string.h>\n",
+                "#include <string.h>\n#include <strings.h>\n",
+                1,
+            )
+        mutant_text = mutant_text.replace(
+            COMPARE_ENTRIES_STRCMP, COMPARE_ENTRIES_STRCASECMP, 1
+        )
+        assert COMPARE_ENTRIES_STRCASECMP in mutant_text
+        scratch_src.write_text(mutant_text, encoding="utf-8")
+
+        # Governed workspace must stay on strcmp while the scratch copy is mutated.
+        assert SRC.read_text(encoding="utf-8") == original_text
+        assert COMPARE_ENTRIES_STRCMP in SRC.read_text(encoding="utf-8")
+
+        mutant_bin = scratch / "sysdiff-mutant"
+        _compile_sysdiff(scratch_src, mutant_bin)
+
+        before = write_snapshot(
+            scratch / "mutant-before.snapshot", "same.keep=stable\n"
+        )
+        after_reversed = write_snapshot(
+            scratch / "mutant-after-reversed.snapshot",
+            "same.keep=stable\n" + MIXED_CASE_AFTER_REVERSED,
+        )
+        mutant_result = run_sysdiff(
+            mutant_bin, "compare", before, after_reversed
+        )
+        assert mutant_result.returncode == 1
+        assert mutant_result.stdout != MIXED_CASE_BYTEWISE_EXPECTED, (
+            "strcasecmp mutant must not satisfy RC-001 bytewise golden; "
+            f"got {mutant_result.stdout!r}"
+        )
+    finally:
+        subprocess.run(["rm", "-rf", str(scratch)], check=False)
+        assert SRC.read_text(encoding="utf-8") == original_text
+
+
 @pytest.mark.parametrize(
     ("content", "stderr_fragment"),
     [

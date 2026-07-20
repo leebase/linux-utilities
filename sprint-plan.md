@@ -1,5 +1,20 @@
 # Sprint Plan
 
+## First Independent Release-Candidate Review Cycle
+
+Governed run `8a3470eff7d3` (playbook
+`sysdiff_first_independent_rc_review_cycle`) recorded the first independent
+release-candidate review cycle. Exact smoke: `artifacts/user-smoke/result.json`
+→ `app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors` (check.log: install/uninstall
+staging, fixtures ok, pytest `127 passed in 10.58s`). Exact review check:
+`python3 -m pytest tests/ -q` → exit 0, `127 passed in 11.06s`. Review
+`code-reviews/sysdiff-rc-review-cycle-1.{md,verdict.json}` verdict `pass` with
+0 Medium/High/Critical and 7 Low (F1–F7) preserved. Do not claim that
+`sysdiff` is released or that the mission is complete; a second consecutive
+review cycle with no release-blocking findings is still required before
+mission completion. Prior Medium backlogs remain separately open.
+
 ## First Consecutive Release-Blocking Independent Review
 
 Governed run `7eb4e29dee6e` (playbook
@@ -80,6 +95,18 @@ or release closure from this slice.
 
 ## Current sprint
 
+- [x] Deliver and record the first independent release-candidate review
+  cycle in run `8a3470eff7d3`,
+  `sysdiff_first_independent_rc_review_cycle`. Closed mixed-case ordering
+  gap (RC-001) in tests/fixtures; exact smoke start/check 0 with empty
+  `blocking_errors` (check.log pytest `127 passed in 10.58s`); review
+  check `python3 -m pytest tests/ -q` → 127 passed in 11.06 s; verdict
+  `pass` with 0 Medium/High/Critical and 7 Low (F1–F7). This is the first
+  independent RC review cycle only—not a release, not mission completion.
+- [ ] Keep Low findings F1–F7 visible after the first independent RC review
+  cycle; do not treat them as blocking. A second consecutive review cycle
+  with no release-blocking findings is still required before mission
+  completion; do not claim that `sysdiff` is released.
 - [x] Deliver and record the first consecutive clean release-blocking
   independent review in run `7eb4e29dee6e`,
   `complete_first_consecutive_release_blocking_independent_review`. Exact

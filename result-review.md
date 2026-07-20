@@ -1,5 +1,28 @@
 # Result Review
 
+## First Independent Release-Candidate Review Cycle
+
+Governed run `8a3470eff7d3` (playbook `sysdiff_first_independent_rc_review_cycle`)
+completed user smoke, the independent release-candidate review, and this
+handoff record. This is the first independent release-candidate review cycle.
+Do not claim that `sysdiff` is released, that the mission is complete, or that
+a second consecutive clean RC review has occurred. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors`. `artifacts/user-smoke/check.log` confirms assembled-product
+`make install`/`make uninstall` staging, fixture acceptance ok, and smoke-bound
+pytest `127 passed in 10.58s`. Exact review check: `python3 -m pytest tests/ -q`
+exited 0 with `127 passed in 11.06s` (no skips). Independent review artifacts:
+`code-reviews/sysdiff-rc-review-cycle-1.md` and
+`code-reviews/sysdiff-rc-review-cycle-1.verdict.json`. Verdict: `pass` with no
+Medium, High, or Critical findings, and seven Low findings (F1–F7) preserved:
+STATUS/ROADMAP install-target wording; TESTING.md SYSDIFF_BIN reuse claim;
+mutant-test hardcoded `/tmp`; unused scratch Makefile copy; `finally`-block
+assertions/`rm -rf`; mutant oracle not tied to shell golden. Remaining risks
+stay visible (Low F1–F7 plus prior-slice Medium backlogs). A second consecutive
+review cycle with no release-blocking findings is still required before mission
+completion.
+
 ## First Consecutive Release-Blocking Independent Review
 
 - Governed run `7eb4e29dee6e` (playbook

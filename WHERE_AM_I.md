@@ -1,5 +1,19 @@
 # Where Am I
 
+## First Independent Release-Candidate Review Cycle
+
+Governed run `8a3470eff7d3` completed the first independent release-candidate
+review cycle for `sysdiff`. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log shows
+install/uninstall staging and pytest `127 passed in 10.58s`. Exact review
+check: `python3 -m pytest tests/ -q` exited 0 with `127 passed in 11.06s`.
+Review `code-reviews/sysdiff-rc-review-cycle-1.{md,verdict.json}` is `pass`
+(0 Medium/High/Critical, 7 Low F1–F7 preserved). This does not claim that
+`sysdiff` is released or that the mission is complete. A second consecutive
+review cycle with no release-blocking findings is still required before
+mission completion.
+
 ## First Consecutive Release-Blocking Independent Review
 
 Governed run `7eb4e29dee6e` completed the first consecutive clean
@@ -78,18 +92,25 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `7eb4e29dee6e` is that the first
-consecutive clean release-blocking independent review is on record
-(`code-reviews/sysdiff-independent-review-1.verdict.json` = `pass`; smoke
-start/check 0; full suite 124 passed in 10.71 s). Five Low findings L-1–L-5
-remain preserved and non-blocking. This is not a second clean review, not
-mission completion, and not release readiness. Separately, prior Medium
-backlogs (isolated-archive F1–F5, source-release F1–F5, malformed-fuzz
-F1–F4, packaging F1, memory-gate F1–F4) remain open and are not cleared by
-this first consecutive clean gate.
+The current milestone after recording run `8a3470eff7d3` is that the first
+independent release-candidate review cycle is on record
+(`code-reviews/sysdiff-rc-review-cycle-1.verdict.json` = `pass`; smoke
+start/check 0; review check 127 passed in 11.06 s). Seven Low findings
+F1–F7 remain preserved and non-blocking. This does not claim that `sysdiff`
+is released or that the mission is complete. A second consecutive review
+cycle with no release-blocking findings is still required before mission
+completion. Separately, prior Medium backlogs (isolated-archive F1–F5,
+source-release F1–F5, malformed-fuzz F1–F4, packaging F1, memory-gate
+F1–F4) remain open and are not cleared by this first RC review cycle.
 
 ## Milestone state
 
+- Run `8a3470eff7d3` recorded the first independent release-candidate review
+  cycle: smoke start/check 0 with empty `blocking_errors`; review check
+  `python3 -m pytest tests/ -q` → 127 passed in 11.06 s; verdict `pass`
+  with 0 Medium/High/Critical and 7 Low (F1–F7). Not a release, not mission
+  completion; a second consecutive review cycle with no release-blocking
+  findings is still required.
 - Run `7eb4e29dee6e` recorded the first consecutive clean release-blocking
   independent review: smoke start/check 0 with empty `blocking_errors`;
   full suite `python3 -m pytest tests/ -q` → 124 passed in 10.71 s; review
@@ -242,11 +263,12 @@ this first consecutive clean gate.
 
 ## Next milestone
 
-Preserve the first consecutive clean release-blocking independent review
-record and its Low findings L-1–L-5; do not claim a second consecutive clean
-review, mission completion, or release readiness yet. Separately continue
-prior Medium backlogs: isolated-archive F1–F5 from `939ee21b0d76`,
-source-release themes from `240bfcbc634e`, malformed-fuzz F1–F4 from
-`feb8e707ea28`, packaging F1 from `a2d750c92da3`, and memory-gate F1–F4 from
-`5665167f1c1d`. Optional Low polish (independent-review L-1–L-5,
-performance B1–B9) remains non-blocking.
+Preserve the first independent release-candidate review cycle record and its
+Low findings F1–F7; a second consecutive review cycle with no
+release-blocking findings is still required before mission completion. Do
+not claim that `sysdiff` is released or that the mission is complete.
+Separately continue prior Medium backlogs: isolated-archive F1–F5 from
+`939ee21b0d76`, source-release themes from `240bfcbc634e`, malformed-fuzz
+F1–F4 from `feb8e707ea28`, packaging F1 from `a2d750c92da3`, and
+memory-gate F1–F4 from `5665167f1c1d`. Optional Low polish (RC-review
+F1–F7, independent-review L-1–L-5, performance B1–B9) remains non-blocking.
