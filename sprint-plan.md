@@ -1,10 +1,29 @@
 # Sprint Plan
 
+## First Independent sysdiff Release-Candidate Review
+
+Governed run `6d0a6fbfe83d` (playbook
+`template_repair_before_review_feature_delivery`) recorded the first
+independent `sysdiff` release-candidate review. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors` (check.log: install/uninstall staging, fixtures ok, pytest
+`127 passed in 10.75s`). Exact review check:
+`python3 -m pytest -p no:cacheprovider tests/ -q` → exit 0,
+`127 passed in 10.89s` at HEAD `510fa2d`. Review
+`code-reviews/review-first-sysdiff-release-candidate.{md,verdict.json}` verdict
+`pass` with 0 Medium/High/Critical and 10 Low (L1–L10). Step-2 attempt 1
+failed on Medium M1 (quality-floor provenance); attempt 2 held it at Low L1
+and passed. Consecutive clean RC reviews in this required sequence: **1**.
+The second consecutive clean review remains outstanding. Do not claim that
+`sysdiff` is released; prior Medium backlogs remain open and continue to
+prohibit new feature work while Medium-or-higher debt remains.
+
 ## Second Independent Release-Candidate Review Cycle
 
 Governed run `c84986cf0c81` (playbook
-`sysdiff_second_independent_release_candidate_review_cycle`) recorded the
-second independent release-candidate review cycle. Exact smoke:
+`sysdiff_second_independent_release_candidate_review_cycle`) recorded a prior
+independent release-candidate review cycle. Exact smoke:
 `artifacts/user-smoke/result.json` → `app_started: true`,
 `core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
 `blocking_errors` (check.log: install/uninstall staging, fixtures ok, pytest
@@ -13,24 +32,28 @@ second independent release-candidate review cycle. Exact smoke:
 `127 passed in 10.96s`. Review
 `code-reviews/sysdiff-rc-second-independent-cycle.{md,verdict.json}` verdict
 `pass` under Medium with 0 Medium/High/Critical and 9 Low (L1–L9). RC-001
-strcasecmp-mutant kill re-verified. Consecutive clean RC cycles: **2**. Do
-not claim that `sysdiff` is released from this pass alone; prior Medium
-backlogs remain separately open.
+strcasecmp-mutant kill re-verified. That earlier AgentFlow claim of consecutive
+clean RC cycles = 2 is historical; the current mission sequence after run
+`6d0a6fbfe83d` treats the required consecutive clean counter as 1 with the
+second still outstanding. Do not claim that `sysdiff` is released from either
+pass alone; prior Medium backlogs remain separately open.
 
 ## First Independent Release-Candidate Review Cycle
 
 Governed run `8a3470eff7d3` (playbook
-`sysdiff_first_independent_rc_review_cycle`) recorded the first independent
-release-candidate review cycle. Exact smoke: `artifacts/user-smoke/result.json`
-→ `app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
-`check_exit_code: 0`, empty `blocking_errors` (check.log: install/uninstall
-staging, fixtures ok, pytest `127 passed in 10.58s`). Exact review check:
+`sysdiff_first_independent_rc_review_cycle`) recorded a prior first
+independent release-candidate review cycle. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors` (check.log: install/uninstall staging, fixtures ok, pytest
+`127 passed in 10.58s`). Exact review check:
 `python3 -m pytest tests/ -q` → exit 0, `127 passed in 11.06s`. Review
 `code-reviews/sysdiff-rc-review-cycle-1.{md,verdict.json}` verdict `pass` with
-0 Medium/High/Critical and 7 Low (F1–F7) preserved. Do not claim that
+0 Medium/High/Critical and 7 Low (F1–F7) preserved. Historical relative to the
+current mission sequence anchored by run `6d0a6fbfe83d`. Do not claim that
 `sysdiff` is released or that the mission is complete; a second consecutive
-review cycle with no release-blocking findings is still required before
-mission completion. Prior Medium backlogs remain separately open.
+review cycle with no release-blocking findings is still required. Prior Medium
+backlogs remain separately open.
 
 ## First Consecutive Release-Blocking Independent Review
 
@@ -112,31 +135,44 @@ or release closure from this slice.
 
 ## Current sprint
 
-- [x] Run the second independent release-candidate review cycle in run
+- [x] Deliver and record the first independent `sysdiff` release-candidate
+  review in run `6d0a6fbfe83d`,
+  `template_repair_before_review_feature_delivery`. Exact smoke start/check 0
+  with empty `blocking_errors` (check.log pytest `127 passed in 10.75s`);
+  review check `python3 -m pytest -p no:cacheprovider tests/ -q` → 127 passed
+  in 10.89 s at HEAD `510fa2d`; verdict `pass` with 0 Medium/High/Critical
+  and 10 Low (L1–L10). Step-2 attempt 1 failed on Medium M1; attempt 2 passed.
+  This is the first clean review in the required consecutive sequence only—
+  not a release, not mission completion.
+- [ ] Keep Low findings L1–L10 visible after run `6d0a6fbfe83d`; do not treat
+  them as blocking. Consecutive clean RC counter for this required sequence
+  is 1; a second consecutive clean independent RC review remains outstanding.
+  Do not claim that `sysdiff` is released without Lee-controlled release
+  authorization. Prior Medium-or-higher backlogs remain open and continue to
+  prohibit new feature work while that debt remains.
+- [x] Run a prior second independent release-candidate review cycle in run
   `c84986cf0c81`,
   `sysdiff_second_independent_release_candidate_review_cycle`. Exact smoke
   start/check 0 with empty `blocking_errors` (check.log pytest
   `127 passed in 10.84s`); review check
   `python3 -m pytest -p no:cacheprovider tests/ -q` → 127 passed in 10.96 s;
   verdict `pass` under Medium with 0 Medium/High/Critical and 9 Low (L1–L9);
-  RC-001 strcasecmp-mutant kill re-verified; consecutive clean RC cycles = 2.
-  Not a publication or Lee-authorized release claim by itself.
-- [ ] Keep Low findings L1–L9 visible after the second independent RC review
-  cycle; do not treat them as blocking. Consecutive clean RC counter is 2;
-  do not claim that `sysdiff` is released without Lee-controlled release
-  authorization.
-- [x] Deliver and record the first independent release-candidate review
+  RC-001 strcasecmp-mutant kill re-verified. Historical relative to the
+  current mission sequence; not a publication or Lee-authorized release claim.
+- [ ] Keep historical Low findings L1–L9 from `c84986cf0c81` visible; do not
+  treat them as blocking. Do not claim that `sysdiff` is released without
+  Lee-controlled release authorization.
+- [x] Deliver and record a prior first independent release-candidate review
   cycle in run `8a3470eff7d3`,
   `sysdiff_first_independent_rc_review_cycle`. Closed mixed-case ordering
   gap (RC-001) in tests/fixtures; exact smoke start/check 0 with empty
   `blocking_errors` (check.log pytest `127 passed in 10.58s`); review
   check `python3 -m pytest tests/ -q` → 127 passed in 11.06 s; verdict
-  `pass` with 0 Medium/High/Critical and 7 Low (F1–F7). This is the first
-  independent RC review cycle only—not a release, not mission completion.
-- [x] Keep Low findings F1–F7 visible after the first independent RC review
-  cycle; do not treat them as blocking. A second consecutive review cycle
-  with no release-blocking findings was still required and is now recorded
-  by run `c84986cf0c81`; do not claim that `sysdiff` is released.
+  `pass` with 0 Medium/High/Critical and 7 Low (F1–F7). Historical relative
+  to run `6d0a6fbfe83d`'s required sequence.
+- [x] Keep Low findings F1–F7 visible after the prior first independent RC
+  review cycle; do not treat them as blocking. Do not claim that `sysdiff`
+  is released.
 - [x] Deliver and record the first consecutive clean release-blocking
   independent review in run `7eb4e29dee6e`,
   `complete_first_consecutive_release_blocking_independent_review`. Exact

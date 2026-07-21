@@ -1,5 +1,38 @@
 # Result Review
 
+## First Independent sysdiff Release-Candidate Review
+
+Governed run `6d0a6fbfe83d` (playbook
+`template_repair_before_review_feature_delivery`) completed user smoke, the
+first independent `sysdiff` release-candidate review, and this handoff record.
+This is the first clean review in the required consecutive clean-review
+sequence. Do not claim that `sysdiff` is released, that the mission is
+complete, or that a second consecutive clean RC review has occurred. Exact
+smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
+`blocking_errors`. `artifacts/user-smoke/check.log` confirms DESTDIR
+install/uninstall staging, fixture acceptance ok, and smoke-bound pytest
+`127 passed in 10.75s`. Exact review check:
+`python3 -m pytest -p no:cacheprovider tests/ -q` exited 0 with
+`127 passed in 10.89s` (reviewed at HEAD `510fa2d`). Independent review
+artifacts: `code-reviews/review-first-sysdiff-release-candidate.md` and
+`code-reviews/review-first-sysdiff-release-candidate.verdict.json`. Verdict:
+`pass` with no Medium, High, or Critical findings, and ten Low findings
+(L1–L10) preserved: L1 unreproducible complete-floor provenance in
+`docs/sysdiff-quality-floor-clean-checkout.md`; L2 STATUS.md stale "no install
+target"; L3 quality-floor doc still labels resolved packaging risk as known
+Medium; L4 no-op `tests/smoke_start.py`; L5 dead `read_line` overflow
+disjuncts in `src/sysdiff.c`; L6 stale-errno stdout diagnostic in
+`complete_stdout`/`emit_write_error`; L7 undeclared POSIX SIGPIPE under
+`-std=c17`; L8 pytest `test_dist_*` regenerates workspace `dist/`; L9
+TESTING.md wrong SYSDIFF_BIN reuse claim; L10 STATUS.md unanchored
+clean-review counter conflicting with this sequence position. Step-2 attempt 1
+failed the verdict gate on Medium M1 (same provenance issue); attempt 2 held
+it at Low and passed. Remaining risks stay visible (Low L1–L10 plus prior-slice
+Medium backlogs). Prior Medium-or-higher debt continues to prohibit new
+feature work until repaired. A second consecutive clean independent RC review
+is still required before the two-clean-review requirement is satisfied.
+
 ## Second Independent Release-Candidate Review Cycle
 
 Governed run `c84986cf0c81` (playbook

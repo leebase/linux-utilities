@@ -2,34 +2,37 @@
 
 ## Snapshot
 
-Governed run `c84986cf0c81` (playbook
-`sysdiff_second_independent_release_candidate_review_cycle`) completed the
-second independent release-candidate review cycle for `sysdiff`. Exact smoke
+Governed run `6d0a6fbfe83d` (playbook
+`template_repair_before_review_feature_delivery`) completed the first
+independent `sysdiff` release-candidate review. Exact smoke
 (`artifacts/user-smoke/result.json`): `app_started: true`,
 `core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`, empty
-`blocking_errors`; check.log shows install/uninstall DESTDIR staging, fixture
-acceptance ok, and smoke-bound pytest `127 passed in 10.84s`. Independent
-review `code-reviews/sysdiff-rc-second-independent-cycle.{md,verdict.json}`
-verdict `pass` under the Medium threshold with 0 Medium/High/Critical and 9
-Low findings (L1–L9). RC-001 strcasecmp-mutant kill re-verified (robust to
-qsort ties; full suite detects mutant return: 1 failed / 126 passed).
-Consecutive clean RC review cycles: 2. This does not by itself declare
-`sysdiff` released.
+`blocking_errors`; check.log shows DESTDIR install/uninstall staging, fixture
+acceptance ok, and smoke-bound pytest `127 passed in 10.75s`. Independent
+review `code-reviews/review-first-sysdiff-release-candidate.{md,verdict.json}`
+verdict `pass` (fail-iff-Medium+): 0 Medium/High/Critical and 10 Low findings
+(L1–L10). Allowlisted review check
+`python3 -m pytest -p no:cacheprovider tests/ -q` exited 0 with
+`127 passed in 10.89s` at HEAD `510fa2d`. Consecutive clean RC reviews in this
+required sequence: 1. The second consecutive clean review remains outstanding.
+This does not declare `sysdiff` released.
 
 ## What's Happening Now
 
-Handoff after run `c84986cf0c81`: second consecutive clean independent RC
-review is on record (`sysdiff-rc-second-independent-cycle.verdict.json` =
-`pass`). Allowlisted review check
-`python3 -m pytest -p no:cacheprovider tests/ -q` exited 0 with
-`127 passed in 10.96s`. Fresh quality-floor evidence for this cycle is the
-step-1 non-writing validation (pytest 127; gcc/clang `-fsyntax-only`;
-cppcheck; `bash -n`; `check_tools.py`), pinned smoke `make test` path, and
-the review-time pytest above—not a fresh full `make quality` re-run in this
-playbook. Remaining risks are Low L1–L9 (STATUS/ROADMAP install wording,
-TESTING.md SYSDIFF_BIN and valgrind-test docs, dead `read_line` overflow
-disjunct, mutant-oracle strength, stale STATUS/result-review claims) plus
-prior Medium backlogs that stay separately open. Next action: keep L1–L9
-visible; treat consecutive clean RC counter as 2; do not claim publication
-or Lee-authorized release from this verdict alone. Runs root:
+Handoff after run `6d0a6fbfe83d`: first clean independent RC review is on
+record (`review-first-sysdiff-release-candidate.verdict.json` = `pass`). Step-2
+attempt 1 initially failed the verdict gate on Medium M1 (unreproducible
+complete `make quality` provenance in
+`docs/sysdiff-quality-floor-clean-checkout.md`); attempt 2 reclassified that
+issue as Low L1 and passed with only Low findings. Remaining Low L1–L10 stay
+visible (quality-floor provenance; STATUS/ROADMAP install wording;
+resolved-packaging risk still labeled Medium; no-op smoke start; dead
+`read_line` overflow disjuncts; stale-errno stdout diagnostic; undeclared
+POSIX SIGPIPE under `-std=c17`; pytest regenerating gitignored `dist/`;
+TESTING.md SYSDIFF_BIN claim; unanchored clean-review counter). Prior Medium
+backlogs from earlier slices remain open and continue to prohibit new feature
+work while Medium-or-higher debt remains. Next action: keep L1–L10 visible;
+treat this sequence's consecutive clean RC counter as 1; run a second
+independent clean RC review before claiming the two-clean-review requirement;
+do not claim publication or Lee-authorized release. Runs root:
 `/home/lee/projects/linux-utilities-agent-orch-runs`.
