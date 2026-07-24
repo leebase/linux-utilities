@@ -846,6 +846,24 @@ def _build_dist(epoch=DIST_EPOCH):
     return archive, checksum, result
 
 
+def scrubbed_nested_dist_env(base_env=None):
+    """Drop outer binary-routing overrides before nested extract make/test.
+
+    PAC-M2: nested dist extracts must not inherit SYSDIFF_* or PATHAUDIT_*
+    routing from an outer sanitizer/Valgrind gate.
+    """
+
+    nested_env = dict(os.environ if base_env is None else base_env)
+    for key in (
+        "SYSDIFF_BIN",
+        "SYSDIFF_UNDER_VALGRIND",
+        "PATHAUDIT_BIN",
+        "PATHAUDIT_UNDER_VALGRIND",
+    ):
+        nested_env.pop(key, None)
+    return nested_env
+
+
 def _archive_member_names(archive_path):
     listing = subprocess.run(
         ["tar", "-tzf", str(archive_path)],
@@ -975,9 +993,10 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
         # Nested extract must not inherit workspace/memory-gate binary routing;
         # otherwise test-shell packaging compares against the wrong ORDINARY_BIN
         # and silently skips DESTDIR install/reinstall/uninstall coverage.
-        nested_env = os.environ.copy()
-        nested_env.pop("SYSDIFF_BIN", None)
-        nested_env.pop("SYSDIFF_UNDER_VALGRIND", None)
+        # Scrub every per-utility routing variable (sysdiff and pathaudit) so a
+        # nested make test under an outer sanitizer/Valgrind gate compiles and
+        # exercises the extracted sources rather than the outer mktemp binaries.
+        nested_env = scrubbed_nested_dist_env()
         build = subprocess.run(
             ["make", "-C", str(sourcedir)],
             env=nested_env,
@@ -1001,6 +1020,71 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
         assert tested.returncode == 0, tested.stderr + tested.stdout
     finally:
         subprocess.run(["rm", "-rf", str(extract_root)], check=False)
+
+
+def test_dist_nested_env_scrubs_pathaudit_routing_vars():
+    """PAC-M2: nested extract env must drop PATHAUDIT_* beside SYSDIFF_*."""
+
+    source = (ROOT / "tests" / "test_sysdiff.py").read_text(encoding="utf-8")
+    # Production call site must use the shared scrub helper.
+    marker = "def test_dist_extracts_builds_and_tests_outside_workspace"
+    start = source.index(marker)
+    rest = source[start + len(marker) :]
+    next_def = rest.find("\ndef test_")
+    window = rest if next_def < 0 else rest[:next_def]
+    assert "scrubbed_nested_dist_env()" in window
+    # Helper itself must name every routing key (mutation pin).
+    helper_start = source.index("def scrubbed_nested_dist_env")
+    helper_rest = source[helper_start:]
+    helper_end = helper_rest.find("\ndef ")
+    helper_window = helper_rest if helper_end < 0 else helper_rest[:helper_end]
+    for key in (
+        "SYSDIFF_BIN",
+        "SYSDIFF_UNDER_VALGRIND",
+        "PATHAUDIT_BIN",
+        "PATHAUDIT_UNDER_VALGRIND",
+    ):
+        assert f'"{key}"' in helper_window
+
+
+def test_dist_nested_env_scrub_drops_outer_pathaudit_override(tmp_path, monkeypatch):
+    """PAC-M2 behavioral pin via scrubbed_nested_dist_env (shared with dist)."""
+
+    outer = tmp_path / "outer-pathaudit"
+    outer.write_text("#!/bin/sh\nprintf 'outer\\n'\n", encoding="utf-8")
+    outer.chmod(0o755)
+    monkeypatch.setenv("PATHAUDIT_BIN", str(outer))
+    monkeypatch.setenv("PATHAUDIT_UNDER_VALGRIND", "1")
+    monkeypatch.setenv("SYSDIFF_BIN", str(tmp_path / "outer-sysdiff"))
+    monkeypatch.setenv("SYSDIFF_UNDER_VALGRIND", "1")
+
+    nested_env = scrubbed_nested_dist_env()
+
+    assert "PATHAUDIT_BIN" not in nested_env
+    assert "PATHAUDIT_UNDER_VALGRIND" not in nested_env
+    assert "SYSDIFF_BIN" not in nested_env
+    assert "SYSDIFF_UNDER_VALGRIND" not in nested_env
+
+    probe = tmp_path / "probe-env.sh"
+    probe.write_text(
+        "#!/bin/sh\n"
+        "if [ -n \"${PATHAUDIT_BIN+x}\" ]; then printf 'PATHAUDIT_BIN=%s\\n' "
+        "\"$PATHAUDIT_BIN\"; exit 1; fi\n"
+        "if [ -n \"${PATHAUDIT_UNDER_VALGRIND+x}\" ]; then "
+        "printf 'PATHAUDIT_UNDER_VALGRIND set\\n'; exit 1; fi\n"
+        "printf 'scrubbed\\n'\n",
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+    result = subprocess.run(
+        [str(probe)],
+        env=nested_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == "scrubbed\n"
 
 
 def test_dist_rejects_malformed_source_date_epoch():

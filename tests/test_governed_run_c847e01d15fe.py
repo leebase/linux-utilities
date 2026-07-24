@@ -196,3 +196,45 @@ def test_c847e01d15fe_make_release_checksum_verifies_beside_archive():
             shutil.rmtree(foreign, ignore_errors=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def test_make_test_suite_scrubs_pathaudit_routing_like_distcheck():
+    """PAC-M1: ambient PATHAUDIT_BIN must not redirect make test.
+
+    distcheck already uses ``env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND``.
+    Ordinary ``make test`` / ``test-suite`` must apply the same scrub so a
+    caller's shell (or an outer memory-gate export) cannot silently re-point
+    the contract suite at a stale binary.
+    """
+
+    if shutil.which("make") is None:
+        pytest.skip("GNU make required for Makefile seam checks")
+
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    # distcheck and test-suite both carry the scrub.
+    assert makefile.count("PATHAUDIT_BIN") >= 2
+
+    dry = subprocess.run(
+        ["make", "-C", str(ROOT), "-n", "test-suite"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dry.returncode == 0, dry.stderr + dry.stdout
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in dry.stdout
+
+
+def test_make_release_required_members_include_pathaudit():
+    """Release staging must fail closed if pathaudit product files vanish."""
+
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    marker = "error: release staging missing required product file"
+    assert marker in makefile
+    window = makefile[makefile.index(marker) - 600 : makefile.index(marker)]
+    for required in (
+        "src/pathaudit.c",
+        "man/pathaudit.1",
+        "tests/test_pathaudit.py",
+    ):
+        assert required in window, required

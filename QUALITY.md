@@ -17,7 +17,8 @@ runs the complete quality floor in this order:
    `man/pathaudit.1`, fail on nonzero exit or any warning
 9. `make test-suite` — shell suite plus `python3 -m pytest tests/ -q` (unit,
    integration, regression, fixture, malformed-input fuzz, pathaudit contract,
-   and benchmark contract modules)
+   and benchmark contract modules); pins `SYSDIFF_BIN` to `build/sysdiff` and
+   scrubs ambient `PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND`
 10. `make benchmark-check` — `scripts/benchmark_sysdiff.py` with a temp-dir JSON
     report (thresholds must pass; does not write `artifacts/`)
 11. `make test-sanitize` — AddressSanitizer then UndefinedBehaviorSanitizer
@@ -26,6 +27,15 @@ runs the complete quality floor in this order:
 12. `make test-valgrind` — GCC debug rebuild under Valgrind memcheck with
     `--error-exitcode=99`, `SYSDIFF_UNDER_VALGRIND=1`, and
     `PATHAUDIT_UNDER_VALGRIND=1` (see Valgrind Coverage)
+
+Pathaudit hermetic-gate regressions (PAC-M1 through PAC-M4) are pinned in the
+pytest suite: **PAC-M1** `make test-suite` scrubs ambient `PATHAUDIT_*`
+(`tests/test_pathaudit.py`, `tests/test_governed_run_c847e01d15fe.py`);
+**PAC-M2** nested dist extract env drops `PATHAUDIT_*` beside `SYSDIFF_*`
+(`scrubbed_nested_dist_env` in `tests/test_sysdiff.py`); **PAC-M3** runners
+allowlist-forward sanitizer options into the sealed child env
+(`tests/test_pathaudit.py`); **PAC-M4** hostile-byte stderr operand diagnostics
+(`test_inspection_error_escapes_hostile_bytes_on_stderr`).
 
 Standalone `make benchmark` still writes
 `artifacts/performance/sysdiff-benchmark.json` for local inspection. Default

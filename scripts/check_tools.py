@@ -92,6 +92,10 @@ ASAN_OPTIONS: str = "detect_leaks=1:abort_on_error=1"
 UBSAN_OPTIONS: str = "halt_on_error=1:print_stacktrace=1"
 VALGRIND_ERROR_EXITCODE: int = 99
 
+# Pin memory-gate compile probes under /tmp so an ambient TMPDIR that points
+# inside a tracked workspace cannot capture preflight write traffic.
+PREFLIGHT_TMP_PARENT: str = "/tmp"
+
 
 def _env_path(env: Mapping[str, str] | None) -> str:
     if env is None:
@@ -230,13 +234,26 @@ def probe_compile_capability(
         )
 
     probe_env = os.environ if env is None else dict(env)
-    with tempfile.TemporaryDirectory(prefix="sysdiff-preflight.") as tmp:
+    # Pin the probe under PREFLIGHT_TMP_PARENT so an ambient TMPDIR inside a
+    # workspace (or other tracked tree) cannot make memory-gate preflight write
+    # into source state.
+    try:
+        tmp_ctx = tempfile.TemporaryDirectory(
+            prefix="sysdiff-preflight.", dir=PREFLIGHT_TMP_PARENT
+        )
+    except OSError as exc:
+        return MemoryToolResult(
+            name=name,
+            available=False,
+            detail=f"failed to create preflight temp dir under {PREFLIGHT_TMP_PARENT}: {exc}",
+        )
+    with tmp_ctx as tmp:
         tmp_path = Path(tmp)
         source = tmp_path / "probe.c"
         output = tmp_path / "probe"
-        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
-        command = [*compile_command[:-2], str(output), str(source)]
         try:
+            source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+            command = [*compile_command[:-2], str(output), str(source)]
             completed = subprocess.run(
                 command,
                 cwd=tmp,
@@ -269,10 +286,13 @@ def probe_compile_capability(
                 available=False,
                 detail=f"{name} compile probe produced no binary",
             )
+        # Surface the live probe directory so regressions can assert it is not
+        # under a workspace TMPDIR (TemporaryDirectory deletes the tree on exit).
+        probe_dir = str(tmp_path)
     return MemoryToolResult(
         name=name,
         available=True,
-        detail=f"{name} compile probe succeeded",
+        detail=f"{name} compile probe succeeded under {probe_dir}",
     )
 
 

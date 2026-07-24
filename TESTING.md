@@ -61,7 +61,11 @@ bash tests/test_sysdiff_fixture.sh
 ./scripts/smoke.sh
 ```
 
-`make test` runs `test-suite`: `tests/test_sysdiff.sh` then pytest. For the full
+`make test` runs `test-suite`: `tests/test_sysdiff.sh` with `SYSDIFF_BIN`
+pinned to `build/sysdiff`, then pytest with that same pin and with ambient
+`PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND` scrubbed so a stale override
+cannot redirect the pathaudit contract suite. Memory gates still set those
+variables deliberately on their own pytest invocations. For the full
 declared release gate (compilers, formatters, static analysis, man-check,
 tests, sanitizers, Valgrind):
 

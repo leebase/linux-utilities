@@ -1,10 +1,10 @@
 """Contract tests for the pathaudit vertical slice.
 
-Encodes docs/pathaudit-contract.md before the C implementation exists.
-Builds src/pathaudit.c into a test-owned temporary directory when present,
-exercises only deterministic temporary fixtures, and never inspects the
-worker's real PATH, requires root, uses the network, or leaves binaries in
-the workspace.
+Encodes docs/pathaudit-contract.md. Builds src/pathaudit.c into a test-owned
+temporary directory, exercises only deterministic temporary fixtures, and never
+inspects the worker's real PATH, requires root, uses the network, or leaves
+binaries in the workspace. Sanitizer/Valgrind options declared by Makefile
+memory gates are allowlist-forwarded into the child environment.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import errno as errno_mod
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import types
 from pathlib import Path
@@ -22,6 +23,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "pathaudit.c"
+MAKEFILE = ROOT / "Makefile"
+
+# Allowlisted sanitizer/runtime knobs forwarded from the ambient environment so
+# Makefile memory gates (ASAN_OPTIONS / UBSAN_OPTIONS) reach the binary under
+# test without re-opening PATH to ambient search.
+SANITIZER_ENV_KEYS = (
+    "ASAN_OPTIONS",
+    "UBSAN_OPTIONS",
+    "LSAN_OPTIONS",
+    "ASAN_SYMBOLIZER_PATH",
+)
 
 HELP_STDOUT = (
     b"usage: pathaudit [--] ROOT...\n"
@@ -121,7 +133,7 @@ def _valgrind_command(cmd: list[str]):
             "PATHAUDIT_UNDER_VALGRIND=1 but valgrind was not found on PATH"
         )
 
-    fd, vg_log = tempfile.mkstemp(prefix="pathaudit-valgrind.")
+    fd, vg_log = tempfile.mkstemp(prefix="pathaudit-valgrind.", dir="/tmp")
     os.close(fd)
     wrapped = [
         valgrind,
@@ -152,6 +164,24 @@ def _finish_valgrind(result, vg_log):
     return result
 
 
+def _base_child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Build a PATH-hardened child env, forwarding declared sanitizer knobs."""
+
+    run_env = {
+        # Never consult the worker PATH; keep an explicit unreachable value.
+        "PATH": "/pathaudit-tests-must-not-search-here",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    for key in SANITIZER_ENV_KEYS:
+        value = os.environ.get(key)
+        if value is not None:
+            run_env[key] = value
+    if extra:
+        run_env.update(extra)
+    return run_env
+
+
 def run_pathaudit(
     binary: Path,
     *args: bytes | str | os.PathLike[str],
@@ -167,14 +197,7 @@ def run_pathaudit(
         else:
             argv.append(os.fspath(arg))
 
-    run_env = {
-        # Never consult the worker PATH; keep an explicit unreachable value.
-        "PATH": "/pathaudit-tests-must-not-search-here",
-        "LC_ALL": "C",
-        "LANG": "C",
-    }
-    if env:
-        run_env.update(env)
+    run_env = _base_child_env(env)
 
     cmd, vg_log = _valgrind_command(argv)
     result = subprocess.run(
@@ -195,11 +218,7 @@ def run_with_closed_stdout_pipe(binary: Path, *args: str):
         cmd,
         stdout=write_fd,
         stderr=subprocess.PIPE,
-        env={
-            "PATH": "/pathaudit-tests-must-not-search-here",
-            "LC_ALL": "C",
-            "LANG": "C",
-        },
+        env=_base_child_env(),
     )
     os.close(write_fd)
     _, stderr = proc.communicate()
@@ -217,17 +236,34 @@ def diagnostic_lines(reason: str, root: bytes | str | os.PathLike[str] | None = 
     return first
 
 
+def resolve_pathaudit_override(env_bin: str) -> Path:
+    """Resolve PATHAUDIT_BIN once so a relative override cannot track cwd changes.
+
+    Popen looks up a relative program path against the child cwd. The fixture must
+    therefore expand and resolve the override at session start, not at exec time.
+    """
+
+    resolved = Path(env_bin).expanduser().resolve()
+    if not resolved.is_absolute():
+        raise ValueError(
+            f"PATHAUDIT_BIN did not resolve to an absolute path: {env_bin!r}"
+        )
+    return resolved
+
+
 @pytest.fixture(scope="session")
 def pathaudit_bin(tmp_path_factory):
     env_bin = os.environ.get("PATHAUDIT_BIN")
     if env_bin:
-        binary = Path(env_bin)
+        # Resolve at fixture time so a relative override cannot be re-looked-up
+        # against a later per-test cwd= (Popen resolves relative programs vs cwd).
+        binary = resolve_pathaudit_override(env_bin)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             pytest.fail(f"PATHAUDIT_BIN is not an executable file: {env_bin}")
         return binary
 
     if not SRC.is_file():
-        pytest.skip("src/pathaudit.c is not implemented yet")
+        pytest.fail(f"{SRC} is missing; pathaudit contract suite requires the source")
 
     # Compile into pytest's session temp tree only — never build/ or the repo root.
     build_dir = tmp_path_factory.mktemp("pathaudit-build")
@@ -702,6 +738,29 @@ def test_symlink_loop_is_inspection_error(pathaudit_bin, fixture_tree):
     assert_no_raw_unsafe_bytes(result.stderr)
 
 
+def test_inspection_error_escapes_hostile_bytes_on_stderr(pathaudit_bin, tmp_path):
+    """PAC-M4: operand diagnostics must quote-escape the same way as stdout findings."""
+
+    hostile_name = os.fsdecode(b'loop-\x1b-\xff-"-\\-a')
+    partner_name = os.fsdecode(b'loop-\x1b-\xff-"-\\-b')
+    early_loop = tmp_path / hostile_name
+    partner = tmp_path / partner_name
+    early_loop.symlink_to(partner)
+    partner.symlink_to(early_loop)
+    loop = str(early_loop.absolute())
+
+    result = run_pathaudit(pathaudit_bin, loop)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    assert result.stderr == diagnostic_lines(reason, loop)
+    assert_no_raw_unsafe_bytes(result.stderr)
+    assert b"\x1b" not in result.stderr
+    assert b"\xff" not in result.stderr
+    assert b'\\x1B' in result.stderr
+    assert b'\\xFF' in result.stderr
+
+
 def test_unreadable_path_is_inspection_error_when_provable(pathaudit_bin, tmp_path):
     if os.geteuid() == 0:
         pytest.skip("EACCES fixture is unreliable when running as root")
@@ -784,11 +843,10 @@ def test_root_bytes_limit(pathaudit_bin):
     assert result.stderr == diagnostic_lines("ROOT_BYTES_LIMIT")
 
 
-def test_control_bytes_quotes_and_non_utf8_in_diagnostics(pathaudit_bin, tmp_path):
+def test_control_bytes_quotes_and_non_utf8_in_stdout_findings(pathaudit_bin, tmp_path):
     weird = tmp_path / os.fsdecode(b"diag-\x1b-\xff-\"-\\-name")
-    # Missing path keeps the diagnostic on the operand text itself.
+    # Missing path keeps the hazard on the operand text itself (stdout path).
     result = run_pathaudit(pathaudit_bin, str(weird.resolve()))
-    # Missing is a hazard (status 1), not a diagnostic path — pin escaping there.
     assert result.returncode == 1
     assert result.stderr == b""
     assert result.stdout == findings_stdout([("MISSING_ROOT", weird.resolve())])
@@ -800,10 +858,7 @@ def test_control_bytes_quotes_and_non_utf8_in_diagnostics(pathaudit_bin, tmp_pat
 def test_closed_stdout_pipe_reports_stdout_write(pathaudit_bin, fixture_tree):
     status, stderr = run_with_closed_stdout_pipe(pathaudit_bin, "--help")
     assert status == 2
-    assert stderr == diagnostic_lines("STDOUT_WRITE") or stderr.startswith(
-        b"pathaudit: STDOUT_WRITE"
-    )
-    assert b"STDOUT_WRITE" in stderr
+    assert stderr == diagnostic_lines("STDOUT_WRITE")
     assert_no_raw_unsafe_bytes(stderr)
 
     # Hazard emission must also fail closed on a broken stdout pipe.
@@ -811,7 +866,7 @@ def test_closed_stdout_pipe_reports_stdout_write(pathaudit_bin, fixture_tree):
         pathaudit_bin, str(fixture_tree.group_w)
     )
     assert status == 2
-    assert b"STDOUT_WRITE" in stderr
+    assert stderr == diagnostic_lines("STDOUT_WRITE")
     assert_no_raw_unsafe_bytes(stderr)
 
 
@@ -846,3 +901,260 @@ def test_exit_status_classes(pathaudit_bin, fixture_tree):
 
     usage = run_pathaudit(pathaudit_bin)
     assert usage.returncode == 2
+
+
+def test_runners_forward_sanitizer_options_without_reopening_path(monkeypatch):
+    """Makefile ASan/UBSan knobs must reach the child; PATH must stay sealed."""
+
+    monkeypatch.setenv("ASAN_OPTIONS", "detect_leaks=1:abort_on_error=1")
+    monkeypatch.setenv("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+    monkeypatch.setenv("LSAN_OPTIONS", "verbosity=0")
+    monkeypatch.setenv("ASAN_SYMBOLIZER_PATH", "/usr/bin/llvm-symbolizer")
+
+    run_env = _base_child_env()
+    assert run_env["PATH"] == "/pathaudit-tests-must-not-search-here"
+    assert run_env["LC_ALL"] == "C"
+    assert run_env["LANG"] == "C"
+    assert run_env["ASAN_OPTIONS"] == "detect_leaks=1:abort_on_error=1"
+    assert run_env["UBSAN_OPTIONS"] == "halt_on_error=1:print_stacktrace=1"
+    assert run_env["LSAN_OPTIONS"] == "verbosity=0"
+    assert run_env["ASAN_SYMBOLIZER_PATH"] == "/usr/bin/llvm-symbolizer"
+
+    # Explicit caller env still overrides allowlisted keys without reopening PATH.
+    overridden = _base_child_env({"ASAN_OPTIONS": "detect_leaks=0", "EXTRA": "1"})
+    assert overridden["ASAN_OPTIONS"] == "detect_leaks=0"
+    assert overridden["PATH"] == "/pathaudit-tests-must-not-search-here"
+    assert overridden["EXTRA"] == "1"
+
+
+def test_run_pathaudit_forwards_sanitizer_options_to_real_child(
+    tmp_path, monkeypatch
+):
+    """PAC-M3 integration: ASAN/UBSAN options reach the executed binary."""
+
+    monkeypatch.setenv("ASAN_OPTIONS", "detect_leaks=1:abort_on_error=1")
+    monkeypatch.setenv("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+    # Ensure ambient PATH-like noise cannot leak into the child.
+    monkeypatch.setenv("HOST_ONLY_VAR", "must-not-appear")
+
+    probe = tmp_path / "env-probe"
+    probe.write_text(
+        "#!/bin/sh\n"
+        "printf 'ASAN=%s\\n' \"$ASAN_OPTIONS\"\n"
+        "printf 'UBSAN=%s\\n' \"$UBSAN_OPTIONS\"\n"
+        "printf 'PATH=%s\\n' \"$PATH\"\n"
+        "if [ -n \"${HOST_ONLY_VAR+x}\" ]; then printf 'LEAKED\\n'; exit 2; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+
+    result = run_pathaudit(probe, "--version")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        b"ASAN=detect_leaks=1:abort_on_error=1\n"
+        b"UBSAN=halt_on_error=1:print_stacktrace=1\n"
+        b"PATH=/pathaudit-tests-must-not-search-here\n"
+    )
+    assert b"LEAKED" not in result.stdout
+    assert b"LEAKED" not in result.stderr
+
+
+def test_makefile_test_suite_scrubs_inherited_pathaudit_routing():
+    """PAC-M1: make -n test-suite must scrub ambient PATHAUDIT routing."""
+
+    if shutil.which("make") is None:
+        pytest.skip("GNU make required for Makefile seam checks")
+
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    assert 'SYSDIFF_BIN="$(CURDIR)/$(BIN)"' in makefile
+
+    dry = subprocess.run(
+        ["make", "-C", str(ROOT), "-n", "test-suite"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert dry.returncode == 0, dry.stderr + dry.stdout
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in dry.stdout
+    assert "SYSDIFF_BIN=" in dry.stdout
+
+
+def test_inherited_pathaudit_bin_decoy_fails_unless_scrubbed(tmp_path):
+    """PAC-M1 regression: a stale PATHAUDIT_BIN decoy must not silently pass.
+
+    Exercises the real fixture PATHAUDIT_BIN seam (not a mocked subprocess
+    boundary). The Makefile scrub is pinned separately; this proves the old
+    failure class when the override is left in place.
+    """
+
+    decoy = tmp_path / "decoy-pathaudit"
+    decoy.write_text(
+        "#!/bin/sh\nprintf 'wrong\\n'\nexit 0\n",
+        encoding="utf-8",
+    )
+    decoy.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATHAUDIT_BIN"] = str(decoy)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Drop Valgrind wrapping so the decoy is executed directly.
+    env.pop("PATHAUDIT_UNDER_VALGRIND", None)
+    env.pop("SYSDIFF_UNDER_VALGRIND", None)
+
+    poisoned = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_pathaudit.py::test_help_and_version",
+            "-q",
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert poisoned.returncode != 0, poisoned.stdout + poisoned.stderr
+    assert "FAILED" in poisoned.stdout or "failed" in poisoned.stdout.lower()
+
+    scrubbed = subprocess.run(
+        [
+            "env",
+            "-u",
+            "PATHAUDIT_BIN",
+            "-u",
+            "PATHAUDIT_UNDER_VALGRIND",
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_pathaudit.py::test_help_and_version",
+            "-q",
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert scrubbed.returncode == 0, scrubbed.stdout + scrubbed.stderr
+
+
+def test_makefile_release_and_distcheck_require_pathaudit_members():
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+    for required in (
+        "src/pathaudit.c",
+        "man/pathaudit.1",
+        "tests/test_pathaudit.py",
+    ):
+        assert required in makefile
+    # Release staging required-file loop must name pathaudit members explicitly.
+    release_idx = makefile.index("error: release staging missing required product file")
+    release_window = makefile[max(0, release_idx - 500) : release_idx]
+    assert "src/pathaudit.c" in release_window
+    assert "man/pathaudit.1" in release_window
+    assert "tests/test_pathaudit.py" in release_window
+    dist_idx = makefile.index("error: archive missing required member")
+    dist_window = makefile[max(0, dist_idx - 700) : dist_idx]
+    assert "src/pathaudit.c" in dist_window
+    assert "man/pathaudit.1" in dist_window
+    assert "tests/test_pathaudit.py" in dist_window
+
+
+def test_pathaudit_bin_relative_override_resolves_before_cwd_changes(
+    tmp_path_factory, monkeypatch
+):
+    """Relative PATHAUDIT_BIN must resolve via the shared fixture helper."""
+
+    build_dir = tmp_path_factory.mktemp("pathaudit-rel-bin")
+    binary = build_dir / "pathaudit"
+    compile_result = subprocess.run(
+        [
+            os.environ.get("CC", "cc"),
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-o",
+            str(binary),
+            str(SRC),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    rel = os.path.relpath(binary, Path.cwd())
+    assert not Path(rel).is_absolute()
+    monkeypatch.setenv("PATHAUDIT_BIN", rel)
+
+    # Call the same helper the pathaudit_bin fixture uses (mutation pin).
+    resolved = resolve_pathaudit_override(os.environ["PATHAUDIT_BIN"])
+    assert resolved == binary.resolve()
+    assert resolved.is_absolute()
+    assert resolved.is_file()
+
+    foreign_cwd = tmp_path_factory.mktemp("foreign-cwd")
+    result = run_pathaudit(resolved, "--version", cwd=foreign_cwd)
+    assert result.returncode == 0
+    assert result.stdout == VERSION_STDOUT
+
+
+def test_relative_pathaudit_bin_fixture_survives_foreign_cwd(tmp_path):
+    """PAH-1: nested pytest must exercise the real pathaudit_bin fixture resolve.
+
+    A relative PATHAUDIT_BIN that is not resolved at fixture time validates
+    against the suite cwd but fails under any test that passes cwd= to Popen.
+    """
+
+    binary = tmp_path / "pathaudit"
+    compile_result = subprocess.run(
+        [
+            os.environ.get("CC", "cc"),
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-o",
+            str(binary),
+            str(SRC),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    rel = os.path.relpath(binary, ROOT)
+    assert not Path(rel).is_absolute()
+
+    env = os.environ.copy()
+    env["PATHAUDIT_BIN"] = rel
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env.pop("PATHAUDIT_UNDER_VALGRIND", None)
+    env.pop("SYSDIFF_UNDER_VALGRIND", None)
+
+    nested = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_pathaudit.py::test_safe_private_absolute_root_exits_zero",
+            "-q",
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert nested.returncode == 0, nested.stdout + nested.stderr

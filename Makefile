@@ -200,12 +200,18 @@ man-check:
 
 # Pin the ordinary product binary so an inherited SYSDIFF_BIN (e.g. from an
 # outer sanitizer/Valgrind/pytest invocation) cannot redirect or skip packaging.
+# Scrub PATHAUDIT_BIN / PATHAUDIT_UNDER_VALGRIND on the pytest line so an
+# inherited override (or a nested extract under an outer memory gate) cannot
+# redirect the pathaudit contract suite away from compiling src/pathaudit.c.
+# Leave test-asan / test-ubsan / test-valgrind alone; those set the vars
+# deliberately on their inlined pytest invocations.
 test-shell: $(BIN)
 	SYSDIFF_BIN="$(CURDIR)/$(BIN)" ./tests/test_sysdiff.sh
 
 test-suite: $(BIN)
 	$(MAKE) test-shell
-	SYSDIFF_BIN="$(CURDIR)/$(BIN)" $(PYTEST_NO_CACHE) tests/ -q
+	env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
+		SYSDIFF_BIN="$(CURDIR)/$(BIN)" $(PYTEST_NO_CACHE) tests/ -q
 
 sanitizer-test: test-sanitize
 
@@ -218,7 +224,7 @@ valgrind-test: test-valgrind
 test-sanitize: test-asan test-ubsan
 
 test-asan:
-	@$(PYTHON) scripts/check_tools.py --memory-gate sanitize
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
 	@set -eu; \
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
@@ -244,7 +250,7 @@ test-asan:
 	exit "$$status"
 
 test-ubsan:
-	@$(PYTHON) scripts/check_tools.py --memory-gate sanitize
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
 	@set -eu; \
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
@@ -270,7 +276,7 @@ test-ubsan:
 	exit "$$status"
 
 test-valgrind:
-	@$(PYTHON) scripts/check_tools.py --memory-gate valgrind
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind
 	@set -eu; \
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
@@ -359,9 +365,12 @@ release:
 		README.md \
 		CHANGELOG.md \
 		src/sysdiff.c \
+		src/pathaudit.c \
 		man/sysdiff.1 \
+		man/pathaudit.1 \
 		tests/test_sysdiff.sh \
 		tests/test_sysdiff.py \
+		tests/test_pathaudit.py \
 		scripts/smoke.sh; do \
 		if [ ! -f "$$prefix_dir/$$required" ]; then \
 			printf 'error: release staging missing required product file: %s\n' \
@@ -525,9 +534,12 @@ distcheck:
 		"$(DIST_PREFIX)/README.md" \
 		"$(DIST_PREFIX)/CHANGELOG.md" \
 		"$(DIST_PREFIX)/src/sysdiff.c" \
+		"$(DIST_PREFIX)/src/pathaudit.c" \
 		"$(DIST_PREFIX)/man/sysdiff.1" \
+		"$(DIST_PREFIX)/man/pathaudit.1" \
 		"$(DIST_PREFIX)/tests/test_sysdiff.sh" \
-		"$(DIST_PREFIX)/tests/test_sysdiff.py"; do \
+		"$(DIST_PREFIX)/tests/test_sysdiff.py" \
+		"$(DIST_PREFIX)/tests/test_pathaudit.py"; do \
 		if ! printf '%s\n' "$$members" | grep -Fxq "$$required"; then \
 			printf 'error: archive missing required member: %s\n' "$$required" >&2; \
 			exit 1; \

@@ -443,3 +443,112 @@ def test_memory_gate_valgrind_preflight_passes_on_real_linux_toolchain():
     )
     assert status == 0
     assert "memory-gate valgrind" in out.getvalue()
+
+
+def test_memory_gate_cli_is_independent_of_caller_cwd(tmp_path):
+    """scripts/check_tools.py must succeed when invoked from a foreign cwd."""
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("sanitize preflight requires Linux")
+    if shutil.which("clang") is None:
+        pytest.skip("clang is required for sanitize preflight success path")
+
+    result = subprocess.run(
+        [sys.executable, os.fspath(SCRIPT), "--memory-gate", "sanitize"],
+        cwd=os.fspath(tmp_path),
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "LC_ALL": "C",
+            "LANG": "C",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "memory-gate sanitize" in result.stdout
+
+
+def test_compile_probe_ignores_workspace_tmpdir(tmp_path, monkeypatch):
+    """Ambient workspace TMPDIR must not capture preflight probe writes.
+
+    Asserts on the probe directory surfaced in MemoryToolResult.detail rather
+    than post-cleanup emptiness (TemporaryDirectory always deletes on exit).
+    Monkeypatches tempfile.tempdir directly so gettempdir()'s process-wide
+    cache cannot mask a missing dir= pin.
+    """
+
+    module = load_check_tools_module()
+    if shutil.which("clang") is None:
+        pytest.skip("clang is required for compile probe")
+
+    workspace_tmp = tmp_path / "workspace-tmp"
+    workspace_tmp.mkdir()
+    # Prefer the workspace if TemporaryDirectory is called without dir=.
+    monkeypatch.setattr(module.tempfile, "tempdir", os.fspath(workspace_tmp))
+    monkeypatch.setenv("TMPDIR", os.fspath(workspace_tmp))
+
+    assert module.PREFLIGHT_TMP_PARENT == "/tmp"
+
+    result = module.probe_compile_capability(
+        "address-sanitizer",
+        module.build_asan_compile_command("clang", "probe.c", "probe"),
+    )
+
+    assert result.available is True, result.detail
+    marker = " compile probe succeeded under "
+    assert marker in result.detail, result.detail
+    probe_dir = Path(result.detail.rsplit(marker, 1)[-1]).resolve()
+    workspace_resolved = workspace_tmp.resolve()
+    assert workspace_resolved not in probe_dir.parents
+    assert probe_dir != workspace_resolved
+    assert str(probe_dir).startswith("/tmp/")
+
+
+def test_makefile_memory_gates_invoke_check_tools_via_curdir():
+    """Real Makefile seam: memory gates must call check_tools by CURDIR path."""
+
+    if shutil.which("make") is None:
+        pytest.skip("GNU make required for Makefile seam checks")
+
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert (
+        '$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize'
+        in makefile
+    )
+    assert (
+        '$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind'
+        in makefile
+    )
+
+    for target, gate in (
+        ("test-asan", "sanitize"),
+        ("test-ubsan", "sanitize"),
+        ("test-valgrind", "valgrind"),
+    ):
+        dry = subprocess.run(
+            ["make", "-C", str(ROOT), "-n", target],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert dry.returncode == 0, dry.stderr + dry.stdout
+        # make -n expands "$(CURDIR)/scripts/check_tools.py" with a closing
+        # quote before the gate flag, so do not require an unquoted adjacency.
+        assert "scripts/check_tools.py" in dry.stdout
+        assert f"--memory-gate {gate}" in dry.stdout
+        assert "/scripts/check_tools.py" in dry.stdout
+
+
+def test_asan_compile_command_accepts_pathaudit_source():
+    module = load_check_tools_module()
+    command = module.build_asan_compile_command(
+        "clang", "src/pathaudit.c", "/tmp/pathaudit-asan"
+    )
+
+    assert command[0] == "clang"
+    assert command[-3:] == ["-o", "/tmp/pathaudit-asan", "src/pathaudit.c"]
+    assert "-fsanitize=address" in command
+    for flag in ("-std=c17", "-Wall", "-Wextra", "-Wpedantic", "-Werror"):
+        assert flag in command
