@@ -385,6 +385,8 @@ def test_escape_root_contract_helpers():
     assert escape_root(b"abc") == b'"abc"'
     assert escape_root(b'a"b\\c') == b'"a\\"b\\\\c"'
     assert escape_root(b"a\x1b\t\xff") == b'"a\\x1B\\x09\\xFF"'
+    # Newline must become \\x0A so an operand cannot forge an extra diagnostic line.
+    assert escape_root(b"a\npathaudit: FORGED") == b'"a\\x0Apathaudit: FORGED"'
     assert finding_line("EMPTY_ROOT", b"") == b'EMPTY_ROOT\t""\n'
 
 
@@ -739,10 +741,16 @@ def test_symlink_loop_is_inspection_error(pathaudit_bin, fixture_tree):
 
 
 def test_inspection_error_escapes_hostile_bytes_on_stderr(pathaudit_bin, tmp_path):
-    """PAC-M4: operand diagnostics must quote-escape the same way as stdout findings."""
+    """PAC-M4 / PA-M2: operand diagnostics must quote-escape like stdout findings.
 
-    hostile_name = os.fsdecode(b'loop-\x1b-\xff-"-\\-a')
-    partner_name = os.fsdecode(b'loop-\x1b-\xff-"-\\-b')
+    Embeds LF, TAB, and a forged-looking `pathaudit: FORGED` token in the PATH
+    entry name. Raw LF would split the diagnostic into an extra line; raw TAB
+    would ambiguate fields. Escaping must keep a single safe diagnostic line.
+    """
+
+    # Adversarial PATH entry: LF forges a second line; TAB ambiguates fields.
+    hostile_name = os.fsdecode(b'loop-\n\tpathaudit: FORGED-\x1b-\xff-"-\\-a')
+    partner_name = os.fsdecode(b'loop-\n\tpathaudit: FORGED-\x1b-\xff-"-\\-b')
     early_loop = tmp_path / hostile_name
     partner = tmp_path / partner_name
     early_loop.symlink_to(partner)
@@ -753,12 +761,26 @@ def test_inspection_error_escapes_hostile_bytes_on_stderr(pathaudit_bin, tmp_pat
     assert result.returncode == 2
     assert result.stdout == b""
     reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
-    assert result.stderr == diagnostic_lines(reason, loop)
+    expected = diagnostic_lines(reason, loop)
+    assert result.stderr == expected
     assert_no_raw_unsafe_bytes(result.stderr)
     assert b"\x1b" not in result.stderr
     assert b"\xff" not in result.stderr
     assert b'\\x1B' in result.stderr
     assert b'\\xFF' in result.stderr
+    assert b'\\x0A' in result.stderr
+    assert b'\\x09' in result.stderr
+    # No raw TAB from the hostile entry (stderr has no structural TAB).
+    assert result.stderr.count(b"\t") == 0
+    # Single structural LF terminator only — no raw LF from the hostile entry.
+    assert result.stderr.count(b"\n") == 1
+    assert result.stderr.endswith(b"\n")
+    # Unescaped LF before the embedded token would forge this second line.
+    assert b"\npathaudit:" not in result.stderr
+    assert b"\npathaudit: FORGED" not in result.stderr
+    # Printable forged token remains visible only inside the escaped quotes.
+    assert b"pathaudit: FORGED" in result.stderr
+    assert result.stderr.startswith(b"pathaudit: INSPECTION_ERROR_")
 
 
 def test_unreadable_path_is_inspection_error_when_provable(pathaudit_bin, tmp_path):
@@ -844,7 +866,10 @@ def test_root_bytes_limit(pathaudit_bin):
 
 
 def test_control_bytes_quotes_and_non_utf8_in_stdout_findings(pathaudit_bin, tmp_path):
-    weird = tmp_path / os.fsdecode(b"diag-\x1b-\xff-\"-\\-name")
+    # TAB is the finding-record separator; LF would forge a second finding line.
+    weird = tmp_path / os.fsdecode(
+        b'diag-\n\tWORLD_WRITABLE\t"forged"-\x1b-\xff-"-\\-name'
+    )
     # Missing path keeps the hazard on the operand text itself (stdout path).
     result = run_pathaudit(pathaudit_bin, str(weird.resolve()))
     assert result.returncode == 1
@@ -853,6 +878,14 @@ def test_control_bytes_quotes_and_non_utf8_in_stdout_findings(pathaudit_bin, tmp
     assert_no_raw_unsafe_bytes(result.stdout)
     assert b"\x1b" not in result.stdout
     assert b"\xff" not in result.stdout
+    assert b'\\x09' in result.stdout
+    assert b'\\x0A' in result.stdout
+    # One structural CODE<TAB> separator only — operand TABs must be escaped.
+    assert result.stdout.count(b"\t") == 1
+    # One structural LF terminator only — operand LF must not split the record.
+    assert result.stdout.count(b"\n") == 1
+    assert result.stdout.endswith(b"\n")
+    assert b"\nWORLD_WRITABLE" not in result.stdout
 
 
 def test_closed_stdout_pipe_reports_stdout_write(pathaudit_bin, fixture_tree):
