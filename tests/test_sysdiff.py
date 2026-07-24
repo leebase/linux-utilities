@@ -310,7 +310,7 @@ def _assert_mixed_case_bytewise_order(binary: Path, work: Path):
     assert first.stdout == second.stdout
 
 
-def test_mixed_case_keys_are_sorted_bytewise_in_both_input_orders(
+def test_rc_001_mixed_case_keys_are_sorted_bytewise_in_both_input_orders(
     sysdiff_bin, tmp_path
 ):
     """RC-001: Alpha/alpha (and Zebra/beta) pin locale-independent byte order."""
@@ -349,7 +349,7 @@ def _temp_parent_outside_workspace() -> str:
     )
 
 
-def test_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
+def test_rc_001_strcasecmp_key_sort_mutant_is_killed_from_clean_scratch():
     """Copy src to an out-of-tree scratch, prove baseline, mutate copy, kill it.
 
     Replaces strcmp with strcasecmp solely in compare_entries_by_key inside the
@@ -1009,3 +1009,256 @@ def test_dist_rejects_malformed_source_date_epoch():
         result = _run_make(f"SOURCE_DATE_EPOCH={bad_epoch}", "dist", check=False)
         assert result.returncode != 0, bad_epoch
         assert "SOURCE_DATE_EPOCH" in result.stderr
+
+
+RELEASE_ARCHIVE_REL = "sysdiff-release.tar.gz"
+RELEASE_CHECKSUM_REL = "sysdiff-release.tar.gz.sha256"
+RELEASE_ARCHIVE_DEFAULT = "artifacts/sysdiff-release.tar.gz"
+RELEASE_CHECKSUM_DEFAULT = "artifacts/sysdiff-release.tar.gz.sha256"
+
+
+def test_release_archive_checksum_verifies_beside_archive(tmp_path):
+    """Checksum must name a basename that resolves beside the archive.
+
+    Regression for c847e01d15fe: `sha256sum -c artifacts/release/SHA256SUMS`
+    ran from the workspace root while SHA256SUMS listed only the basename
+    `sysdiff-source.tar.gz`, so the named path did not open. Defaults place
+    both files under artifacts/ with matching basenames; verify from that
+    directory. This test builds into an out-of-tree stand-in so the suite
+    does not rewrite the live artifacts/ release deliverable.
+    """
+
+    _require_git_worktree()
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert f"\nRELEASE_ARCHIVE := {RELEASE_ARCHIVE_DEFAULT}\n" in makefile
+    assert f"\nRELEASE_CHECKSUM := {RELEASE_CHECKSUM_DEFAULT}\n" in makefile
+    assert "git ls-files -z -- $(RELEASE_PATHSPECS)" in makefile
+    assert '( CDPATH= cd -- "$$archive_dir" && sha256sum "$$archive_base" )' in makefile
+
+    outside = _temp_parent_outside_workspace()
+    work = Path(tempfile.mkdtemp(prefix="sysdiff-release-cksum.", dir=outside))
+    archive = work / RELEASE_ARCHIVE_REL
+    checksum = work / RELEASE_CHECKSUM_REL
+    try:
+        result = _run_make(
+            f"RELEASE_ARCHIVE={archive}",
+            f"RELEASE_CHECKSUM={checksum}",
+            "release",
+        )
+        assert archive.is_file(), result.stderr
+        assert checksum.is_file(), result.stderr
+
+        listing = subprocess.run(
+            ["tar", "-tzf", str(archive)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert listing.returncode == 0, listing.stderr
+        members = [line for line in listing.stdout.splitlines() if line]
+        assert members, "release archive must list at least one member"
+        assert all(
+            m == "sysdiff-release" or m.startswith("sysdiff-release/") for m in members
+        )
+        # Positive hygiene: curated product members must be present, and
+        # orchestration/internal trees must stay out (not a vacuous negative).
+        required_release_members = (
+            "sysdiff-release/Makefile",
+            "sysdiff-release/LICENSE",
+            "sysdiff-release/README.md",
+            "sysdiff-release/CHANGELOG.md",
+            "sysdiff-release/src/sysdiff.c",
+            "sysdiff-release/man/sysdiff.1",
+            "sysdiff-release/tests/test_sysdiff.sh",
+            "sysdiff-release/tests/test_sysdiff.py",
+            "sysdiff-release/scripts/smoke.sh",
+        )
+        for required in required_release_members:
+            assert required in members, required
+        joined = "\n".join(members)
+        for fragment in (
+            "playbooks/",
+            "plans/",
+            "/.git/",
+            "code-reviews/",
+            "AGENTS.md",
+            "WHERE_AM_I.md",
+            "context.md",
+        ):
+            assert fragment not in joined, fragment
+
+        # Bundled Makefile must carry the repaired selection + checksum form.
+        bundled_make = subprocess.run(
+            ["tar", "-xOf", str(archive), "sysdiff-release/Makefile"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert bundled_make.returncode == 0, bundled_make.stderr
+        assert "git ls-files -z -- $(RELEASE_PATHSPECS)" in bundled_make.stdout
+        assert 'find "$$pathspec" -type f' not in bundled_make.stdout
+        assert (
+            '( CDPATH= cd -- "$$archive_dir" && sha256sum "$$archive_base" )'
+            in bundled_make.stdout
+        )
+        assert 'sha256sum "$(RELEASE_ARCHIVE)"' not in bundled_make.stdout
+
+        digest_line = checksum.read_text(encoding="utf-8").strip()
+        assert digest_line.endswith(f"  {RELEASE_ARCHIVE_REL}"), digest_line
+        named_path = digest_line.split(None, 1)[1]
+        assert named_path == RELEASE_ARCHIVE_REL
+        assert (work / named_path).is_file()
+
+        check = subprocess.run(
+            ["sha256sum", "-c", RELEASE_CHECKSUM_REL],
+            cwd=str(work),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert check.returncode == 0, check.stderr + check.stdout
+        assert RELEASE_ARCHIVE_REL in check.stdout
+
+        # Reproduce c847e01d15fe: basename-only checksum fails from ROOT when
+        # the archive is not in ROOT.
+        bad_checksum = tmp_path / "SHA256SUMS"
+        bad_checksum.write_text(
+            f"{digest_line.split()[0]}  sysdiff-source.tar.gz\n",
+            encoding="utf-8",
+        )
+        bad_check = subprocess.run(
+            ["sha256sum", "-c", str(bad_checksum)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert bad_check.returncode != 0
+        combined = bad_check.stderr + bad_check.stdout
+        assert "No such file or directory" in combined or "FAILED" in combined
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def test_release_excludes_untracked_files():
+    """REL-C847-001: release must use git ls-files, not a live-tree find.
+
+    Untracked scratch under RELEASE_PATHSPECS directories must not ship. Uses a
+    detached git worktree so decoys never touch the real worktree, and builds
+    the archive out-of-tree so the suite does not rewrite the live artifacts/
+    release deliverable.
+    """
+
+    _require_git_worktree()
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "git ls-files -z -- $(RELEASE_PATHSPECS)" in makefile
+    assert 'find "$$pathspec" -type f' not in makefile
+
+    outside = _temp_parent_outside_workspace()
+    work = Path(tempfile.mkdtemp(prefix="sysdiff-release-untracked.", dir=outside))
+    wt = Path(tempfile.mkdtemp(prefix="sysdiff-release-wt.", dir=outside))
+    archive = work / RELEASE_ARCHIVE_REL
+    checksum = work / RELEASE_CHECKSUM_REL
+    decoy_rels = ("src/STRAY_UNTRACKED.txt", "tests/leftover_scratch.snapshot")
+    worktree_added = False
+    try:
+        add = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(wt), "HEAD"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert add.returncode == 0, add.stderr
+        worktree_added = True
+
+        # Copy current Makefile/tests into the worktree so the repair under
+        # test is what `make release` runs (HEAD alone may lack uncommitted
+        # recipe fixes).
+        shutil.copy2(ROOT / "Makefile", wt / "Makefile")
+        shutil.copy2(
+            ROOT / "tests" / "test_sysdiff.py", wt / "tests" / "test_sysdiff.py"
+        )
+
+        for rel in decoy_rels:
+            decoy = wt / rel
+            decoy.write_text(
+                "untracked decoy must not enter the release archive\n",
+                encoding="utf-8",
+            )
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--", rel],
+                cwd=str(wt),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert status.stdout.strip().startswith("??"), status.stdout
+
+        result = subprocess.run(
+            [
+                "make",
+                f"RELEASE_ARCHIVE={archive}",
+                f"RELEASE_CHECKSUM={checksum}",
+                "release",
+            ],
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert archive.is_file(), result.stderr
+        names = _archive_member_names(archive)
+        joined = "\n".join(names)
+        for rel in decoy_rels:
+            assert Path(rel).name not in joined
+            assert f"sysdiff-release/{rel}" not in names
+        assert all(
+            m == "sysdiff-release" or m.startswith("sysdiff-release/") for m in names
+        )
+    finally:
+        if worktree_added:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(wt)],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(wt, ignore_errors=True)
+
+
+def test_release_missing_pathspec_fails_closed_without_writing_archive():
+    """H1 regression: missing RELEASE_PATHSPECS entry must fail before tar.
+
+    The missing-path guard must run in the parent shell (not inside a process
+    substitution feeding mapfile), and no archive/checksum may be written.
+    """
+
+    outside = _temp_parent_outside_workspace()
+    work = Path(tempfile.mkdtemp(prefix="sysdiff-release-h1.", dir=outside))
+    archive = work / "sysdiff-release.tar.gz"
+    checksum = work / "sysdiff-release.tar.gz.sha256"
+    try:
+        # Keep required early members, insert a missing path before scripts so a
+        # fail-open recipe would still stage scripts and exit 0.
+        pathspecs = (
+            "Makefile LICENSE README.md CHANGELOG.md src man tests "
+            "NOPE.md scripts"
+        )
+        result = _run_make(
+            f"RELEASE_PATHSPECS={pathspecs}",
+            f"RELEASE_ARCHIVE={archive}",
+            f"RELEASE_CHECKSUM={checksum}",
+            "release",
+            check=False,
+        )
+        assert result.returncode != 0
+        assert "release path missing: NOPE.md" in result.stderr
+        assert "wrote " not in result.stdout
+        assert not archive.exists()
+        assert not checksum.exists()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

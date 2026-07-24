@@ -1,5 +1,35 @@
 # Changelog
 
+## Release Notes
+
+This prepare-release step packages the reviewed `sysdiff` **0.1.0** release
+candidate without publishing it. Version `0.1.0` is taken from
+`src/sysdiff.c` (`--version`), `man/sysdiff.1`, README, and the existing
+`0.1.0` changelog section—not invented here. `make release` writes
+`artifacts/sysdiff-release.tar.gz` with a single `sysdiff-release/`
+archive root (source, Makefile, license, user documentation, man pages,
+scripts, and tests) plus companion `artifacts/sysdiff-release.tar.gz.sha256`
+in standard `sha256sum` form (archive basename only, verified with
+`(cd artifacts && sha256sum -c sysdiff-release.tar.gz.sha256)`; repair for
+governed run `c847e01d15fe`, which failed when a nested basename-only
+checksum was checked from another directory). Member selection uses
+`git ls-files` over `RELEASE_PATHSPECS` so untracked scratch cannot ship
+(REL-C847-001). Staging uses `/tmp` outside the workspace; ordinary
+`make clean` removes only `build/` and leaves the archive and checksum for
+later smoke and review. Pathspec existence is checked in the parent shell
+before staging, and post-stage required files include tests, scripts,
+README, and CHANGELOG so a truncated member list cannot ship with a success
+message. Pytest `test_release_archive_checksum_verifies_beside_archive`,
+`test_release_excludes_untracked_files`, and
+`test_release_missing_pathspec_fails_closed_without_writing_archive` pin
+checksum path form, tracked-only selection, and fail-closed packaging.
+RC-001 remains locale-independent bytewise key ordering (`strcmp` in
+`compare_entries_by_key`); pytest names containing `rc_001` pin the
+mixed-case Alpha/alpha golden and kill a `strcasecmp` mutant from clean
+scratch. User-visible compare behavior is unchanged. Compatibility remains
+Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
+`.deb`/`.rpm`. No GitHub tag promotion or external publication occurred.
+
 ## Unreleased
 
 `make quality` now runs the complete sysdiff quality floor in one aggregate:
@@ -74,4 +104,5 @@ Initial public release candidate of `sysdiff`.
 Known limitations: values are opaque text and changed records use a human
 readable `old -> new` presentation, so that line format is not reversible when
 values themselves contain ` -> `. `sysdiff` does not collect live snapshots.
-There is no install target or packaged distribution yet.
+Make `install`/`uninstall` DESTDIR staging is present; there is still no
+packaged `.deb`/`.rpm` distribution.

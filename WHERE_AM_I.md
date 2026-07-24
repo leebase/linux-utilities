@@ -1,5 +1,42 @@
 # Where Am I
 
+## pathaudit Vertical-Slice Bootstrap
+
+Governed run `4dec475ef201` delivered the second utility in this suite:
+additive `pathaudit` 0.1.0 — a read-only ISO C17 scanner for explicitly
+supplied PATH directory roots (contract
+`docs/pathaudit-contract.md`, source `src/pathaudit.c`, man
+`man/pathaudit.1`, tests `tests/test_pathaudit.py`). Exact evidence:
+pathaudit pytest 26 passed; full suite 158 passed (132 + 26); GCC/Clang
+strict + format/tidy/cppcheck/analyzer + ASan/UBSan/Valgrind contract
+coverage clean. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`158 passed in 12.88s`. Review
+`code-reviews/review-pathaudit-bootstrap.{md,verdict.json}` is `pass`
+(0 Critical/High, 2 Medium PA-M1/PA-M2, 7 Low PA-L1–PA-L7). This does
+**not** claim that `pathaudit` is released, installable, or covered by
+the existing sysdiff smoke oracle. Next: repair PA-M2 and finish PA-M1
+leftovers (CHANGELOG + architecture.md).
+
+## Prepared Unpublished sysdiff 0.1.0 Release Candidate
+
+Governed run `580b0f6ff811` prepared an unpublished `sysdiff` **0.1.0**
+release candidate and completed independent package review. Archive and
+checksum: workspace-root `sysdiff-release.tar.gz` and
+`sysdiff-release.tar.gz.sha256` (digest
+`9492eee35f58f467ea3ffa0fd82b4bade46a5df0fedbd3dc814f05537372f33f`).
+RC-001 pass; clean `/tmp` extract `make clean test` → 121 passed, 7
+skipped. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`128 passed in 10.64s`. Review
+`code-reviews/review-sysdiff-release.{md,verdict.json}` is `pass`
+(0 Critical/High, 1 Low L1). High H1 was repaired between review
+attempts. This does **not** claim that a release was published. Next
+authorized action: Lee-controlled publication authorization; do not
+modify package inputs after the reviewed archive.
+
 ## First Independent sysdiff Release-Candidate Review
 
 Governed run `6d0a6fbfe83d` completed the first independent `sysdiff`
@@ -126,21 +163,28 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `6d0a6fbfe83d` is that the first
-independent `sysdiff` release-candidate review is on record
-(`code-reviews/review-first-sysdiff-release-candidate.verdict.json` = `pass`;
-smoke start/check 0; review check 127 passed in 10.89 s at HEAD `510fa2d`).
-Consecutive clean RC reviews in this required sequence: **1**. Ten Low
-findings L1–L10 remain preserved and non-blocking. The second consecutive
-clean independent RC review remains outstanding. This does not claim that
-`sysdiff` is released without Lee-controlled release authorization.
-Separately, prior Medium backlogs (isolated-archive F1–F5, source-release
-F1–F5, malformed-fuzz F1–F4, packaging F1, memory-gate F1–F4) remain open,
-continue to prohibit new feature work while Medium-or-higher debt remains,
-and are not cleared by this first RC review.
+The current milestone after recording run `4dec475ef201` is the additive
+`pathaudit` 0.1.0 vertical-slice bootstrap: contract, C17 scanner, man
+page, 26-test suite, and quality-gate wiring, with independent review
+`code-reviews/review-pathaudit-bootstrap.verdict.json` = `pass` (0
+Critical/High, 2 Medium PA-M1/PA-M2, 7 Low). This is **not** a pathaudit
+release and does not change the separately prepared unpublished
+`sysdiff` 0.1.0 package from run `580b0f6ff811`. Pathaudit is covered by
+`tests/test_pathaudit.py`, not by the existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `4dec475ef201` delivered and reviewed additive `pathaudit` 0.1.0:
+  contract/source/man/26 tests/Makefile wiring; pytest 26 + full 158;
+  smoke start/check 0; review `pass` with Medium PA-M1/PA-M2 and Low
+  PA-L1–PA-L7. Not a pathaudit release; smoke oracle does not directly
+  exercise pathaudit.
+- Run `580b0f6ff811` prepared and reviewed the unpublished 0.1.0 release
+  package: `sysdiff-release.tar.gz` + `.sha256` (digest
+  `9492eee35f58f467ea3ffa0fd82b4bade46a5df0fedbd3dc814f05537372f33f`);
+  RC-001 pass; clean extract 121/7; smoke start/check 0 with empty
+  `blocking_errors`; review `pass` with Low L1 only after H1 repair. Not a
+  published release.
 - Run `6d0a6fbfe83d` recorded the first independent `sysdiff`
   release-candidate review: smoke start/check 0 with empty `blocking_errors`
   (check.log pytest `127 passed in 10.75s`); review check
@@ -311,15 +355,10 @@ and are not cleared by this first RC review.
 
 ## Next milestone
 
-Preserve the first independent `sysdiff` release-candidate review record from
-run `6d0a6fbfe83d`, the consecutive clean RC counter of 1 for this required
-sequence, and Low findings L1–L10. Run a second consecutive clean independent
-RC review before claiming the two-clean-review requirement. Do not claim that
-`sysdiff` is released without Lee-controlled release authorization.
-Separately continue prior Medium backlogs: isolated-archive F1–F5 from
-`939ee21b0d76`, source-release themes from `240bfcbc634e`, malformed-fuzz
-F1–F4 from `feb8e707ea28`, packaging F1 from `a2d750c92da3`, and
-memory-gate F1–F4 from `5665167f1c1d`. Those Medium-or-higher items continue
-to prohibit new feature work while open. Optional Low polish (RC L1–L10,
-prior RC L1–L9 / F1–F7, independent-review L-1–L-5, performance B1–B9)
-remains non-blocking.
+Close Medium findings from run `4dec475ef201`: repair PA-M2 (hostile-byte
+stderr diagnostic fixture) and finish PA-M1 leftovers (CHANGELOG
+Unreleased entry plus architecture.md FindingBuffer ownership). Keep Low
+PA-L1–PA-L7 visible. Do not claim that `pathaudit` is released, and do
+not treat `tests/smoke_manifest.json` as pathaudit coverage. Separately
+preserve the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`
+and keep prior sysdiff Medium backlogs visible until repaired.

@@ -194,14 +194,35 @@ dist/sysdiff-source.tar.gz.sha256` from `dist/`. Remove the artifact with
 `rm -f dist/sysdiff-source.tar.gz dist/sysdiff-source.tar.gz.sha256` (or
 `rm -rf dist`).
 
+For a release-candidate package under `artifacts/` (distinct from `make dist`),
+run `make release`. Like `make dist`, it selects tracked files only via
+`git ls-files` over `RELEASE_PATHSPECS` (untracked scratch under `src/`,
+`tests/`, or `scripts/` cannot ship), stages them under `/tmp`, writes
+`artifacts/sysdiff-release.tar.gz` with a single `sysdiff-release/` archive
+root, and records `artifacts/sysdiff-release.tar.gz.sha256` in standard
+`sha256sum` form (archive basename beside the tarball; nested basename-only
+checksums verified from another directory failed governed run
+`c847e01d15fe`). Ordinary `make clean` removes only `build/` and does not
+delete those release artifacts. Verify with
+`(cd artifacts && sha256sum -c sysdiff-release.tar.gz.sha256)`, then extract
+under `/tmp` and run `make -C …/sysdiff-release clean test`. This prepares an
+unpublished candidate; it does not create a GitHub release or `.deb`/`.rpm`.
+The release archive ships source, Makefile, license, root user docs, man page,
+scripts, and tests; the deeper `docs/` contract tree and AgentFlow status
+files remain repository-only. Packaged CLI behavior is documented in
+`man/sysdiff.1` and the README summary below.
+
 ## Snapshot Format
 
 The durable snapshot-format contract for the initial `sysdiff` vertical slice
-is [docs/sysdiff-snapshot-format-and-scope.md](docs/sysdiff-snapshot-format-and-scope.md).
-Treat that document as the implementation source of truth for snapshot syntax,
-deterministic comparison output, exit statuses, resource scope, non-goals,
-security constraints, compatibility rules, and acceptance checks. This README
-is only a quick usage summary of the current fixture-backed behavior.
+is [docs/sysdiff-snapshot-format-and-scope.md](docs/sysdiff-snapshot-format-and-scope.md)
+in the full git repository. Treat that document as the implementation source
+of truth for snapshot syntax, deterministic comparison output, exit statuses,
+resource scope, non-goals, security constraints, compatibility rules, and
+acceptance checks. Recipients of `sysdiff-release.tar.gz` should use the
+packaged man page and this README summary for CLI behavior; the `docs/` tree
+is not a release-archive member. This README is only a quick usage summary of
+the current fixture-backed behavior.
 
 Snapshot fixtures are plain text files using one `key=value` entry per line:
 
@@ -243,6 +264,21 @@ For identical snapshots, stdout is exactly:
 ```text
 no changes
 ```
+
+## pathaudit
+
+`pathaudit` 0.1.0 is a small ISO C17 scanner for hazards in explicitly named
+PATH directory roots. Callers pass every root on the command line; the tool
+never reads the `PATH` environment variable, walks directory contents, or
+remediates anything. Lookup follows symbolic links like `stat(2)`. Findings use
+a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
+`NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`) with deterministic
+bytewise ordering. Exit status `0` means clean, `1` means hazards were found,
+and `2` means usage, limit, inspection, or write failure (reject-closed). The
+contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
+manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
+workspace binary via `make pathaudit` (mktemp only), or let pytest build into
+its temporary directory. Example: `pathaudit /tmp` or `pathaudit -- -dash-root`.
 
 ## Documentation
 

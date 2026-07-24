@@ -1,5 +1,83 @@
 # Result Review
 
+## pathaudit Vertical-Slice Bootstrap
+
+Governed run `4dec475ef201` (playbook
+`pathaudit_bootstrap_deterministic_scanner`) delivered the additive
+`pathaudit` 0.1.0 vertical slice and completed independent review. Exact
+deliverables: `docs/pathaudit-contract.md`, `src/pathaudit.c`,
+`man/pathaudit.1`, `tests/test_pathaudit.py` (26 contract tests),
+Makefile quality/sanitizer/Valgrind wiring for both utilities, and
+README/QUALITY/TESTING documentation. Explicit non-goals: not a
+`pathaudit` release, not an install/uninstall path for pathaudit, and no
+change to `sysdiff` compare behavior (`src/sysdiff.c`, `man/sysdiff.1`,
+fixture/smoke manifests byte-identical to HEAD aside from additive
+wiring). Step-3 validation passed exactly: GCC/Clang
+`-std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`; clang-format
+`--dry-run --Werror`; clang-tidy; cppcheck; Clang `--analyze`;
+`pytest tests/test_pathaudit.py` → 26 passed in 0.38s; full
+`pytest tests/` → 158 passed in 14.98s; ASan and Valgrind help probes
+exited 0. Review additionally confirmed the contract suite clean under
+ASan (leak detection), UBSan (halt-on-error), and Valgrind memcheck
+(26 passed). Governed user smoke passed:
+`artifacts/user-smoke/result.json` records `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+and empty `blocking_errors`; check.log pytest `158 passed in 12.88s`.
+The pinned smoke oracle (`tests/smoke_manifest.json`) remains the
+sysdiff fixture path and does **not** directly exercise pathaudit;
+pathaudit coverage is `tests/test_pathaudit.py` (and full-suite pytest
+when that suite is invoked). Independent review artifacts:
+`code-reviews/review-pathaudit-bootstrap.md` and
+`code-reviews/review-pathaudit-bootstrap.verdict.json`. Verdict: `pass`
+at the High threshold with no Critical or High findings, two Medium
+findings (PA-M1 AgentFlow/CHANGELOG/architecture visibility;
+PA-M2 missing hostile-byte stderr diagnostic fixture), and seven Low
+findings (PA-L1–PA-L7). Allowlisted review checks:
+`python3 -m pytest tests/test_pathaudit.py -q -p no:cacheprovider` →
+26 passed in 0.30s; `python3 -m pytest tests/ -q -p no:cacheprovider` →
+158 passed in 12.03s (132 without pathaudit). Remaining risks: PA-M1
+leftovers after this handoff (CHANGELOG Unreleased + architecture.md
+ownership), PA-M2, Low PA-L1–PA-L7, plus prior sysdiff Medium backlogs.
+Recommended next action: repair PA-M2 and finish PA-M1 leftovers; keep
+Low findings visible. Do not claim that `pathaudit` is released.
+
+## Release Package
+
+Governed run `580b0f6ff811` (playbook
+`prepare_sysdiff_release_package_and_notes`) prepared and verified an
+unpublished `sysdiff` **0.1.0** release candidate, passed user smoke, and
+received an independent package review. Do not claim that a release was
+published, that Lee authorized external distribution, or that package
+inputs may still be edited after the reviewed archive. Archive path:
+`sysdiff-release.tar.gz` (single root `sysdiff-release/`, 28 intentional
+members). Checksum path: `sysdiff-release.tar.gz.sha256` containing
+`9492eee35f58f467ea3ffa0fd82b4bade46a5df0fedbd3dc814f05537372f33f  sysdiff-release.tar.gz`
+(`sha256sum -c` → OK; two independent `make release` rebuilds
+byte-identical). QUALITY.md **Release Verification** records: `pytest -k
+rc_001` → 2 passed; both shell suites ok; full `pytest tests/` → 128
+passed; `make clean && make test && make release`; clean `/tmp` extract
+`make clean test` → **121 passed, 7 skipped**. RC-001 result: pass —
+bytewise mixed-case ordering and strcasecmp-mutant kill; no
+`src/sysdiff.c` compare-behavior change. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log: DESTDIR install/uninstall staging,
+fixture acceptance ok, pytest `128 passed in 10.64s`). Independent review
+artifacts: `code-reviews/review-sysdiff-release.md` and
+`code-reviews/review-sysdiff-release.verdict.json`. Verdict: `pass` with
+no Critical or High findings and one Low finding (L1: packaged README
+links to non-packaged `STATUS.md`/`HISTORY.md`). Step-3 attempt 1 failed
+the verdict gate on High H1 (missing-pathspec guard fail-open inside
+process substitution); repair moved the existence check to the parent
+shell and attempt 2 re-verified fail-closed plus pytest
+`test_release_missing_pathspec_fails_closed_without_writing_archive`.
+Allowlisted review check `python3 -m pytest tests/ -q` exited 0 with
+`128 passed in 11.07s`. Remaining risks: L1; prior Medium backlogs;
+accepted Low product limitations; worktree-not-commit packaging;
+no fresh full `make quality` in the review step. Next authorized action:
+Lee-controlled publication authorization only—do not publish, and do not
+modify release-package inputs after this reviewed archive.
+
 ## First Independent sysdiff Release-Candidate Review
 
 Governed run `6d0a6fbfe83d` (playbook

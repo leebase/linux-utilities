@@ -5,6 +5,8 @@ build/
 # affecting man/sysdiff.1 or src/sysdiff.c. Memory-gate binaries stay in mktemp.
 /sysdiff
 /sysdiff.o
+/sysdiff-release.tar.gz
+/sysdiff-release.tar.gz.sha256
 
 .agent-orch-scratch/
 .agent-orch/user-smoke/

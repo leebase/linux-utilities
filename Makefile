@@ -4,10 +4,15 @@ PYTHON ?= python3
 SHELL := /bin/bash
 
 SRC := src/sysdiff.c
+PATHAUDIT_SRC := src/pathaudit.c
 # Ordinary product binary. Keep under build/ so .gitignore covers it; do not
 # emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
+# pathaudit has no workspace binary target; quality recipes compile it under mktemp.
 BIN := build/sysdiff
 MANPAGE := man/sysdiff.1
+PATHAUDIT_MANPAGE := man/pathaudit.1
+ALL_SRCS := $(SRC) $(PATHAUDIT_SRC)
+ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE)
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
 ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
@@ -43,8 +48,36 @@ DIST_PATHSPECS := \
 	scripts \
 	docs
 
-.PHONY: all sysdiff test check clean quality make-quality test-suite test-shell \
-	install uninstall dist distcheck \
+# Release-candidate archive under artifacts/ (make clean must not remove).
+# Archive and checksum are co-located; the checksum records the archive
+# basename so `(cd artifacts && sha256sum -c sysdiff-release.tar.gz.sha256)`
+# succeeds (regression for c847e01d15fe: never verify a nested basename-only
+# checksum from a different working directory).
+RELEASE_ARCHIVE := artifacts/sysdiff-release.tar.gz
+RELEASE_CHECKSUM := artifacts/sysdiff-release.tar.gz.sha256
+RELEASE_PREFIX := sysdiff-release
+# Intentional tracked product paths only: source, Makefile, license, user docs,
+# man, scripts, and tests. Selected via `git ls-files` (same model as dist).
+# No Git metadata, orchestration state, caches, binaries, prior dist/ archives,
+# temporary trees, untracked scratch, or internal docs/ review material.
+RELEASE_PATHSPECS := \
+	Makefile \
+	LICENSE \
+	README.md \
+	CHANGELOG.md \
+	SECURITY.md \
+	CONTRIBUTING.md \
+	TESTING.md \
+	DECISIONS.md \
+	ROADMAP.md \
+	architecture.md \
+	src \
+	man \
+	tests \
+	scripts
+
+.PHONY: all sysdiff pathaudit test check clean quality make-quality test-suite \
+	test-shell install uninstall dist distcheck release \
 	gcc-strict clang-strict clang-syntax format-check clang-tidy-check \
 	cppcheck-check clang-analyzer-check \
 	man-check sanitizer-test asan-test ubsan-test valgrind-test \
@@ -58,6 +91,14 @@ sysdiff: $(BIN)
 $(BIN): $(SRC)
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $<
+
+# Non-writing pathaudit recipe: compile/link under mktemp only, then discard.
+# Does not create build/pathaudit or a top-level ./pathaudit.
+pathaudit:
+	@set -e; \
+	workdir=$$(mktemp -d) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	$(CC) $(CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
 
 install: $(BIN)
 	install -d "$(DESTDIR)$(bindir)"
@@ -97,8 +138,8 @@ gcc-strict:
 	fi; \
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
-	tmpbin="$$workdir/sysdiff"; \
-	gcc $(STRICT_CFLAGS) -o "$$tmpbin" $(SRC)
+	gcc $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
+	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
 
 clang-strict:
 	@set -e; \
@@ -108,20 +149,22 @@ clang-strict:
 	fi; \
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
-	tmpbin="$$workdir/sysdiff"; \
-	clang $(STRICT_CFLAGS) -o "$$tmpbin" $(SRC)
+	clang $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
+	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
 
 clang-syntax:
 	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
+	clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC)
 
 format-check:
-	clang-format --dry-run --Werror $(SRC)
+	clang-format --dry-run --Werror $(ALL_SRCS)
 
 clang-tidy-check:
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
+	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS)
 
 cppcheck-check:
-	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(SRC)
+	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
 
 # Clang static analyzer via clang --analyze (no scan-build / report dir required).
 # analyzer-werror makes findings fail the gate; output stays under mktemp.
@@ -134,19 +177,24 @@ clang-analyzer-check:
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
-		-Xclang -analyzer-output=text -o "$$workdir/sysdiff" $(SRC)
+		-Xclang -analyzer-output=text -o "$$workdir/sysdiff" $(SRC); \
+	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
+		-Xclang -analyzer-output=text -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
 
 man-check:
 	@warnfile=$$(mktemp) || exit 1; \
 	status=0; \
-	if ! groff -man -Tutf8 -ww -z $(MANPAGE) 2>"$$warnfile"; then \
-		status=1; \
-	elif [ -s "$$warnfile" ]; then \
-		status=1; \
-	fi; \
-	if [ "$$status" -ne 0 ]; then \
-		cat "$$warnfile" >&2; \
-	fi; \
+	for manpage in $(ALL_MANPAGES); do \
+		if ! groff -man -Tutf8 -ww -z "$$manpage" 2>"$$warnfile"; then \
+			status=1; \
+		elif [ -s "$$warnfile" ]; then \
+			status=1; \
+		fi; \
+		if [ "$$status" -ne 0 ]; then \
+			cat "$$warnfile" >&2; \
+			break; \
+		fi; \
+	done; \
 	rm -f "$$warnfile"; \
 	exit "$$status"
 
@@ -175,15 +223,22 @@ test-asan:
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-asan"; \
+	pathaudit_bin="$$workdir/pathaudit-asan"; \
 	if ! clang $(ASAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: AddressSanitizer build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(ASAN_CFLAGS) -o "$$pathaudit_bin" $(PATHAUDIT_SRC); then \
+		printf 'error: AddressSanitizer pathaudit build failed (clang or ASan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
+		PATHAUDIT_BIN="$$pathaudit_bin" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
+			PATHAUDIT_BIN="$$pathaudit_bin" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -194,15 +249,22 @@ test-ubsan:
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-ubsan"; \
+	pathaudit_bin="$$workdir/pathaudit-ubsan"; \
 	if ! clang $(UBSAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(UBSAN_CFLAGS) -o "$$pathaudit_bin" $(PATHAUDIT_SRC); then \
+		printf 'error: UndefinedBehaviorSanitizer pathaudit build failed (clang or UBSan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
+		PATHAUDIT_BIN="$$pathaudit_bin" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
+			PATHAUDIT_BIN="$$pathaudit_bin" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -213,21 +275,123 @@ test-valgrind:
 	workdir=$$(mktemp -d) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-valgrind"; \
+	pathaudit_bin="$$workdir/pathaudit-valgrind"; \
 	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: Valgrind debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! gcc $(VALGRIND_CFLAGS) -o "$$pathaudit_bin" $(PATHAUDIT_SRC); then \
+		printf 'error: Valgrind pathaudit debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
+		PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
+			PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
 
 clean:
 	rm -rf build
+
+# Reproducible release-candidate source archive under artifacts/.
+# Staging uses mktemp under /tmp (outside the workspace). make clean does not
+# remove $(RELEASE_ARCHIVE) or $(RELEASE_CHECKSUM). The checksum records the
+# archive basename via `(cd archive_dir && sha256sum base)` so
+# `(cd artifacts && sha256sum -c sysdiff-release.tar.gz.sha256)` succeeds
+# (c847e01d15fe failed when a nested SHA256SUMS listed only a basename that a
+# different-cwd `sha256sum -c` could not open). Members come from
+# `git ls-files` over RELEASE_PATHSPECS (same selection model as `make dist`)
+# so untracked scratch under src/tests/scripts cannot ship.
+release:
+	@set -euo pipefail; \
+	epoch="$(SOURCE_DATE_EPOCH)"; \
+	case "$$epoch" in \
+		''|*[!0-9]*) \
+			printf 'error: SOURCE_DATE_EPOCH must be a non-negative integer (got: %s)\n' \
+				"$${epoch:-<empty>}" >&2; \
+			exit 1; \
+			;; \
+	esac; \
+	for pathspec in $(RELEASE_PATHSPECS); do \
+		if [ ! -e "$$pathspec" ]; then \
+			printf 'error: release path missing: %s\n' "$$pathspec" >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		printf 'error: make release requires a git work tree to select tracked files\n' >&2; \
+		exit 1; \
+	fi; \
+	stage=$$(mktemp -d /tmp/sysdiff-release-stage.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$stage"' EXIT HUP INT TERM; \
+	prefix_dir="$$stage/$(RELEASE_PREFIX)"; \
+	mkdir -p "$$prefix_dir"; \
+	mapfile -t release_members < <(git ls-files -z -- $(RELEASE_PATHSPECS) | tr '\0' '\n' | LC_ALL=C sort); \
+	if [ "$${#release_members[@]}" -eq 0 ]; then \
+		printf 'error: make release found no tracked release files\n' >&2; \
+		exit 1; \
+	fi; \
+	for member in "$${release_members[@]}"; do \
+		[ -n "$$member" ] || continue; \
+		case "$$member" in \
+			*/.git|*/.git/*|.git|.git/*|*/__pycache__/*|*/.pytest_cache/*|\
+			*/.mypy_cache/*|*/.ruff_cache/*|*/build/*|*/dist/*|\
+			*.o|*.a|*.so|*.pyc|*.pyo|*~) \
+				continue; \
+				;; \
+		esac; \
+		if [ ! -f "$$member" ]; then \
+			printf 'error: release member missing: %s\n' "$$member" >&2; \
+			exit 1; \
+		fi; \
+		dest="$$prefix_dir/$$member"; \
+		mkdir -p "$$(dirname "$$dest")"; \
+		cp -f "$$member" "$$dest"; \
+	done; \
+	for required in \
+		Makefile \
+		LICENSE \
+		README.md \
+		CHANGELOG.md \
+		src/sysdiff.c \
+		man/sysdiff.1 \
+		tests/test_sysdiff.sh \
+		tests/test_sysdiff.py \
+		scripts/smoke.sh; do \
+		if [ ! -f "$$prefix_dir/$$required" ]; then \
+			printf 'error: release staging missing required product file: %s\n' \
+				"$$required" >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	find "$$prefix_dir" -type d -exec chmod 0755 {} +; \
+	find "$$prefix_dir" -type f -exec chmod 0644 {} +; \
+	find "$$prefix_dir" -type f -name '*.sh' -exec chmod 0755 {} +; \
+	archive_dir=$$(dirname -- "$(RELEASE_ARCHIVE)"); \
+	archive_base=$$(basename -- "$(RELEASE_ARCHIVE)"); \
+	mkdir -p "$$archive_dir"; \
+	tar \
+		--format=ustar \
+		--sort=name \
+		--mtime="@$$epoch" \
+		--owner=0 \
+		--group=0 \
+		--numeric-owner \
+		--mode='u=rwX,go=rX' \
+		-C "$$stage" \
+		-cf - "$(RELEASE_PREFIX)" \
+		| gzip -n -9 >"$(RELEASE_ARCHIVE).tmp"; \
+	mv -f "$(RELEASE_ARCHIVE).tmp" "$(RELEASE_ARCHIVE)"; \
+	( CDPATH= cd -- "$$archive_dir" && sha256sum "$$archive_base" ) \
+		>"$(RELEASE_CHECKSUM).tmp"; \
+	mv -f "$(RELEASE_CHECKSUM).tmp" "$(RELEASE_CHECKSUM)"; \
+	printf 'wrote %s\n' "$(RELEASE_ARCHIVE)"; \
+	printf 'wrote %s\n' "$(RELEASE_CHECKSUM)"
 
 # Deterministic Linux performance/resource benchmark (temp-dir build only).
 benchmark:
@@ -379,6 +543,6 @@ distcheck:
 			exit 1; \
 			;; \
 	esac; \
-	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
-	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
 	printf 'distcheck: ok\n'

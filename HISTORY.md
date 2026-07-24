@@ -56,6 +56,35 @@ evidence: append new cycles; do not erase prior engineering record.
   This cycle verifies documentation accuracy and smoke continuity; it does
   not itself re-execute `make quality` or assert a new product release gate.
 
+## Release Preparation
+
+Governed run `580b0f6ff811` (`prepare_sysdiff_release_package_and_notes`)
+prepares the unpublished `sysdiff` **0.1.0** release candidate. Version
+`0.1.0` is read from existing product evidence (`src/sysdiff.c` `--version`,
+`man/sysdiff.1`, README, and the `0.1.0` changelog entry). The Makefile gains
+a plain `release` target that stages intentional product files under `/tmp`,
+writes `artifacts/sysdiff-release.tar.gz` with archive root
+`sysdiff-release/`, and emits `artifacts/sysdiff-release.tar.gz.sha256` with
+the archive basename so `(cd artifacts && sha256sum -c …)` succeeds (repair
+for governed run `c847e01d15fe`, which failed when a nested `SHA256SUMS`
+listed only a basename checked from another directory). Follow-up repair for
+review findings REL-C847-001, REL-C847-002, and M1: member selection uses
+`git ls-files` over `RELEASE_PATHSPECS` (tracked-only, matching `make dist`;
+untracked scratch cannot ship), the live deliverable is regenerated from the
+repaired recipe under `artifacts/`, and QUALITY.md **Release Verification**
+re-derives the digest from that archive. Packaging includes source, Makefile,
+license, user documentation, man pages, scripts, and tests while excluding Git
+metadata, orchestration state, caches, compiled binaries, prior archives, and
+temporary files. Attempt-2 repaired High H1: missing `RELEASE_PATHSPECS`
+entries now fail closed in the parent shell (no process-substitution swallowed
+`exit`), and staging asserts required tests/scripts/docs members before tar.
+Pytest coverage pins fail-closed packaging, basename checksum co-location, and
+tracked-only selection. RC-001 (bytewise key order for mixed-case keys such as
+Alpha/alpha) is verified with pytest names containing `rc_001` plus existing
+shell/fixture goldens; no compare-behavior change was required. This
+preparation does not publish a GitHub release or claim Lee-authorized product
+release.
+
 ## First Independent Release-Candidate Review Cycle
 
 Governed run `8a3470eff7d3` (`sysdiff_first_independent_rc_review_cycle`)
@@ -86,3 +115,29 @@ quality evidence this cycle covers step-1 non-writing validation plus
 smoke/review pytest suites, not a fresh full `make quality` re-run.
 Consecutive clean RC review cycles: 2. This cycle does not by itself declare
 `sysdiff` released or authorize publication.
+
+## 2026-07-24 — pathaudit vertical-slice bootstrap
+
+Governed run `4dec475ef201` (`pathaudit_bootstrap_deterministic_scanner`)
+delivered the second utility in the suite as an additive vertical slice:
+`docs/pathaudit-contract.md`, ISO C17 `src/pathaudit.c`, `man/pathaudit.1`,
+`tests/test_pathaudit.py` (26 deterministic contract tests), Makefile
+quality/sanitizer/Valgrind wiring that preserves every existing `sysdiff`
+command and artifact, and README/QUALITY/TESTING documentation. The scanner
+inspects only explicitly supplied PATH directory roots; it never reads the
+`PATH` environment variable, walks directory contents, or remediates. Step-3
+validation recorded: GCC and Clang
+`-std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`; clang-format,
+clang-tidy, cppcheck, and Clang `--analyze` clean; `pytest
+tests/test_pathaudit.py` → 26 passed in 0.38s; full `pytest tests/` → 158
+passed in 14.98s (132 prior + 26 pathaudit); ASan and Valgrind help probes
+exited 0. Review confirmed the contract suite clean under ASan (leak
+detection), UBSan (halt-on-error), and Valgrind memcheck. User smoke
+(`artifacts/user-smoke/result.json`) passed with start/check exit 0 and empty
+blocking errors; check.log pytest reported `158 passed in 12.88s`. The pinned
+sysdiff smoke oracle (`tests/smoke_manifest.json`) does not directly exercise
+pathaudit; pathaudit coverage is the dedicated pytest module. Independent
+review `code-reviews/review-pathaudit-bootstrap.verdict.json` is `pass` at the
+High threshold (0 Critical/High, 2 Medium PA-M1/PA-M2, 7 Low PA-L1–PA-L7).
+This cycle does not claim that `pathaudit` is released, installable via
+`make install`, or that a product release was published.

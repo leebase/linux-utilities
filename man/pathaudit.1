@@ -1,0 +1,189 @@
+.\" Copyright (c) 2026 Lee Harrington
+.\" SPDX-License-Identifier: MIT
+.TH PATHAUDIT 1 "2026-07-24" "pathaudit 0.1.0" "User Commands"
+.SH NAME
+pathaudit \(em scan explicitly supplied PATH directory roots for hazards
+.SH SYNOPSIS
+.B pathaudit
+.RI [ \-\- ]
+.I ROOT...
+.P
+.B pathaudit \-\-help
+.P
+.B pathaudit \-\-version
+.SH DESCRIPTION
+.B pathaudit
+is a small ISO C17 command\-line scanner for risks in explicitly supplied
+PATH directory entries.
+It inspects only the operands named by the caller.
+It never reads the
+.B PATH
+environment variable, searches for executables, walks directory contents, or
+examines ancestor directories.
+.P
+One operand is one inspection root; duplicate operands remain distinct inputs.
+Inspection is read\-only and requires no special privilege.
+Classification uses the operand bytes and one
+.BR stat (2) \-equivalent
+lookup of the final target.
+Ordering and escaping are byte\-oriented and locale\-independent.
+.P
+This narrow slice does not inspect packages, processes, services, capabilities,
+ACLs, mount options, or ownership policy, and it performs no remediation,
+networking, persistence, monitoring, or daemon work.
+Filesystem state can change concurrently, so a result describes metadata
+observed during that invocation and is not a security lock.
+.SH OPTIONS
+.TP
+.B \-\-
+End option processing so a root may begin with
+.BR \- .
+.TP
+.B \-\-help
+Print the usage summary to standard output and exit with status
+.BR 0 .
+Extra operands are a usage error.
+A stdout write or flush failure returns status
+.BR 2 .
+.TP
+.B \-\-version
+Print
+.B pathaudit 0.1.0
+to standard output and exit with status
+.BR 0 .
+Extra operands are a usage error.
+A stdout write or flush failure returns status
+.BR 2 .
+.SH PATH HAZARDS
+The closed hazard taxonomy for this slice is:
+.TP
+.B EMPTY_ROOT
+The operand has zero bytes.
+It is not translated to the current directory and receives no filesystem lookup.
+.TP
+.B RELATIVE_ROOT
+The nonempty operand does not begin with
+.BR / ,
+including
+.B .
+and
+.BR .. .
+The operand is still looked up relative to the process working directory.
+.TP
+.B MISSING_ROOT
+Target lookup reports
+.B ENOENT
+(including a dangling final symlink).
+.TP
+.B NON_DIRECTORY_ROOT
+Lookup succeeds but the final target is not a directory, or lookup reports
+.B ENOTDIR
+because a component prevents directory resolution.
+.B MISSING_ROOT
+and
+.B NON_DIRECTORY_ROOT
+are mutually exclusive.
+.TP
+.B GROUP_WRITABLE
+The final directory target has
+.B S_IWGRP
+set.
+.TP
+.B WORLD_WRITABLE
+The final directory target has
+.B S_IWOTH
+set.
+.P
+Lookup follows symbolic links like
+.BR stat (2) ;
+a symlink is not itself a hazard.
+Permission findings use only the final directory target's
+.B st_mode
+bits.
+Missing and non\-directory roots receive no permission finding.
+A directory with both group\- and world\-write bits produces both findings.
+Sticky, set\-ID, execute, read, owner, ACL, credential, and mount\-policy state
+neither suppress nor create a finding.
+.P
+Each finding is one stdout line:
+.B CODE
+, a TAB, a quoted escaped root, and a newline.
+Findings are ordered by raw root bytes, then original operand position for
+byte\-identical duplicates, then the fixed code rank above.
+Every applicable code is emitted once per operand.
+.P
+Exit status
+.B 0
+means every root was inspected and no hazard was found.
+Status
+.B 1
+means inspection completed and at least one hazard was emitted.
+Status
+.B 2
+means usage failure, an input\-limit violation, a metadata error not classified
+as a hazard (for example symlink loops or
+.BR EACCES ),
+allocation failure, or an output write/flush failure.
+Limit and inspection failures are reject\-closed: buffered findings are
+discarded and stdout remains empty.
+.SH OUTPUT
+Findings use the form
+.BR CODE<TAB>"ESCAPED_ROOT" .
+Inside the quotes, printable ASCII bytes
+.B 0x20
+through
+.B 0x7e
+are emitted literally except
+.B "
+and
+.B \e
+which become
+.B \e"
+and
+.BR \e\e ;
+every other byte is uppercase
+.BR \exHH .
+Diagnostics go only to stderr as
+.B pathaudit: REASON
+optionally followed by a quoted root.
+.SH EXIT STATUS
+.TP
+.B 0
+Every root inspected; no hazard found.
+Also used for successful
+.B \-\-help
+and
+.BR \-\-version .
+.TP
+.B 1
+Inspection completed; at least one hazard emitted.
+.TP
+.B 2
+Usage error, limit violation, operational metadata error, allocation failure,
+or stdout write/flush failure.
+.SH RESOURCE LIMITS
+.IP \(bu 3
+Maximum roots: 65\|536.
+.IP \(bu 3
+Maximum root length: 65\|536 bytes excluding the terminating NUL.
+.IP \(bu 3
+Maximum aggregate root bytes including terminating NULs: 1\|048\|576.
+.SH EXAMPLES
+.RS
+.nf
+pathaudit /tmp
+pathaudit \-\- \-dash-root
+pathaudit /safe /group-writable /missing
+.fi
+.RE
+.SH SEE ALSO
+.BR stat (2),
+.BR sysdiff (1)
+.SH AUTHOR
+Lee Harrington
+.SH COPYRIGHT
+Copyright \(co 2026 Lee Harrington.
+.B pathaudit
+is released under the MIT License.
+.SH VERSION
+pathaudit 0.1.0 (2026\-07\-24)
