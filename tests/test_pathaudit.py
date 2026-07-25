@@ -5,12 +5,19 @@ temporary directory, exercises only deterministic temporary fixtures, and never
 inspects the worker's real PATH, requires root, uses the network, or leaves
 binaries in the workspace. Sanitizer/Valgrind options declared by Makefile
 memory gates are allowlist-forwarded into the child environment.
+
+Also encodes the stable Makefile contract for pathaudit-sanitize and
+pathaudit-valgrind: ASan+UBSan with strict warnings and frame pointers, a
+separate non-sanitized Valgrind debug binary with full leak checking and a
+nonzero error-exitcode, temporary paths under /tmp cleaned on every exit, and
+regression pins for existing pathaudit behavior and Make targets.
 """
 
 from __future__ import annotations
 
 import errno as errno_mod
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +31,19 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "pathaudit.c"
 MAKEFILE = ROOT / "Makefile"
+
+# Stable pathaudit-only memory-verification Make targets (authored ahead of the
+# Makefile recipes that must satisfy this contract).
+PATHAUDIT_SANITIZE_TARGET = "pathaudit-sanitize"
+PATHAUDIT_VALGRIND_TARGET = "pathaudit-valgrind"
+STRICT_WARNING_FLAGS = (
+    "-std=c17",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+)
+FRAME_POINTER_FLAG = "-fno-omit-frame-pointer"
 
 # Allowlisted sanitizer/runtime knobs forwarded from the ambient environment so
 # Makefile memory gates (ASAN_OPTIONS / UBSAN_OPTIONS) reach the binary under
@@ -993,22 +1013,112 @@ def test_run_pathaudit_forwards_sanitizer_options_to_real_child(
     assert b"LEAKED" not in result.stderr
 
 
+def _read_makefile() -> str:
+    return MAKEFILE.read_text(encoding="utf-8")
+
+
+def _makefile_target_block(makefile: str, target: str) -> str:
+    """Return the header line plus tab-indented recipe for an exact target."""
+
+    header_re = re.compile(rf"^{re.escape(target)}\s*:")
+    lines = makefile.splitlines(keepends=True)
+    start = None
+    for index, line in enumerate(lines):
+        if header_re.match(line):
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"Makefile is missing Make target {target!r}")
+
+    collected = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.startswith("\t"):
+            collected.append(line)
+            continue
+        # Stop at the next rule, variable, or directive; blank separators end
+        # the recipe block for contract inspection.
+        break
+    return "".join(collected)
+
+
+def _makefile_declares_phony(*targets: str) -> None:
+    makefile = _read_makefile()
+    lines = makefile.splitlines()
+    phony_chunks: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith(".PHONY:"):
+            chunk = [line]
+            while chunk[-1].rstrip().endswith("\\"):
+                index += 1
+                if index >= len(lines):
+                    break
+                chunk.append(lines[index])
+            phony_chunks.append(
+                " ".join(part.rstrip("\\").strip() for part in chunk)
+            )
+        index += 1
+    phony_text = "\n".join(phony_chunks)
+    assert phony_chunks, "Makefile must declare .PHONY targets"
+    for target in targets:
+        assert re.search(
+            rf"(?:^|[\s]){re.escape(target)}(?:[\s]|$)",
+            phony_text,
+        ), f"{target!r} must be listed in .PHONY"
+
+
+def _make_dry_run(target: str) -> subprocess.CompletedProcess[str]:
+    if shutil.which("make") is None:
+        pytest.skip("GNU make required for Makefile seam checks")
+    return subprocess.run(
+        ["make", "-C", str(ROOT), "-n", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _assert_temp_outside_workspace_with_cleanup(recipe: str, target: str) -> None:
+    """Both quality targets must mktemp under /tmp and trap-clean every exit."""
+
+    assert "mktemp" in recipe, f"{target} must create a temporary work directory"
+    assert re.search(
+        r"mktemp(?:\s+[^\n]*)?/tmp/",
+        recipe,
+    ), (
+        f"{target} must create its temporary directory under /tmp "
+        "(outside the workspace), not under an ambient TMPDIR"
+    )
+    assert "trap" in recipe, f"{target} must install a cleanup trap"
+    assert "rm -rf" in recipe, f"{target} must remove its temporary directory"
+    assert re.search(
+        r"trap\s+'[^']*rm\s+-rf[^']*'\s+EXIT",
+        recipe,
+    ) or re.search(
+        r'trap\s+"[^"]*rm\s+-rf[^"]*"\s+EXIT',
+        recipe,
+    ), f"{target} must clean temporary paths on EXIT (success and failure)"
+    # Do not emit a durable workspace pathaudit binary from these gates.
+    assert "build/pathaudit" not in recipe
+    assert not re.search(
+        r"(?:^|[^\w-])-o\s+(?:\$\(CURDIR\)/)?(?:\./)?pathaudit(?:\s|$)",
+        recipe,
+        flags=re.MULTILINE,
+    ), f"{target} must not write a top-level ./pathaudit workspace binary"
+
+
 def test_makefile_test_suite_scrubs_inherited_pathaudit_routing():
     """PAC-M1: make -n test-suite must scrub ambient PATHAUDIT routing."""
 
     if shutil.which("make") is None:
         pytest.skip("GNU make required for Makefile seam checks")
 
-    makefile = MAKEFILE.read_text(encoding="utf-8")
+    makefile = _read_makefile()
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
     assert 'SYSDIFF_BIN="$(CURDIR)/$(BIN)"' in makefile
 
-    dry = subprocess.run(
-        ["make", "-C", str(ROOT), "-n", "test-suite"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    dry = _make_dry_run("test-suite")
     assert dry.returncode == 0, dry.stderr + dry.stdout
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in dry.stdout
     assert "SYSDIFF_BIN=" in dry.stdout
@@ -1080,7 +1190,7 @@ def test_inherited_pathaudit_bin_decoy_fails_unless_scrubbed(tmp_path):
 
 
 def test_makefile_release_and_distcheck_require_pathaudit_members():
-    makefile = MAKEFILE.read_text(encoding="utf-8")
+    makefile = _read_makefile()
     for required in (
         "src/pathaudit.c",
         "man/pathaudit.1",
@@ -1191,3 +1301,233 @@ def test_relative_pathaudit_bin_fixture_survives_foreign_cwd(tmp_path):
         check=False,
     )
     assert nested.returncode == 0, nested.stdout + nested.stderr
+
+
+def test_makefile_declares_stable_pathaudit_sanitize_and_valgrind_targets():
+    """Stable Make target names for pathaudit-only sanitizer/Valgrind gates."""
+
+    makefile = _read_makefile()
+    sanitize = _makefile_target_block(makefile, PATHAUDIT_SANITIZE_TARGET)
+    valgrind = _makefile_target_block(makefile, PATHAUDIT_VALGRIND_TARGET)
+    assert sanitize.strip(), f"{PATHAUDIT_SANITIZE_TARGET} recipe must not be empty"
+    assert valgrind.strip(), f"{PATHAUDIT_VALGRIND_TARGET} recipe must not be empty"
+    _makefile_declares_phony(PATHAUDIT_SANITIZE_TARGET, PATHAUDIT_VALGRIND_TARGET)
+
+
+def test_makefile_pathaudit_sanitize_builds_and_runs_with_asan_ubsan():
+    """pathaudit-sanitize: ASan+UBSan, strict warnings, frame pointers, execute."""
+
+    makefile = _read_makefile()
+    recipe = _makefile_target_block(makefile, PATHAUDIT_SANITIZE_TARGET)
+    joined = recipe.replace("\\\n", " ")
+
+    for flag in STRICT_WARNING_FLAGS:
+        assert flag in joined or flag in makefile, (
+            f"{PATHAUDIT_SANITIZE_TARGET} must compile with strict warning flag {flag}"
+        )
+    # Allow either separate -fsanitize=address / =undefined or a combined form.
+    has_asan = (
+        "-fsanitize=address" in joined
+        or re.search(r"-fsanitize=[^\s]*address", joined) is not None
+    )
+    has_ubsan = (
+        "-fsanitize=undefined" in joined
+        or re.search(r"-fsanitize=[^\s]*undefined", joined) is not None
+    )
+    # Variable-indirection form: $(ASAN_CFLAGS) / $(UBSAN_CFLAGS) expand the flags.
+    if "ASAN_CFLAGS" in joined:
+        has_asan = has_asan or "-fsanitize=address" in makefile
+    if "UBSAN_CFLAGS" in joined:
+        has_ubsan = has_ubsan or "-fsanitize=undefined" in makefile
+    if "ASAN_CFLAGS" in joined and "UBSAN_CFLAGS" in joined:
+        # Two-phase recipes still satisfy the combined sanitizer contract.
+        pass
+    assert has_asan, (
+        f"{PATHAUDIT_SANITIZE_TARGET} must build pathaudit with AddressSanitizer"
+    )
+    assert has_ubsan, (
+        f"{PATHAUDIT_SANITIZE_TARGET} must build pathaudit with "
+        "UndefinedBehaviorSanitizer"
+    )
+    assert FRAME_POINTER_FLAG in joined or (
+        FRAME_POINTER_FLAG in makefile
+        and ("ASAN_CFLAGS" in joined or "UBSAN_CFLAGS" in joined)
+    ), f"{PATHAUDIT_SANITIZE_TARGET} must retain frame pointers"
+
+    assert "PATHAUDIT_SRC" in joined or "src/pathaudit.c" in joined, (
+        f"{PATHAUDIT_SANITIZE_TARGET} must compile the existing pathaudit source"
+    )
+    # Must execute the instrumented binary (representative pathaudit flow).
+    assert re.search(r"\bpathaudit(?:-asan|-ubsan|-sanitize)?\b", joined), (
+        f"{PATHAUDIT_SANITIZE_TARGET} must reference the instrumented pathaudit binary"
+    )
+    assert "--help" in joined or "--version" in joined, (
+        f"{PATHAUDIT_SANITIZE_TARGET} must run a representative pathaudit invocation"
+    )
+
+    _assert_temp_outside_workspace_with_cleanup(joined, PATHAUDIT_SANITIZE_TARGET)
+
+    dry = _make_dry_run(PATHAUDIT_SANITIZE_TARGET)
+    assert dry.returncode == 0, dry.stderr + dry.stdout
+    dry_out = dry.stdout
+    assert (
+        "-fsanitize=address" in dry_out
+        or "address" in dry_out.lower()
+        or "ASAN" in dry_out
+    )
+    assert (
+        "-fsanitize=undefined" in dry_out
+        or "undefined" in dry_out.lower()
+        or "UBSAN" in dry_out
+    )
+    assert FRAME_POINTER_FLAG in dry_out
+    for flag in ("-Wall", "-Wextra", "-Wpedantic", "-Werror"):
+        assert flag in dry_out
+    assert "src/pathaudit.c" in dry_out or "pathaudit.c" in dry_out
+    assert "mktemp" in dry_out
+    assert "trap" in dry_out
+
+
+def test_makefile_pathaudit_valgrind_uses_nonsanitized_debug_with_leak_check():
+    """pathaudit-valgrind: separate debug binary, leak check, nonzero exitcode."""
+
+    makefile = _read_makefile()
+    recipe = _makefile_target_block(makefile, PATHAUDIT_VALGRIND_TARGET)
+    joined = recipe.replace("\\\n", " ")
+
+    for flag in STRICT_WARNING_FLAGS:
+        assert flag in joined or (
+            "VALGRIND_CFLAGS" in joined and flag in makefile
+        ), f"{PATHAUDIT_VALGRIND_TARGET} must use strict warning flag {flag}"
+    assert "-g" in joined or (
+        "VALGRIND_CFLAGS" in joined and "-g" in makefile
+    ), f"{PATHAUDIT_VALGRIND_TARGET} must build a debug executable"
+    assert FRAME_POINTER_FLAG in joined or (
+        "VALGRIND_CFLAGS" in joined and FRAME_POINTER_FLAG in makefile
+    ), f"{PATHAUDIT_VALGRIND_TARGET} must retain frame pointers"
+
+    # Separate non-sanitized binary: the Valgrind recipe must not enable sanitizers.
+    assert "-fsanitize=" not in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must use a non-sanitized debug executable"
+    )
+    assert "ASAN_CFLAGS" not in joined
+    assert "UBSAN_CFLAGS" not in joined
+
+    assert "valgrind" in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must run the binary under Valgrind"
+    )
+    assert "--leak-check=full" in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must enable full leak checking"
+    )
+    assert "--show-leak-kinds=all" in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must show all leak kinds"
+    )
+    exitcode_match = re.search(r"--error-exitcode=(\d+)", joined)
+    assert exitcode_match is not None, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must set a Valgrind --error-exitcode"
+    )
+    assert int(exitcode_match.group(1)) != 0, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must use a nonzero Valgrind error-exitcode"
+    )
+
+    assert "PATHAUDIT_SRC" in joined or "src/pathaudit.c" in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must compile the existing pathaudit source"
+    )
+    assert re.search(r"\bpathaudit(?:-valgrind)?\b", joined), (
+        f"{PATHAUDIT_VALGRIND_TARGET} must reference the Valgrind pathaudit binary"
+    )
+    assert "--help" in joined or "--version" in joined, (
+        f"{PATHAUDIT_VALGRIND_TARGET} must run a representative pathaudit invocation"
+    )
+
+    _assert_temp_outside_workspace_with_cleanup(joined, PATHAUDIT_VALGRIND_TARGET)
+
+    dry = _make_dry_run(PATHAUDIT_VALGRIND_TARGET)
+    assert dry.returncode == 0, dry.stderr + dry.stdout
+    dry_out = dry.stdout
+    assert "valgrind" in dry_out
+    assert "--leak-check=full" in dry_out
+    assert "--show-leak-kinds=all" in dry_out
+    dry_exit = re.search(r"--error-exitcode=(\d+)", dry_out)
+    assert dry_exit is not None and int(dry_exit.group(1)) != 0
+    assert "-fsanitize=" not in dry_out
+    assert FRAME_POINTER_FLAG in dry_out
+    assert "-g" in dry_out
+    for flag in ("-Wall", "-Wextra", "-Wpedantic", "-Werror"):
+        assert flag in dry_out
+    assert "src/pathaudit.c" in dry_out or "pathaudit.c" in dry_out
+    assert "mktemp" in dry_out
+    assert "trap" in dry_out
+
+
+def test_makefile_pathaudit_quality_targets_preserve_existing_make_surface():
+    """New pathaudit gates must not regress existing Make targets or wiring."""
+
+    makefile = _read_makefile()
+    for target in (
+        "pathaudit",
+        "test-sanitize",
+        "test-asan",
+        "test-ubsan",
+        "test-valgrind",
+        "test-suite",
+        "gcc-strict",
+        "clang-strict",
+        "quality",
+    ):
+        block = _makefile_target_block(makefile, target)
+        assert block.strip(), f"existing Make target {target!r} must remain"
+
+    # Existing memory gates must still compile pathaudit under mktemp.
+    asan = _makefile_target_block(makefile, "test-asan")
+    ubsan = _makefile_target_block(makefile, "test-ubsan")
+    valgrind = _makefile_target_block(makefile, "test-valgrind")
+    for name, recipe in (
+        ("test-asan", asan),
+        ("test-ubsan", ubsan),
+        ("test-valgrind", valgrind),
+    ):
+        assert "PATHAUDIT_SRC" in recipe or "src/pathaudit.c" in recipe, (
+            f"{name} must keep compiling pathaudit"
+        )
+        assert "mktemp" in recipe
+        assert "trap" in recipe
+        assert "PATHAUDIT_BIN" in recipe
+
+    # Non-writing default pathaudit recipe remains (no workspace binary).
+    pathaudit_recipe = _makefile_target_block(makefile, "pathaudit")
+    assert "mktemp" in pathaudit_recipe
+    assert "trap" in pathaudit_recipe
+    assert "build/pathaudit" not in pathaudit_recipe
+
+    # Existing scrub / routing contracts stay intact.
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    test_suite = _makefile_target_block(makefile, "test-suite")
+    assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in test_suite
+
+    # Dry-run pins: existing targets still expand without error.
+    for target in ("pathaudit", "test-asan", "test-valgrind", "test-suite"):
+        dry = _make_dry_run(target)
+        assert dry.returncode == 0, f"{target}: {dry.stderr + dry.stdout}"
+
+
+def test_pathaudit_behavior_contract_pins_remain_stable():
+    """Protect existing pathaudit CLI/hazard contract surface from drift."""
+
+    assert HELP_STDOUT.startswith(b"usage: pathaudit")
+    assert VERSION_STDOUT == b"pathaudit 0.1.0\n"
+    assert CODE_RANK == (
+        "EMPTY_ROOT",
+        "RELATIVE_ROOT",
+        "MISSING_ROOT",
+        "NON_DIRECTORY_ROOT",
+        "GROUP_WRITABLE",
+        "WORLD_WRITABLE",
+    )
+    assert MAX_ROOT_COUNT == 65536
+    assert MAX_ROOT_LENGTH == 65536
+    assert MAX_ROOT_BYTES == 1024 * 1024
+    assert escape_root(b"a\npathaudit: FORGED") == b'"a\\x0Apathaudit: FORGED"'
+    assert finding_line("EMPTY_ROOT", b"") == b'EMPTY_ROOT\t""\n'
+    assert SRC.is_file()
+    assert MAKEFILE.is_file()

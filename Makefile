@@ -82,6 +82,7 @@ RELEASE_PATHSPECS := \
 	cppcheck-check clang-analyzer-check \
 	man-check sanitizer-test asan-test ubsan-test valgrind-test \
 	test-sanitize test-asan test-ubsan test-valgrind \
+	pathaudit-sanitize pathaudit-valgrind \
 	benchmark benchmark-check
 
 all: $(BIN)
@@ -300,6 +301,40 @@ test-valgrind:
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
+
+# pathaudit-only ASan+UBSan gate: compile under a secure /tmp workdir, run a
+# representative --help flow, and remove the tree on every exit path. Does not
+# write build/pathaudit or a top-level ./pathaudit.
+pathaudit-sanitize:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/pathaudit-sanitize.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/pathaudit-sanitize"; \
+	if ! clang $(ASAN_CFLAGS) -fsanitize=undefined -o "$$tmpbin" $(PATHAUDIT_SRC); then \
+		printf 'error: pathaudit AddressSanitizer/UBSan build failed (clang or sanitizer runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		"$$tmpbin" --help >/dev/null
+
+# pathaudit-only Valgrind gate: separate non-sanitized debug binary under a
+# secure /tmp workdir, full leak checking with all leak kinds shown, nonzero
+# error-exitcode, representative --help flow, and trap cleanup on every exit.
+pathaudit-valgrind:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/pathaudit-valgrind.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/pathaudit-valgrind"; \
+	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(PATHAUDIT_SRC); then \
+		printf 'error: pathaudit Valgrind debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
+	valgrind --quiet --error-exitcode=99 --leak-check=full \
+		--show-leak-kinds=all \
+		"$$tmpbin" --help >/dev/null
 
 clean:
 	rm -rf build
