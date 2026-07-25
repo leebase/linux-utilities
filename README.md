@@ -285,12 +285,16 @@ bytewise ordering. Empty PATH components (leading, trailing, or consecutive
 colons, or an explicitly empty `PATH`) are retained and report `EMPTY_ROOT`;
 they are not translated to the current directory. Relative components (not
 starting with `/`, including `.` and `..`) report `RELATIVE_ROOT` and are still
-looked up against the process working directory. Writable-directory findings
-use only the final directory target's `S_IWGRP` / `S_IWOTH` bits.
+looked up against the process working directory. An existing component that is
+not a directory (regular file, symlink-to-file, or `ENOTDIR` through a
+non-directory component) reports `NON_DIRECTORY_ROOT` and is distinct from both
+a usable directory and a missing entry. Writable-directory findings use only
+the final directory target's `S_IWGRP` / `S_IWOTH` bits.
 
 Exit status `0` means every root or PATH component was inspected with no
 hazard. Status `1` means inspection completed and at least one hazard was
-emitted (including empty `PATH` → one `EMPTY_ROOT`). Status `2` means usage
+emitted (including empty `PATH` → one `EMPTY_ROOT`, or an existing
+non-directory component → `NON_DIRECTORY_ROOT`). Status `2` means usage
 error, unset `PATH` in `--path` or `--command` mode (`PATH_UNSET` on stderr,
 empty stdout), invalid `--command` name (`INVALID_COMMAND`), limit violation,
 operational metadata error, allocation failure, or stdout write/flush failure
@@ -319,6 +323,24 @@ pathaudit --command ls
 env -u PATH pathaudit --path   # reject-closed: PATH_UNSET, exit 2
 PATH=/safe:/tmp:/safe pathaudit --path
 ```
+
+### Non-directory PATH entries
+
+A PATH component that exists but is not a directory cannot participate in
+normal command lookup. `pathaudit --path` (and explicit-root mode) reports
+`NON_DIRECTORY_ROOT` for a regular file, a symlink whose final target is not
+a directory, or an `ENOTDIR` lookup where a path component prevents directory
+resolution. That finding is a completed hazard (exit status `1`, empty
+stderr), not an operational error and not a silent success. It is mutually
+exclusive with `MISSING_ROOT`. Usable private directories still produce no
+finding; missing entries still report `MISSING_ROOT`; empty fields and
+duplicates keep their established semantics and original PATH indices.
+
+Relative non-directory components also keep `RELATIVE_ROOT` and add
+`NON_DIRECTORY_ROOT` when the cwd-relative lookup finds a non-directory.
+Permission findings never attach to non-directory roots. Prefer replacing
+such components with absolute directory paths you intend to search;
+`pathaudit` does not edit `PATH`.
 
 ### Working-Directory-Dependent PATH Entries
 

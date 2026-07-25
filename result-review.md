@@ -1,5 +1,44 @@
 # Result Review
 
+## Detect non-directory PATH entries
+
+Governed run `35116f657f35` (playbook
+`detect_non_directory_path_entries`) delivered Detect non-directory PATH
+entries for `pathaudit --path` and explicit-root modes: pins
+`NON_DIRECTORY_ROOT` for regular-file, symlink-to-file, and ENOTDIR
+PATH/root components with exit status 1 and empty stderr; mutually
+exclusive with `MISSING_ROOT`; permission findings never attach to
+non-directory roots; relative non-directory files keep `RELATIVE_ROOT`
+and add `NON_DIRECTORY_ROOT`. Exact deliverables touched in-run:
+`tests/test_pathaudit.py`, `src/pathaudit.c` (comment-only
+`classify_root` clarification; runtime logic pre-existed), `README.md`,
+`man/pathaudit.1`. Exact step-3 verification (non-writing; no
+`make`/build dir): `clang -std=c17 -Wall -Wextra -Wpedantic -Werror
+-fsyntax-only src/pathaudit.c` exited 0; `cppcheck --quiet --enable=all
+--suppress=missingIncludeSystem src/pathaudit.c` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 234 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `234 passed, 1 skipped in
+19.50s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise non-directory `--path` detection;
+pathaudit coverage is `tests/test_pathaudit.py`. Independent review
+artifacts: `code-reviews/review-detect-non-directory-path-entries.md`
+and `code-reviews/review-detect-non-directory-path-entries.verdict.json`.
+Verdict: `pass` with no Critical, High, or Medium findings and two Low
+findings (nondir-1 comment names FIFO/device/socket but suite only pins
+file/symlink/ENOTDIR on the shared `!S_ISDIR` branch; nondir-2
+pre-existing `classify_root` vs `classify_command_component` taxonomy
+duplication). Allowlisted review check:
+`python3 -m pytest -p no:cacheprovider tests/test_pathaudit.py -q` →
+exit 0, 94 passed, 1 skipped in ~1.9s. Remaining risks: Low nondir-1/2
+plus prior pathaudit Low pathaudit-cmd-1/2, pathaudit-wdp-1/2, and
+PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff
+Medium backlogs not closed by this review. Recommended next action:
+optional Low polish; resume prior Medium backlog repair. Do not claim
+that `pathaudit` is released.
+
 ## Command-Specific PATH Risk Inspection
 
 Governed run `2b2fb272c21a` (playbook

@@ -1,5 +1,26 @@
 # Sprint Plan
 
+## Detect non-directory PATH entries
+
+Governed run `35116f657f35` (playbook
+`detect_non_directory_path_entries`) delivered Detect non-directory PATH
+entries for `pathaudit --path` / explicit roots (`NON_DIRECTORY_ROOT`
+for regular-file, symlink-to-file, ENOTDIR; status 1; mutually
+exclusive with `MISSING_ROOT`; no permission findings on non-directory
+roots). Exact verification (step-3, non-writing): Clang `-fsyntax-only`
+exit 0; cppcheck exit 0; full pytest → 234 passed, 1 skipped. Exact
+smoke: `artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `234 passed, 1 skipped in
+19.50s`). Review
+`code-reviews/review-detect-non-directory-path-entries.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium, 2 Low nondir-1/2). Allowlisted
+review check: pathaudit pytest → 94 passed, 1 skipped. Runtime logic
+pre-existed; slice documents and pins it. Do **not** claim that
+`pathaudit` is released. Next: keep Low nondir visible; resume prior
+Medium backlog; do not treat sysdiff smoke as non-directory `--path`
+coverage.
+
 ## Command-Specific PATH Risk Inspection
 
 Governed run `2b2fb272c21a` (playbook
@@ -237,6 +258,24 @@ or release closure from this slice.
 ## Current sprint
 
 - [x] Deliver, smoke-test, independently review, and close out
+  Detect non-directory PATH entries for `pathaudit --path` / explicit
+  roots in run `35116f657f35`, `detect_non_directory_path_entries`.
+  Exact evidence: step-3 Clang `-fsyntax-only` + cppcheck exit 0; full
+  pytest 234 passed / 1 skipped; smoke start/check 0 with empty
+  `blocking_errors` (check.log pytest `234 passed, 1 skipped in
+  19.50s`); review verdict `pass` with 0 Critical/High/Medium and 2
+  Low (nondir-1, nondir-2); allowlisted pathaudit pytest → 94 passed,
+  1 skipped. Runtime `NON_DIRECTORY_ROOT` logic pre-existed; slice
+  documents and pins it. Not a pathaudit release; sysdiff smoke oracle
+  does not directly exercise non-directory `--path` detection.
+- [ ] Next after `35116f657f35`: keep Low nondir-1/2 and prior Low
+  pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for
+  optional polish; resume prior Medium backlog (pathaudit PA-M2 /
+  PA-M1 leftovers and sysdiff packaging Mediums) without claiming
+  those were closed by this review; do not claim that `pathaudit` is
+  released or that `tests/smoke_manifest.json` covers non-directory
+  `--path` behavior.
+- [x] Deliver, smoke-test, independently review, and close out
   command-specific PATH risk inspection for `pathaudit --command NAME`
   in run `2b2fb272c21a`,
   `template_repair_before_review_feature_delivery`. Exact evidence:
@@ -249,12 +288,10 @@ or release closure from this slice.
   Low (pathaudit-cmd-1, pathaudit-cmd-2); allowlisted full pytest →
   230 passed, 1 skipped. Not a pathaudit release; sysdiff smoke oracle
   does not directly exercise `--command`.
-- [ ] Next after `2b2fb272c21a`: keep Low pathaudit-cmd-1/2 and prior
-  Low pathaudit-wdp-1/2 and PA-WP-1–PA-WP-4 visible for optional
-  polish; resume prior Medium backlog (pathaudit PA-M2 / PA-M1
-  leftovers and sysdiff packaging Mediums) without claiming those were
-  closed by this review; do not claim that `pathaudit` is released or
-  that `tests/smoke_manifest.json` covers `--command` behavior.
+- [ ] Keep Low pathaudit-cmd-1/2 from `2b2fb272c21a` visible for
+  optional polish unless a later review explicitly closes them; do not
+  claim that `pathaudit` is released or that `tests/smoke_manifest.json`
+  covers `--command` behavior.
 - [x] Deliver, smoke-test, independently review, and close out
   working-directory-dependent PATH detection for `pathaudit --path` in
   run `79a1cc2bac7a`,

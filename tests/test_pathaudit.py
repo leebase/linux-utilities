@@ -15,9 +15,14 @@ separate non-sanitized Valgrind debug binary with full leak checking and a
 nonzero error-exitcode, temporary paths under /tmp cleaned on every exit, and
 regression pins for existing pathaudit behavior and Make targets.
 
-Command-query coverage (`pathaudit --command NAME`) is authored ahead of
-implementation: MATCH lines in PATH order for one basename, applicable existing
-PATH hazards only, and no unrelated benign basename-collision flood.
+Command-query coverage (`pathaudit --command NAME`) encodes MATCH lines in
+PATH order for one basename, applicable existing PATH hazards only, and no
+unrelated benign basename-collision flood.
+
+Non-directory PATH entry coverage (`pathaudit --path`) pins that an existing
+PATH component which is not a directory (regular file, symlink-to-file,
+ENOTDIR) reports `NON_DIRECTORY_ROOT` with exit status 1 while preserving
+usable directories, missing entries, empty components, ordering, and duplicates.
 """
 
 from __future__ import annotations
@@ -979,6 +984,15 @@ def test_path_mode_exit_status_classes(pathaudit_bin, fixture_tree):
     hazard = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.group_w))
     assert hazard.returncode == 1
 
+    # Existing non-directory PATH components are hazards (status 1), not
+    # operational errors (status 2) and not silent successes (status 0).
+    nondir = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.regular))
+    assert nondir.returncode == 1
+    assert nondir.stderr == b""
+    assert nondir.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.regular)]
+    )
+
     unset = run_pathaudit_path_mode(pathaudit_bin, None)
     assert unset.returncode == 2
     assert unset.stderr == diagnostic_lines("PATH_UNSET")
@@ -1029,6 +1043,151 @@ def test_path_mode_mixed_hazard_components_deterministic(
     assert result.stdout == findings_stdout(ordered)
     for code in CODE_RANK:
         assert code.encode("ascii") in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Detect non-directory PATH entries (`pathaudit --path`)
+#
+# An existing PATH component that is not a directory (regular file, symlink to
+# a file, ENOTDIR through a non-directory component) cannot participate in
+# normal command lookup. Report NON_DIRECTORY_ROOT on stdout with exit status
+# 1 and empty stderr. Preserve established behavior for usable private
+# directories (silent), missing entries, empty components, duplicate positions,
+# and bytewise finding order.
+# ---------------------------------------------------------------------------
+
+
+def test_path_mode_regular_file_component_reports_non_directory_root(
+    pathaudit_bin, fixture_tree
+):
+    """Regular-file PATH component: exact NON_DIRECTORY_ROOT, exit 1, empty stderr."""
+
+    nondir = str(fixture_tree.regular)
+    result = run_pathaudit_path_mode(pathaudit_bin, nondir, cwd=fixture_tree.cwd)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.regular)]
+    )
+    assert result.stdout == (
+        b"NON_DIRECTORY_ROOT\t" + escape_root(fixture_tree.regular) + b"\n"
+    )
+    assert b"MISSING_ROOT" not in result.stdout
+    assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"WORLD_WRITABLE" not in result.stdout
+
+
+def test_path_mode_symlink_to_file_and_enotdir_are_non_directory(
+    pathaudit_bin, fixture_tree
+):
+    """Symlink-to-file and ENOTDIR PATH components share NON_DIRECTORY_ROOT."""
+
+    link = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.link_file), cwd=fixture_tree.cwd
+    )
+    assert link.returncode == 1
+    assert link.stderr == b""
+    assert link.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.link_file)]
+    )
+
+    enotdir = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.enotdir), cwd=fixture_tree.cwd
+    )
+    assert enotdir.returncode == 1
+    assert enotdir.stderr == b""
+    assert enotdir.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.enotdir)]
+    )
+
+
+def test_path_mode_relative_regular_file_is_relative_and_non_directory(
+    pathaudit_bin, fixture_tree
+):
+    """Relative PATH file keeps RELATIVE_ROOT and adds NON_DIRECTORY_ROOT."""
+
+    rel_file = "regular-file"
+    (fixture_tree.cwd / rel_file).write_bytes(b"not-a-directory\n")
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, rel_file, cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("RELATIVE_ROOT", rel_file),
+            ("NON_DIRECTORY_ROOT", rel_file),
+        ]
+    )
+
+
+def test_path_mode_non_directory_mixed_with_valid_missing_empty_duplicates(
+    pathaudit_bin, fixture_tree
+):
+    """Non-directory detection preserves dirs, missing, empty, order, duplicates.
+
+    PATH shape: private : regular : missing : "" : regular
+    - private absolute directory: no finding
+    - regular file twice: NON_DIRECTORY_ROOT at each original index
+    - missing: MISSING_ROOT
+    - empty field: EMPTY_ROOT retained as ""
+    Exit status 1; stderr empty; findings in contract bytewise order.
+    """
+
+    private = str(fixture_tree.private)
+    nondir = str(fixture_tree.regular)
+    missing = str(fixture_tree.missing)
+    path_value = f"{private}:{nondir}:{missing}::{nondir}"
+
+    # Solo private still exits cleanly (established usable-directory behavior).
+    alone = run_pathaudit_path_mode(pathaudit_bin, private, cwd=fixture_tree.cwd)
+    assert alone.returncode == 0
+    assert alone.stdout == b""
+    assert alone.stderr == b""
+
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, path_value, cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (3, b"", "EMPTY_ROOT"),
+                (2, missing, "MISSING_ROOT"),
+                (1, nondir, "NON_DIRECTORY_ROOT"),
+                (4, nondir, "NON_DIRECTORY_ROOT"),
+            ]
+        )
+    )
+    assert result.stdout == expected
+    assert result.stdout.count(b"NON_DIRECTORY_ROOT\t") == 2
+    assert result.stdout.count(b"EMPTY_ROOT\t") == 1
+    assert result.stdout.count(b"MISSING_ROOT\t") == 1
+    # Usable private directory contributes no hazard line.
+    assert escape_root(private) not in result.stdout
+    assert b"RELATIVE_ROOT" not in result.stdout
+    assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"WORLD_WRITABLE" not in result.stdout
+
+    # Permuting PATH remaps indices but keeps the same finding multiset shape
+    # for identical root bytes (duplicates distinguished only by index).
+    permuted = f"{nondir}:{private}:{nondir}:{missing}:"
+    second = run_pathaudit_path_mode(
+        pathaudit_bin, permuted, cwd=fixture_tree.cwd
+    )
+    assert second.returncode == 1
+    assert second.stderr == b""
+    assert second.stdout == findings_stdout(
+        sort_findings(
+            [
+                (4, b"", "EMPTY_ROOT"),
+                (3, missing, "MISSING_ROOT"),
+                (0, nondir, "NON_DIRECTORY_ROOT"),
+                (2, nondir, "NON_DIRECTORY_ROOT"),
+            ]
+        )
+    )
 
 
 def test_path_mode_cwd_dependent_empty_fields_leading_middle_trailing(

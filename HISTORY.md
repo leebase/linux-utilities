@@ -141,3 +141,35 @@ review `code-reviews/review-pathaudit-bootstrap.verdict.json` is `pass` at the
 High threshold (0 Critical/High, 2 Medium PA-M1/PA-M2, 7 Low PA-L1–PA-L7).
 This cycle does not claim that `pathaudit` is released, installable via
 `make install`, or that a product release was published.
+
+## 2026-07-25 — Detect non-directory PATH entries
+
+Governed run `35116f657f35` (`detect_non_directory_path_entries`) delivered
+Detect non-directory PATH entries for `pathaudit --path` and explicit-root
+modes. The slice authored regression coverage in `tests/test_pathaudit.py`,
+clarified the existing `classify_root` non-directory branch with a
+comment-only change in `src/pathaudit.c`, and documented
+`NON_DIRECTORY_ROOT` in `README.md` and `man/pathaudit.1`. Runtime
+`NON_DIRECTORY_ROOT` / `ENOTDIR` / `!S_ISDIR` logic already existed;
+this cycle documents and pins it rather than changing output contracts.
+Pinned behavior: regular-file, symlink-to-file, and ENOTDIR components
+report `NON_DIRECTORY_ROOT` with exit status 1 and empty stderr;
+`MISSING_ROOT` remains mutually exclusive; permission findings never
+attach to non-directory roots; relative non-directory files keep
+`RELATIVE_ROOT` and add `NON_DIRECTORY_ROOT`. Exact step-3 verification
+(non-writing): `clang -std=c17 -Wall -Wextra -Wpedantic -Werror
+-fsyntax-only src/pathaudit.c` exited 0; `cppcheck --quiet --enable=all
+--suppress=missingIncludeSystem src/pathaudit.c` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 234 passed, 1 skipped. User smoke
+(`artifacts/user-smoke/result.json`) passed with start/check exit 0 and
+empty blocking errors; check.log pytest reported
+`234 passed, 1 skipped in 19.50s`. The pinned sysdiff smoke oracle does
+not directly exercise non-directory `--path` detection; pathaudit
+coverage is `tests/test_pathaudit.py`. Independent review
+`code-reviews/review-detect-non-directory-path-entries.verdict.json` is
+`pass` (0 Critical/High/Medium, 2 Low nondir-1/nondir-2). Allowlisted
+review check `python3 -m pytest -p no:cacheprovider
+tests/test_pathaudit.py -q` → 94 passed, 1 skipped in ~1.9s. This cycle
+does not claim that `pathaudit` is released, installable via
+`make install`, or that a product release was published.

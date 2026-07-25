@@ -309,6 +309,16 @@ static int classify_root(const struct Root *root,
     }
   }
 
+  /*
+   * Distinguish usable directories from non-directory and missing targets.
+   * ENOENT -> MISSING_ROOT. ENOTDIR (a path component is not a directory)
+   * or a successful lookup whose final target is not a directory (regular
+   * file, symlink-to-file, FIFO, device node, etc.) -> NON_DIRECTORY_ROOT.
+   * Only a successful S_ISDIR target may receive permission findings.
+   * Other lookup failures remain operational errors (status 2), not hazard
+   * codes. Explicit-root and --path always emit NON_DIRECTORY_ROOT for
+   * these cases; --command applicability is filtered separately.
+   */
   struct stat st;
   if (stat(root->text, &st) != 0) {
     int err = errno;

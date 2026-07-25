@@ -55,6 +55,15 @@ component
 and exits with status
 .B 1
 when inspection completes.
+An existing component that is not a directory
+(regular file, symlink\-to\-file, or
+.B ENOTDIR
+through a non\-directory component) reports
+.B NON_DIRECTORY_ROOT
+as a completed hazard (status
+.BR 1 ),
+distinct from a usable directory and from
+.BR MISSING_ROOT .
 .P
 Opt\-in
 .B pathaudit \-\-command
@@ -204,9 +213,15 @@ Target lookup reports
 (including a dangling final symlink).
 .TP
 .B NON_DIRECTORY_ROOT
-Lookup succeeds but the final target is not a directory, or lookup reports
+Lookup succeeds but the final target is not a directory
+(for example a regular file or a symlink to a file),
+or lookup reports
 .B ENOTDIR
 because a component prevents directory resolution.
+Such an existing non\-directory PATH component cannot participate in normal
+command lookup and is reported as a hazard (status
+.BR 1 ),
+not as a silent success and not as an operational error.
 .B MISSING_ROOT
 and
 .B NON_DIRECTORY_ROOT
@@ -370,7 +385,9 @@ Inspection completed; at least one hazard emitted
 (including empty
 .B PATH
 as one
-.BR EMPTY_ROOT ).
+.BR EMPTY_ROOT ,
+or an existing non\-directory component as
+.BR NON_DIRECTORY_ROOT ).
 .TP
 .B 2
 Usage error, unset
