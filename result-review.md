@@ -1,5 +1,49 @@
 # Result Review
 
+## Detect executable shadowing across PATH entries
+
+Governed run `f94509b47fd3` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect
+executable shadowing across PATH entries for `pathaudit --path`: walk
+process `PATH` left-to-right; the first regular `X_OK` file per basename
+is the winner; every later distinct `realpath` hit emits
+`SHADOWED\t"COMMAND"\t"WINNER_REALPATH"\t"SHADOWED_REALPATH"` after
+shared-taxonomy directory hazard lines; `SHADOWED` lines are ordered by
+command basename bytes then PATH index of the shadowed hit; repeated
+identical realpaths do not self-shadow; empty/missing/non-directory/
+unreadable components are skipped for the scan without inventing
+shadows; no nested-directory recursion; explicit-root mode never emits
+`SHADOWED`; shadowing alone exits status 1 with empty stderr. Exact
+deliverables touched in-run: `tests/test_pathaudit.py`,
+`src/pathaudit.c`, `README.md`. Exact step-4 verification:
+`gcc`/`clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only
+src/pathaudit.c` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 247 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `247 passed, 1 skipped in
+18.41s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise executable-shadowing `--path` detection;
+pathaudit coverage is `tests/test_pathaudit.py`. Independent review
+artifacts: `code-reviews/review-executable-shadowing.md` and
+`code-reviews/review-executable-shadowing.verdict.json`. Verdict:
+`pass` with no Critical or High findings, one Medium finding
+(pathaudit-shadow-1: fixed 65537-byte `realpath` scratch buffer retained
+per winner/shadow instead of a right-sized copy), and two Low findings
+(pathaudit-shadow-2: O(distinct_executables²) linear winner lookup;
+pathaudit-shadow-3: repeated non-winner PATH directories can emit
+duplicate identical `SHADOWED` lines because de-dup checks only the
+winner realpath). Allowlisted review check:
+`python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 247 passed,
+1 skipped in ~17.95s. Remaining risks: Medium pathaudit-shadow-1 and
+Low pathaudit-shadow-2/3 plus prior pathaudit Low nondir-1/2,
+pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
+Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
+this review. Recommended next action: repair pathaudit-shadow-1 or
+resume prior Medium backlog; keep Low shadow findings visible. Do not
+claim that `pathaudit` is released.
+
 ## Detect non-directory PATH entries
 
 Governed run `35116f657f35` (playbook

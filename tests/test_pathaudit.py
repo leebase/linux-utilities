@@ -23,6 +23,12 @@ Non-directory PATH entry coverage (`pathaudit --path`) pins that an existing
 PATH component which is not a directory (regular file, symlink-to-file,
 ENOTDIR) reports `NON_DIRECTORY_ROOT` with exit status 1 while preserving
 usable directories, missing entries, empty components, ordering, and duplicates.
+
+Executable-shadowing coverage (`pathaudit --path`) pins that a command basename
+present as a regular executable in two or more distinct PATH directories yields
+`SHADOWED` lines naming the command, the first-PATH winner realpath, and each
+later shadowed executable realpath, without falsely reporting non-executables
+or distinct command names.
 """
 
 from __future__ import annotations
@@ -154,6 +160,41 @@ def command_query_stdout(
     if findings:
         body += findings_stdout(findings)
     return body
+
+
+def shadowed_line(
+    command: bytes | str,
+    winner: bytes | str | os.PathLike[str],
+    shadow: bytes | str | os.PathLike[str],
+) -> bytes:
+    """One executable-shadowing record: command, first-PATH winner, shadowed path."""
+
+    return (
+        b"SHADOWED\t"
+        + escape_root(command)
+        + b"\t"
+        + escape_root(winner)
+        + b"\t"
+        + escape_root(shadow)
+        + b"\n"
+    )
+
+
+def shadowing_stdout(
+    items: list[
+        tuple[
+            bytes | str,
+            bytes | str | os.PathLike[str],
+            bytes | str | os.PathLike[str],
+        ]
+    ],
+) -> bytes:
+    """Build expected stdout for SHADOWED triples already in contract order."""
+
+    return b"".join(
+        shadowed_line(command, winner, shadow)
+        for command, winner, shadow in items
+    )
 
 
 def install_executable(directory: Path, name: str, mode: int = 0o755) -> Path:
@@ -957,8 +998,14 @@ def test_path_mode_component_length_limit(pathaudit_bin):
     assert over.stderr == diagnostic_lines("ROOT_LENGTH_LIMIT")
 
 
-def test_path_mode_does_not_traverse_or_search_executables(pathaudit_bin, fixture_tree):
-    """Nested contents must not be inspected; only the PATH component itself."""
+def test_path_mode_does_not_traverse_nested_directories(pathaudit_bin, fixture_tree):
+    """Nested dirs are not hazard-inspected; lone top-level executables are silent.
+
+    `--path` may scan top-level regular executables for shadowing, but nested
+    directories must not contribute WORLD_WRITABLE (or other) findings, nested
+    same-basename executables must not invent SHADOWED lines, and a basename
+    present in only one PATH directory must not emit SHADOWED by itself.
+    """
 
     nested_world = fixture_tree.private / "nested-world"
     nested_world.mkdir()
@@ -967,14 +1014,29 @@ def test_path_mode_does_not_traverse_or_search_executables(pathaudit_bin, fixtur
     decoy.write_bytes(b"#!/bin/sh\nexit 0\n")
     os.chmod(decoy, 0o755)
 
+    # Nested colliding basenames across two PATH roots must not invent shadows:
+    # only top-level regular executables participate in shadowing detection.
+    other = fixture_tree.cwd / "other-root"
+    other.mkdir()
+    os.chmod(other, MODE_PRIVATE)
+    nested_other = other / "nested-other"
+    nested_other.mkdir()
+    os.chmod(nested_other, MODE_PRIVATE)
+    install_executable(nested_world, "nested-tool")
+    install_executable(nested_other, "nested-tool")
+
     result = run_pathaudit_path_mode(
-        pathaudit_bin, str(fixture_tree.private), cwd=fixture_tree.cwd
+        pathaudit_bin,
+        f"{fixture_tree.private}:{other}",
+        cwd=fixture_tree.cwd,
     )
     assert result.returncode == 0
     assert result.stdout == b""
     assert result.stderr == b""
     assert b"WORLD_WRITABLE" not in result.stdout
     assert b"evil-bin" not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"nested-tool" not in result.stdout
 
 
 def test_path_mode_exit_status_classes(pathaudit_bin, fixture_tree):
@@ -3178,3 +3240,343 @@ def test_command_mode_mixed_shadow_and_plant_risk_deterministic(
     )
     assert b"MISSING_ROOT" not in result.stdout
     assert b"unrelated" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Detect executable shadowing across PATH entries (`pathaudit --path`)
+#
+# Authored ahead of implementation. Additive contract: when two or more
+# distinct PATH directories each contain a regular executable with the same
+# basename, report every later hit as shadowed against the first-PATH winner.
+#
+# Line shape (TAB-separated, quote-escaped fields):
+#   SHADOWED<TAB>"COMMAND"<TAB>"WINNER_REALPATH"<TAB>"SHADOWED_REALPATH"<LF>
+#
+# PATH order is authoritative for precedence. Shared-taxonomy directory hazard
+# lines (when any) precede SHADOWED lines; SHADOWED lines are ordered by
+# command basename bytes, then by PATH position of the shadowed executable.
+# Non-executable same-basename files and distinct command names never produce
+# SHADOWED. Repeated identical directory components do not self-shadow.
+# Shadowing alone is a completed hazard path: exit status 1, empty stderr.
+# ---------------------------------------------------------------------------
+
+
+def _private_path_dirs(tmp_path: Path, names: tuple[str, ...]) -> list[Path]:
+    """Create mode-0700 sibling directories under an isolated private parent."""
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    dirs: list[Path] = []
+    for name in names:
+        directory = tmp_path / name
+        directory.mkdir()
+        os.chmod(directory, MODE_PRIVATE)
+        dirs.append(directory)
+    return dirs
+
+
+def test_path_mode_shadowing_two_executables_reports_winner_and_shadow(
+    pathaudit_bin, tmp_path
+):
+    """Two distinct PATH dirs with the same executable basename → one SHADOWED."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    winner = install_executable(early, cmd)
+    shadow = install_executable(late, cmd)
+    path_value = f"{early.resolve()}:{late.resolve()}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == (
+        b"SHADOWED\t"
+        + escape_root(cmd)
+        + b"\t"
+        + escape_root(winner)
+        + b"\t"
+        + escape_root(shadow)
+        + b"\n"
+    )
+
+
+def test_path_mode_shadowing_first_entry_precedence_is_deterministic(
+    pathaudit_bin, tmp_path
+):
+    """Swapping PATH order swaps the winner; each layout stays deterministic."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "shadowed"
+    first = install_executable(early, cmd)
+    second = install_executable(late, cmd)
+
+    forward = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert forward.returncode == 1
+    assert forward.stderr == b""
+    assert forward.stdout == shadowing_stdout([(cmd, first, second)])
+
+    reversed_order = run_pathaudit_path_mode(
+        pathaudit_bin, f"{late.resolve()}:{early.resolve()}"
+    )
+    assert reversed_order.returncode == 1
+    assert reversed_order.stderr == b""
+    assert reversed_order.stdout == shadowing_stdout([(cmd, second, first)])
+    assert forward.stdout != reversed_order.stdout
+
+
+def test_path_mode_shadowing_reports_every_later_shadowed_location(
+    pathaudit_bin, tmp_path
+):
+    """Three PATH hits for one basename → winner plus every later shadow."""
+
+    first_dir, second_dir, third_dir = _private_path_dirs(
+        tmp_path, ("a", "b", "c")
+    )
+    cmd = "multi"
+    winner = install_executable(first_dir, cmd)
+    shadow_b = install_executable(second_dir, cmd)
+    shadow_c = install_executable(third_dir, cmd)
+    path_value = ":".join(
+        str(d.resolve()) for d in (first_dir, second_dir, third_dir)
+    )
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == shadowing_stdout(
+        [
+            (cmd, winner, shadow_b),
+            (cmd, winner, shadow_c),
+        ]
+    )
+    assert result.stdout.count(b"SHADOWED\t") == 2
+
+
+def test_path_mode_shadowing_ignores_non_executable_same_basename(
+    pathaudit_bin, tmp_path
+):
+    """Non-executable same-basename files are not winners and not shadows."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+
+    # Non-executable in the early entry must not create a shadow against a
+    # later executable, and must not be treated as a winner.
+    decoy = early / cmd
+    decoy.write_bytes(b"not-executable\n")
+    os.chmod(decoy, 0o644)
+    install_executable(late, cmd)
+
+    no_shadow = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert no_shadow.returncode == 0
+    assert no_shadow.stderr == b""
+    assert no_shadow.stdout == b""
+    assert b"SHADOWED\t" not in no_shadow.stdout
+
+    # Non-executable in a later entry must not be reported as shadowed when an
+    # earlier executable exists.
+    pair2 = tmp_path / "pair2"
+    pair2.mkdir()
+    early2, late2 = _private_path_dirs(pair2, ("early", "late"))
+    winner = install_executable(early2, cmd)
+    late_decoy = late2 / cmd
+    late_decoy.write_bytes(b"also-not-executable\n")
+    os.chmod(late_decoy, 0o644)
+    still_clean = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early2.resolve()}:{late2.resolve()}"
+    )
+    assert still_clean.returncode == 0
+    assert still_clean.stderr == b""
+    assert still_clean.stdout == b""
+    assert escape_root(winner) not in still_clean.stdout
+    assert b"SHADOWED\t" not in still_clean.stdout
+
+
+def test_path_mode_shadowing_ignores_distinct_command_names(
+    pathaudit_bin, tmp_path
+):
+    """Distinct basenames across PATH dirs never produce SHADOWED noise."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    install_executable(early, "alpha")
+    install_executable(early, "beta")
+    install_executable(late, "gamma")
+    install_executable(late, "delta")
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"SHADOWED\t" not in result.stdout
+    for name in (b"alpha", b"beta", b"gamma", b"delta"):
+        assert name not in result.stdout
+
+
+def test_path_mode_shadowing_only_reports_the_colliding_basename(
+    pathaudit_bin, tmp_path
+):
+    """Unrelated distinct executables beside a real collision stay silent."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "collide"
+    winner = install_executable(early, cmd)
+    shadow = install_executable(late, cmd)
+    install_executable(early, "only-early")
+    install_executable(late, "only-late")
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == shadowing_stdout([(cmd, winner, shadow)])
+    assert b"only-early" not in result.stdout
+    assert b"only-late" not in result.stdout
+    assert result.stdout.count(b"SHADOWED\t") == 1
+
+
+def test_path_mode_shadowing_repeated_directory_does_not_self_shadow(
+    pathaudit_bin, tmp_path
+):
+    """The same PATH directory repeated does not invent a shadow against itself."""
+
+    (only,) = _private_path_dirs(tmp_path, ("only",))
+    cmd = "tool"
+    install_executable(only, cmd)
+    root = str(only.resolve())
+    result = run_pathaudit_path_mode(pathaudit_bin, f"{root}:{root}")
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"SHADOWED\t" not in result.stdout
+
+
+def test_path_mode_shadowing_no_shadow_single_hit_exits_zero(
+    pathaudit_bin, tmp_path
+):
+    """A basename present in only one PATH directory is not a shadowing hazard."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    install_executable(early, "solo")
+    # late remains empty.
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"solo" not in result.stdout
+
+
+def test_path_mode_shadowing_multiple_commands_ordered_by_basename(
+    pathaudit_bin, tmp_path
+):
+    """Multiple colliding basenames emit SHADOWED lines ordered by command bytes."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    # Install out of alphabetical order so ordering cannot follow creation.
+    winner_z = install_executable(early, "z-cmd")
+    shadow_z = install_executable(late, "z-cmd")
+    winner_a = install_executable(early, "a-cmd")
+    shadow_a = install_executable(late, "a-cmd")
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == shadowing_stdout(
+        [
+            ("a-cmd", winner_a, shadow_a),
+            ("z-cmd", winner_z, shadow_z),
+        ]
+    )
+
+
+def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
+    pathaudit_bin, fixture_tree
+):
+    """Shared-taxonomy directory findings remain first; SHADOWED follows them."""
+
+    cmd = "tool"
+    winner = install_executable(fixture_tree.private, cmd)
+    shadow = install_executable(fixture_tree.world_w, cmd)
+    path_value = f"{fixture_tree.private}:{fixture_tree.world_w}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        [("WORLD_WRITABLE", fixture_tree.world_w)]
+    ) + shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == expected
+    world_at = result.stdout.find(b"WORLD_WRITABLE\t")
+    shadow_at = result.stdout.find(b"SHADOWED\t")
+    assert world_at != -1 and shadow_at != -1
+    assert world_at < shadow_at
+
+
+def test_explicit_roots_do_not_emit_shadowed_for_colliding_executables(
+    pathaudit_bin, tmp_path
+):
+    """Explicit-root mode never searches executables and never emits SHADOWED."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    install_executable(early, cmd)
+    install_executable(late, cmd)
+    result = run_pathaudit(
+        pathaudit_bin, str(early.resolve()), str(late.resolve())
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"MATCH\t" not in result.stdout
+    assert cmd.encode("ascii") not in result.stdout
+
+
+def test_path_mode_shadowing_skips_unreadable_directory_without_inventing_shadow(
+    pathaudit_bin, tmp_path
+):
+    """Unreadable PATH components are skipped for shadowing without new codes."""
+
+    if os.geteuid() == 0:
+        pytest.skip("EACCES fixture is unreliable when running as root")
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    winner = install_executable(early, cmd)
+    install_executable(late, cmd)
+    os.chmod(late, 0)
+    try:
+        result = run_pathaudit_path_mode(
+            pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+        )
+    finally:
+        os.chmod(late, MODE_PRIVATE)
+
+    # Late remains a directory for classify_root (stat succeeds; mode 000 has
+    # no group/other write bits), so no directory hazard. opendir fails and
+    # shadowing skips the component without inventing SHADOWED.
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"SHADOWED\t" not in result.stdout
+    assert escape_root(winner) not in result.stdout
+    assert b"INSPECTION_ERROR_" not in result.stderr
+
+
+def test_shadowed_line_helper_contract():
+    """Pin the SHADOWED helper shape independently of a compiled binary."""
+
+    assert shadowed_line("tool", "/a/tool", "/b/tool") == (
+        b'SHADOWED\t"tool"\t"/a/tool"\t"/b/tool"\n'
+    )
+    assert shadowing_stdout(
+        [("tool", "/a/tool", "/b/tool"), ("tool", "/a/tool", "/c/tool")]
+    ) == (
+        b'SHADOWED\t"tool"\t"/a/tool"\t"/b/tool"\n'
+        b'SHADOWED\t"tool"\t"/a/tool"\t"/c/tool"\n'
+    )

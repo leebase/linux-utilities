@@ -132,6 +132,36 @@ networking, or background work in this architecture.
   they must not launch Agent-Orch, start model sessions, choose fallback routes,
   mutate playbooks, install packages, or expand `sysdiff` product behavior.
 
+## 2026-07-25 — pathaudit `--path` executable shadowing
+
+**Decision:** Opt-in `pathaudit --path` additionally scans each PATH
+directory's top-level entries for regular `X_OK` executables. The first
+PATH-order hit for a basename is the winner; every later distinct
+`realpath` hit emits one `SHADOWED` line naming the command, winner
+realpath, and shadowed realpath. Shared-taxonomy directory hazard lines
+still precede all `SHADOWED` lines. Explicit-root mode never searches
+executables and never emits `SHADOWED`. Empty, missing, non-directory,
+and unreadable components are skipped for the scan; nested directories
+are not recursed.
+
+**Rationale:** Operators auditing `PATH` need to see when the same
+basename is plantable or already present in multiple directories, not
+only whether individual directories are writable. Reporting shadows as
+an additive stdout class keeps the existing hazard taxonomy intact
+while making winner-vs-later collisions auditable and deterministic.
+
+**Alternatives rejected:** Folding shadows into `--command` only
+(misses multi-basename PATH audits); inventing a new exclusive mode
+(arity and docs cost); treating identical realpaths as shadows (would
+false-positive on repeated PATH components); recursing into nested
+directories (noisy and out of scope for PATH lookup).
+
+**Consequences:** `--path` now has two coordinated stdout families
+(directory hazards, then `SHADOWED`). Peak memory and lookup cost on
+large real PATH scans remain open Medium/Low review findings
+(pathaudit-shadow-1/2/3). This slice does not add an install target or
+claim a `pathaudit` release.
+
 ## 2026-07-25 — pathaudit `--command` single-basename inspection
 
 **Decision:** Exclusive opt-in `pathaudit --command NAME` walks the process

@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -55,6 +56,32 @@ struct FindingBuffer {
 
 struct MatchBuffer {
   char **paths; /* owned realpath strings */
+  size_t len;
+  size_t cap;
+};
+
+/* First PATH-order regular executable for a command basename. */
+struct WinnerEntry {
+  char *command; /* owned basename */
+  char *path;    /* owned realpath */
+};
+
+struct WinnerBuffer {
+  struct WinnerEntry *items;
+  size_t len;
+  size_t cap;
+};
+
+/* One shadowed executable against a first-PATH winner. */
+struct ShadowRecord {
+  char *command; /* owned basename */
+  char *winner;  /* owned winner realpath */
+  char *shadow;  /* owned shadowed realpath */
+  size_t shadow_index;
+};
+
+struct ShadowBuffer {
+  struct ShadowRecord *items;
   size_t len;
   size_t cap;
 };
@@ -222,6 +249,97 @@ static bool matches_append(struct MatchBuffer *buffer, char *owned_path) {
   return true;
 }
 
+static char *owned_strdup(const char *text) {
+  size_t len = strlen(text);
+  char *copy = malloc(len + 1);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, text, len + 1);
+  return copy;
+}
+
+static void winners_free(struct WinnerBuffer *buffer) {
+  if (buffer->items != NULL) {
+    for (size_t i = 0; i < buffer->len; i++) {
+      free(buffer->items[i].command);
+      free(buffer->items[i].path);
+      buffer->items[i].command = NULL;
+      buffer->items[i].path = NULL;
+    }
+  }
+  free(buffer->items);
+  buffer->items = NULL;
+  buffer->len = 0;
+  buffer->cap = 0;
+}
+
+static bool winners_append(struct WinnerBuffer *buffer, char *owned_command,
+                           char *owned_path) {
+  if (buffer->len == buffer->cap) {
+    size_t new_cap = buffer->cap == 0 ? 16 : buffer->cap * 2;
+    if (new_cap <= buffer->cap ||
+        new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
+      return false;
+    }
+    struct WinnerEntry *grown =
+        realloc(buffer->items, new_cap * sizeof(buffer->items[0]));
+    if (grown == NULL) {
+      return false;
+    }
+    buffer->items = grown;
+    buffer->cap = new_cap;
+  }
+
+  buffer->items[buffer->len].command = owned_command;
+  buffer->items[buffer->len].path = owned_path;
+  buffer->len++;
+  return true;
+}
+
+static void shadows_free(struct ShadowBuffer *buffer) {
+  if (buffer->items != NULL) {
+    for (size_t i = 0; i < buffer->len; i++) {
+      free(buffer->items[i].command);
+      free(buffer->items[i].winner);
+      free(buffer->items[i].shadow);
+      buffer->items[i].command = NULL;
+      buffer->items[i].winner = NULL;
+      buffer->items[i].shadow = NULL;
+    }
+  }
+  free(buffer->items);
+  buffer->items = NULL;
+  buffer->len = 0;
+  buffer->cap = 0;
+}
+
+static bool shadows_append(struct ShadowBuffer *buffer, char *owned_command,
+                           char *owned_winner, char *owned_shadow,
+                           size_t shadow_index) {
+  if (buffer->len == buffer->cap) {
+    size_t new_cap = buffer->cap == 0 ? 16 : buffer->cap * 2;
+    if (new_cap <= buffer->cap ||
+        new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
+      return false;
+    }
+    struct ShadowRecord *grown =
+        realloc(buffer->items, new_cap * sizeof(buffer->items[0]));
+    if (grown == NULL) {
+      return false;
+    }
+    buffer->items = grown;
+    buffer->cap = new_cap;
+  }
+
+  buffer->items[buffer->len].command = owned_command;
+  buffer->items[buffer->len].winner = owned_winner;
+  buffer->items[buffer->len].shadow = owned_shadow;
+  buffer->items[buffer->len].shadow_index = shadow_index;
+  buffer->len++;
+  return true;
+}
+
 static void path_components_free(struct PathComponents *components) {
   free(components->roots);
   free(components->storage);
@@ -264,6 +382,22 @@ static int compare_findings(const void *left, const void *right) {
     return -1;
   }
   if ((int)a->code > (int)b->code) {
+    return 1;
+  }
+  return 0;
+}
+
+static int compare_shadows(const void *left, const void *right) {
+  const struct ShadowRecord *a = left;
+  const struct ShadowRecord *b = right;
+  int cmp = cmp_unsigned_bytes(a->command, b->command);
+  if (cmp != 0) {
+    return cmp;
+  }
+  if (a->shadow_index < b->shadow_index) {
+    return -1;
+  }
+  if (a->shadow_index > b->shadow_index) {
     return 1;
   }
   return 0;
@@ -375,7 +509,7 @@ static int classify_root(const struct Root *root,
   return 0;
 }
 
-static int emit_findings(const struct FindingBuffer *findings) {
+static int emit_finding_lines(const struct FindingBuffer *findings) {
   for (size_t i = 0; i < findings->len; i++) {
     const struct Finding *item = &findings->items[i];
     if (fputs_checked(HAZARD_NAMES[item->code], stdout) != 0 ||
@@ -384,6 +518,14 @@ static int emit_findings(const struct FindingBuffer *findings) {
         fputc_checked('\n', stdout) != 0) {
       return emit_stdout_write_error();
     }
+  }
+  return 0;
+}
+
+static int emit_findings(const struct FindingBuffer *findings) {
+  int write_status = emit_finding_lines(findings);
+  if (write_status != 0) {
+    return write_status;
   }
   return complete_stdout(findings->len == 0 ? 0 : 1);
 }
@@ -543,17 +685,7 @@ static int path_components_load(struct PathComponents *components) {
   return 0;
 }
 
-static int run_path_mode(void) {
-  struct PathComponents components;
-  int load_status = path_components_load(&components);
-  if (load_status != 0) {
-    return load_status;
-  }
-
-  int status = run_audit(components.roots, components.count);
-  path_components_free(&components);
-  return status;
-}
+static int run_path_mode(void);
 
 static bool command_name_is_valid(const char *name) {
   if (name[0] == '\0') {
@@ -666,6 +798,233 @@ static int try_command_match(const struct Root *root, const char *command,
 
   *match_out = resolved_buf;
   return 0;
+}
+
+/*
+ * Record one regular executable discovered under a PATH component.
+ * First PATH-order hit for a basename becomes the winner; later hits with a
+ * distinct realpath are shadowed. Identical realpaths (repeated components)
+ * do not self-shadow.
+ */
+static int record_executable_hit(const char *command, char *owned_resolved,
+                                 size_t path_index,
+                                 struct WinnerBuffer *winners,
+                                 struct ShadowBuffer *shadows) {
+  for (size_t i = 0; i < winners->len; i++) {
+    struct WinnerEntry *winner = &winners->items[i];
+    if (cmp_unsigned_bytes(winner->command, command) != 0) {
+      continue;
+    }
+
+    if (cmp_unsigned_bytes(winner->path, owned_resolved) == 0) {
+      free(owned_resolved);
+      return 0;
+    }
+
+    char *command_copy = owned_strdup(command);
+    char *winner_copy = owned_strdup(winner->path);
+    if (command_copy == NULL || winner_copy == NULL) {
+      free(command_copy);
+      free(winner_copy);
+      free(owned_resolved);
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    if (!shadows_append(shadows, command_copy, winner_copy, owned_resolved,
+                        path_index)) {
+      free(command_copy);
+      free(winner_copy);
+      free(owned_resolved);
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    return 0;
+  }
+
+  char *command_copy = owned_strdup(command);
+  if (command_copy == NULL) {
+    free(owned_resolved);
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  if (!winners_append(winners, command_copy, owned_resolved)) {
+    free(command_copy);
+    free(owned_resolved);
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  return 0;
+}
+
+/*
+ * Scan one PATH component for regular executables. Empty, missing,
+ * non-directory, and unreadable components are skipped without inventing
+ * shadows. Does not recurse into nested directories.
+ */
+static int scan_root_executables(const struct Root *root,
+                                 struct WinnerBuffer *winners,
+                                 struct ShadowBuffer *shadows) {
+  if (root->len == 0) {
+    return 0;
+  }
+
+  struct stat st;
+  if (stat(root->text, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    return 0;
+  }
+
+  DIR *dir = opendir(root->text);
+  if (dir == NULL) {
+    /* Unreadable directory: skip shadowing for this component safely. */
+    return 0;
+  }
+
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (entry == NULL) {
+      if (errno != 0) {
+        int err = errno;
+        closedir(dir);
+        char reason[64];
+        int written =
+            snprintf(reason, sizeof(reason), "INSPECTION_ERROR_%d", err);
+        if (written < 0 || (size_t)written >= sizeof(reason)) {
+          emit_diag_reason("OUT_OF_MEMORY");
+          return 2;
+        }
+        emit_diag_reason_root(reason, root->text);
+        return 2;
+      }
+      break;
+    }
+
+    const char *name = entry->d_name;
+    if (name[0] == '\0') {
+      continue;
+    }
+    if (name[0] == '.' &&
+        (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+      continue;
+    }
+    if (strchr(name, '/') != NULL) {
+      continue;
+    }
+
+    char *match_path = NULL;
+    int match_status = try_command_match(root, name, &match_path);
+    if (match_status != 0) {
+      closedir(dir);
+      return match_status;
+    }
+    if (match_path == NULL) {
+      continue;
+    }
+
+    int record_status =
+        record_executable_hit(name, match_path, root->index, winners, shadows);
+    if (record_status != 0) {
+      closedir(dir);
+      return record_status;
+    }
+  }
+
+  if (closedir(dir) != 0) {
+    /* close errors do not invent shadow findings */
+  }
+  return 0;
+}
+
+static int emit_shadow_lines(const struct ShadowBuffer *shadows) {
+  for (size_t i = 0; i < shadows->len; i++) {
+    const struct ShadowRecord *item = &shadows->items[i];
+    if (fputs_checked("SHADOWED", stdout) != 0 ||
+        fputc_checked('\t', stdout) != 0 ||
+        put_escaped_quoted(stdout, item->command) != 0 ||
+        fputc_checked('\t', stdout) != 0 ||
+        put_escaped_quoted(stdout, item->winner) != 0 ||
+        fputc_checked('\t', stdout) != 0 ||
+        put_escaped_quoted(stdout, item->shadow) != 0 ||
+        fputc_checked('\n', stdout) != 0) {
+      return emit_stdout_write_error();
+    }
+  }
+  return 0;
+}
+
+/*
+ * Exclusive `pathaudit --path` mode.
+ *
+ * Classifies each PATH component with the shared directory-hazard taxonomy,
+ * then detects executable shadowing across distinct PATH directories in PATH
+ * order. Directory hazard lines precede SHADOWED lines. SHADOWED lines are
+ * ordered by command basename bytes, then by PATH position of the shadowed
+ * executable. Exit status 1 when any directory hazard or shadow is reported.
+ *
+ * Ownership: PathComponents aliases feed findings roots; WinnerBuffer and
+ * ShadowBuffer own their strings. All heap state is freed on every exit path.
+ */
+static int run_path_mode(void) {
+  struct PathComponents components;
+  int load_status = path_components_load(&components);
+  if (load_status != 0) {
+    return load_status;
+  }
+
+  struct FindingBuffer findings = {0};
+  struct WinnerBuffer winners = {0};
+  struct ShadowBuffer shadows = {0};
+
+  /* Preserve PATH order: do not sort roots before classification or scan. */
+  for (size_t i = 0; i < components.count; i++) {
+    int class_status = classify_root(&components.roots[i], &findings);
+    if (class_status != 0) {
+      findings_free(&findings);
+      winners_free(&winners);
+      shadows_free(&shadows);
+      path_components_free(&components);
+      return class_status;
+    }
+  }
+
+  for (size_t i = 0; i < components.count; i++) {
+    int scan_status =
+        scan_root_executables(&components.roots[i], &winners, &shadows);
+    if (scan_status != 0) {
+      findings_free(&findings);
+      winners_free(&winners);
+      shadows_free(&shadows);
+      path_components_free(&components);
+      return scan_status;
+    }
+  }
+
+  if (findings.len > 1) {
+    qsort(findings.items, findings.len, sizeof(findings.items[0]),
+          compare_findings);
+  }
+  if (shadows.len > 1) {
+    qsort(shadows.items, shadows.len, sizeof(shadows.items[0]),
+          compare_shadows);
+  }
+
+  int write_status = emit_finding_lines(&findings);
+  if (write_status == 0) {
+    write_status = emit_shadow_lines(&shadows);
+  }
+
+  int status;
+  if (write_status != 0) {
+    status = write_status;
+  } else {
+    status = complete_stdout((findings.len == 0 && shadows.len == 0) ? 0 : 1);
+  }
+
+  findings_free(&findings);
+  winners_free(&winners);
+  shadows_free(&shadows);
+  path_components_free(&components);
+  return status;
 }
 
 /*

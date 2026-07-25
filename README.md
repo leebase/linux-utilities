@@ -271,13 +271,13 @@ no changes
 roots. It has three exclusive modes. Explicit-root mode is
 `pathaudit [--] ROOT...`: every inspection root is a command-line operand, and
 the process `PATH` environment variable is ignored. Opt-in `pathaudit --path`
-reads `PATH` once, splits on ASCII `:`, and classifies each component with the
-same hazard rules. Opt-in `pathaudit --command NAME` reads `PATH` the same way
-but walks components in resolution order for one basename only (see
-Command-specific PATH risk inspection below). Explicit-root and `--path` modes
-do not search for executables. None of the modes walk directory contents,
-examine ancestors, or remediate anything. Lookup follows symbolic links like
-`stat(2)`.
+reads `PATH` once, splits on ASCII `:`, classifies each component with the
+same hazard rules, and additionally detects executable shadowing across those
+directories (see Executable Shadowing below). Opt-in `pathaudit --command NAME`
+reads `PATH` the same way but walks components in resolution order for one
+basename only (see Command-specific PATH risk inspection below). Explicit-root
+mode does not search for executables. None of the modes examine ancestors or
+remediate anything. Lookup follows symbolic links like `stat(2)`.
 
 Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
 `NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`) with deterministic
@@ -293,20 +293,23 @@ the final directory target's `S_IWGRP` / `S_IWOTH` bits.
 
 Exit status `0` means every root or PATH component was inspected with no
 hazard. Status `1` means inspection completed and at least one hazard was
-emitted (including empty `PATH` → one `EMPTY_ROOT`, or an existing
-non-directory component → `NON_DIRECTORY_ROOT`). Status `2` means usage
-error, unset `PATH` in `--path` or `--command` mode (`PATH_UNSET` on stderr,
-empty stdout), invalid `--command` name (`INVALID_COMMAND`), limit violation,
-operational metadata error, allocation failure, or stdout write/flush failure
-(reject-closed). `--path` and `--command` accept no root operands and no other
-options; mixing them with roots or with each other is a usage error.
+emitted (including empty `PATH` → one `EMPTY_ROOT`, an existing non-directory
+component → `NON_DIRECTORY_ROOT`, or a `SHADOWED` executable under `--path`).
+Status `2` means usage error, unset `PATH` in `--path` or `--command` mode
+(`PATH_UNSET` on stderr, empty stdout), invalid `--command` name
+(`INVALID_COMMAND`), limit violation, operational metadata error, allocation
+failure, or stdout write/flush failure (reject-closed). `--path` and
+`--command` accept no root operands and no other options; mixing them with
+roots or with each other is a usage error.
 
 Limitations: this is a metadata snapshot, not a security lock; filesystem
 state can change concurrently. The taxonomy does not cover packages, processes,
 services, capabilities, ACLs, mount options, or ownership policy. Explicit-root
-and `--path` do not perform executable search; `--command` searches only the
-queried basename. Symlink loops and permission denials are status `2`, not
-new hazard codes. There is no install target for `pathaudit` yet.
+mode does not search for executables. `--path` scans only top-level regular
+executables in each PATH directory for shadowing (no nested recursion);
+`--command` searches only the queried basename. Symlink loops and permission
+denials are status `2`, not new hazard codes. There is no install target for
+`pathaudit` yet.
 
 The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
 manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
@@ -374,6 +377,40 @@ Missing and non-directory roots receive no permission finding. Prefer private
 directory modes (for example `0700`) for trusted PATH entries, and treat
 writable PATH directories as a prompt to harden permissions rather than as a
 remediation performed by `pathaudit` itself.
+
+### Executable Shadowing
+
+When `pathaudit --path` walks the process `PATH` in left-to-right resolution
+order, the first regular executable (`S_ISREG` and `X_OK`) for a given
+basename is the winner. Any later PATH directory that also contains a regular
+executable with that same basename is an executable duplicate: the later hit
+is shadowed by the earlier winner. Each shadow is reported as one stdout line:
+
+```text
+SHADOWED<TAB>"COMMAND"<TAB>"WINNER_REALPATH"<TAB>"SHADOWED_REALPATH"
+```
+
+Fields are quote-escaped like other pathaudit output. The winner and shadowed
+locations are `realpath(3)` results, so symlink-resolved absolute paths appear
+rather than the raw PATH-component join. Shared-taxonomy directory hazard lines
+(when any) always precede `SHADOWED` lines. Multiple colliding basenames are
+ordered by command basename bytes, then by PATH index of each shadowed hit.
+Every later distinct realpath is reported against the same first-PATH winner;
+shadowing alone exits `1` with empty stderr.
+
+Important edge cases: non-executable same-basename files never win and never
+shadow; distinct command names never collide; repeating the same directory
+(identical realpath) does not self-shadow; empty, missing, non-directory, and
+unreadable PATH components are skipped for the scan without inventing shadows;
+the scan does not recurse into nested directories. Explicit-root mode does not
+emit `SHADOWED`.
+
+Example (two private directories both providing `tool`):
+
+```sh
+PATH=/opt/early:/opt/late pathaudit --path
+# SHADOWED	"tool"	"/opt/early/tool"	"/opt/late/tool"
+```
 
 ### Command-specific PATH risk inspection
 

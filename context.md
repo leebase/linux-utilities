@@ -2,47 +2,47 @@
 
 ## Snapshot
 
-Governed run `35116f657f35` (playbook
-`detect_non_directory_path_entries`) delivered Detect non-directory PATH
-entries for `pathaudit --path` and explicit roots: pins
-`NON_DIRECTORY_ROOT` for regular-file, symlink-to-file, and ENOTDIR
-components (status 1, empty stderr), mutually exclusive with
-`MISSING_ROOT`, with permission findings suppressed on non-directory
-roots. Exact deliverables: `tests/test_pathaudit.py`, `src/pathaudit.c`
-(comment-only classify_root clarification), `README.md`,
-`man/pathaudit.1`. Exact step-3 verification (non-writing):
-`clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only
-src/pathaudit.c` → 0; `cppcheck --quiet --enable=all
---suppress=missingIncludeSystem src/pathaudit.c` → 0;
-`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
-tests/ -q` → 234 passed, 1 skipped. Exact smoke
+Governed run `f94509b47fd3` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect
+executable shadowing across PATH entries for `pathaudit --path`: first
+regular `X_OK` basename in PATH order is the winner; later distinct
+`realpath` hits emit `SHADOWED` lines (`SHADOWED\t"cmd"\t"winner"\t"shadow"`)
+after shared-taxonomy directory hazards, ordered by command bytes then
+PATH index; explicit-root never emits `SHADOWED`; empty/missing/
+non-directory/unreadable components are skipped for the scan; no nested
+recursion. Exact deliverables: `tests/test_pathaudit.py`,
+`src/pathaudit.c`, `README.md`. Exact step-4 verification: `gcc`/`clang
+-std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only src/pathaudit.c`
+→ 0; `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 247 passed, 1 skipped. Exact smoke
 (`artifacts/user-smoke/result.json`): `app_started: true`,
 `core_flow_completed: true`, `start_exit_code: 0`,
 `check_exit_code: 0`, empty `blocking_errors`; check.log pytest
-`234 passed, 1 skipped in 19.50s`. Independent review
-`code-reviews/review-detect-non-directory-path-entries.{md,verdict.json}`
-verdict `pass`: 0 Critical/High/Medium, 2 Low (nondir-1 special-file
-fixture gap vs comment; nondir-2 classify_root vs
-classify_command_component taxonomy duplication). Allowlisted review
-check: `python3 -m pytest -p no:cacheprovider tests/test_pathaudit.py
--q` → 94 passed, 1 skipped (~1.9s). The skip is the host-limited
-`--path` `ROOT_BYTES_LIMIT` probe. Runtime `NON_DIRECTORY_ROOT` logic
-pre-existed; this slice documents and pins it. This does **not** claim
-that `pathaudit` is released or that the sysdiff smoke oracle directly
-exercises non-directory `--path` detection.
+`247 passed, 1 skipped in 18.41s`. Independent review
+`code-reviews/review-executable-shadowing.{md,verdict.json}` verdict
+`pass`: 0 Critical/High, 1 Medium (pathaudit-shadow-1 retained 64 KiB
+realpath buffer per winner/shadow), 2 Low (pathaudit-shadow-2 quadratic
+winner lookup; pathaudit-shadow-3 duplicate SHADOWED on repeated
+non-winner dirs). Allowlisted review check:
+`python3 -m pytest tests/ -q -p no:cacheprovider` → 247 passed, 1
+skipped (~17.95s). The skip is the host-limited `--path`
+`ROOT_BYTES_LIMIT` probe. This does **not** claim that `pathaudit` is
+released or that the sysdiff smoke oracle directly exercises
+executable-shadowing `--path` detection.
 
 ## What's Happening Now
 
-Handoff after run `35116f657f35`: Detect non-directory PATH entries
-is documented, smoke-gated, and independently reviewed with verdict
-`pass`. Remaining risks from this review are Low only: nondir-1 and
-nondir-2. Prior Low pathaudit-cmd-1/2, pathaudit-wdp-1/2,
-PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff
-Medium packaging backlogs remain separately visible and were not
-closed by this review. Smallest next action: keep Low nondir-1/2 and
-prior Low findings visible for optional polish; resume prior Medium
-backlog repair (pathaudit PA-M2 hostile-byte stderr fixture / PA-M1
-architecture leftovers and sysdiff packaging Mediums) without claiming
-release or that the sysdiff smoke oracle covers non-directory `--path`
+Handoff after run `f94509b47fd3`: Detect executable shadowing across
+PATH entries is documented, smoke-gated, and independently reviewed
+with verdict `pass`. Remaining risks from this review: Medium
+pathaudit-shadow-1 and Low pathaudit-shadow-2/3. Prior Low nondir-1/2,
+pathaudit-cmd-1/2, pathaudit-wdp-1/2, PA-WP-1–PA-WP-4, bootstrap Medium
+PA-M1/PA-M2 leftovers, and sysdiff Medium packaging backlogs remain
+separately visible and were not closed by this review. Smallest next
+action: keep Medium pathaudit-shadow-1 and Low pathaudit-shadow-2/3
+visible; prefer repairing pathaudit-shadow-1 (right-size retained
+realpath buffers) or resume prior Medium backlog (pathaudit PA-M2 /
+PA-M1 leftovers and sysdiff packaging Mediums) without claiming
+release or that the sysdiff smoke oracle covers shadowing `--path`
 behavior. Runs root:
 `/home/lee/projects/linux-utilities-agent-orch-runs`.

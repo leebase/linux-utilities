@@ -1,5 +1,27 @@
 # Where Am I
 
+## Detect executable shadowing across PATH entries
+
+Governed run `f94509b47fd3` delivered Detect executable shadowing
+across PATH entries for `pathaudit --path`: first regular `X_OK`
+basename in PATH order wins; later distinct `realpath` hits emit
+`SHADOWED` lines after directory hazards; explicit-root never emits
+`SHADOWED`; empty/missing/non-directory/unreadable components are
+skipped for the scan; no nested recursion. Exact evidence: step-4
+GCC/Clang `-fsyntax-only` exit 0; full pytest 247 passed, 1 skipped.
+Exact smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`247 passed, 1 skipped in 18.41s`. Review
+`code-reviews/review-executable-shadowing.{md,verdict.json}` is
+`pass` (0 Critical/High, 1 Medium pathaudit-shadow-1, 2 Low
+pathaudit-shadow-2/3); allowlisted full pytest → 247 passed, 1
+skipped. This does **not** claim that `pathaudit` is released or that
+the sysdiff smoke oracle covers executable-shadowing `--path`
+detection. Next: keep Medium pathaudit-shadow-1 and Low
+pathaudit-shadow-2/3 visible; prefer repairing pathaudit-shadow-1 or
+resume prior Medium backlog.
+
 ## Detect non-directory PATH entries
 
 Governed run `35116f657f35` delivered Detect non-directory PATH entries
@@ -242,19 +264,25 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `35116f657f35` is
-Detect non-directory PATH entries for `pathaudit --path` / explicit
-roots (`NON_DIRECTORY_ROOT` for file/symlink-to-file/ENOTDIR, status 1,
-mutually exclusive with `MISSING_ROOT`), with independent review
-`code-reviews/review-detect-non-directory-path-entries.verdict.json` =
-`pass` (0 Critical/High/Medium, 2 Low nondir-1/2). This is **not** a
-pathaudit release and does not change the separately prepared
-unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
-Non-directory `--path` behavior is covered by `tests/test_pathaudit.py`,
-not by the existing sysdiff smoke oracle.
+The current milestone after recording run `f94509b47fd3` is
+Detect executable shadowing across PATH entries for `pathaudit --path`
+(`SHADOWED` lines for later distinct realpath hits against the first
+PATH-order winner), with independent review
+`code-reviews/review-executable-shadowing.verdict.json` = `pass`
+(0 Critical/High, 1 Medium pathaudit-shadow-1, 2 Low
+pathaudit-shadow-2/3). This is **not** a pathaudit release and does not
+change the separately prepared unpublished `sysdiff` 0.1.0 package from
+run `580b0f6ff811`. Executable-shadowing `--path` behavior is covered
+by `tests/test_pathaudit.py`, not by the existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `f94509b47fd3` delivered and reviewed Detect executable shadowing
+  across PATH entries: step-4 GCC/Clang `-fsyntax-only` exit 0; full
+  pytest 247/1; smoke start/check 0; review `pass` with Medium
+  pathaudit-shadow-1 and Low pathaudit-shadow-2/3; allowlisted full
+  pytest 247 passed, 1 skipped. Not a pathaudit release; smoke oracle
+  does not directly exercise executable-shadowing `--path` detection.
 - Run `35116f657f35` delivered and reviewed Detect non-directory PATH
   entries: step-3 Clang `-fsyntax-only` + cppcheck exit 0; full pytest
   234/1; smoke start/check 0; review `pass` with Low nondir-1/2 only;
@@ -461,12 +489,14 @@ not by the existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep Low nondir-1/2 from run `35116f657f35` and prior Low
+Keep Medium pathaudit-shadow-1 and Low pathaudit-shadow-2/3 from run
+`f94509b47fd3` visible. Prefer repairing pathaudit-shadow-1 (right-size
+retained realpath buffers) or resume prior Medium backlog repair
+(pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
+leftovers, plus sysdiff packaging Mediums) without claiming those were
+closed by the shadowing review. Keep prior Low nondir-1/2,
 pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for
-optional polish. Resume prior Medium backlog repair (pathaudit PA-M2
-hostile-byte stderr fixture / PA-M1 architecture leftovers, plus
-sysdiff packaging Mediums) without claiming those were closed by the
-non-directory review. Do not claim that `pathaudit` is released, and
-do not treat `tests/smoke_manifest.json` as non-directory `--path`
+optional polish. Do not claim that `pathaudit` is released, and do not
+treat `tests/smoke_manifest.json` as executable-shadowing `--path`
 coverage. Separately preserve the unpublished `sysdiff` 0.1.0 candidate
 from `580b0f6ff811`.
