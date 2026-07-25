@@ -45,10 +45,11 @@ struct FindingBuffer {
   size_t cap;
 };
 
-static const char USAGE_TEXT[] = "usage: pathaudit [--] ROOT...\n";
-static const char HELP_TEXT[] =
-    "usage: pathaudit [--] ROOT...\n"
-    "Scan explicitly supplied PATH directory roots.\n";
+static const char USAGE_TEXT[] = "usage: pathaudit [--] ROOT...\n"
+                                 "   or: pathaudit --path\n";
+static const char HELP_TEXT[] = "usage: pathaudit [--] ROOT...\n"
+                                "   or: pathaudit --path\n"
+                                "Scan PATH directory roots for hazards.\n";
 static const char VERSION_TEXT[] = "pathaudit 0.1.0\n";
 
 static int fputc_checked(int ch, FILE *stream) {
@@ -337,42 +338,118 @@ static int handle_version(void) {
   return complete_stdout(0);
 }
 
-int main(int argc, char **argv) {
-  if (argc < 1) {
-    emit_usage_diag("USAGE");
+/*
+ * Exclusive `pathaudit --path` mode.
+ *
+ * Ownership: path_storage is a malloc'd copy of the PATH value with ':'
+ * replaced by NULs so each component is a C string. roots[].text pointers
+ * alias into path_storage and must not outlive it. Both path_storage and
+ * roots are freed on every exit path from this function. getenv("PATH") is
+ * called once; its returned pointer is treated as hostile opaque bytes and
+ * is only read to compute length/count and to copy into path_storage.
+ */
+static int run_path_mode(void) {
+  const char *path_env = getenv("PATH");
+  if (path_env == NULL) {
+    emit_diag_reason("PATH_UNSET");
     return 2;
   }
 
-  {
-    int sigpipe_status = ignore_sigpipe_for_stdout();
-    if (sigpipe_status != 0) {
-      return sigpipe_status;
+  size_t path_len = strlen(path_env);
+
+  /* n colons yield n+1 components, including empty PATH as one empty entry. */
+  size_t root_count = 1;
+  for (size_t i = 0; i < path_len; i++) {
+    if (path_env[i] == ':') {
+      if (root_count >= PATHAUDIT_MAX_ROOT_COUNT) {
+        emit_diag_reason("ROOT_COUNT_LIMIT");
+        return 2;
+      }
+      root_count++;
     }
   }
 
-  if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
-    if (argc != 2) {
-      emit_usage_diag("USAGE");
+  char *path_storage = malloc(path_len + 1);
+  if (path_storage == NULL) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  memcpy(path_storage, path_env, path_len + 1);
+
+  struct Root *roots = calloc(root_count, sizeof(*roots));
+  if (roots == NULL) {
+    free(path_storage);
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+
+  size_t total_bytes = 0;
+  size_t index = 0;
+  char *start = path_storage;
+  for (char *p = path_storage;; p++) {
+    if (*p != ':' && *p != '\0') {
+      continue;
+    }
+
+    bool at_end = (*p == '\0');
+    size_t len = (size_t)(p - start);
+    *p = '\0';
+
+    if (len > PATHAUDIT_MAX_ROOT_LENGTH) {
+      free(roots);
+      free(path_storage);
+      emit_diag_reason("ROOT_LENGTH_LIMIT");
       return 2;
     }
-    return handle_help();
-  }
 
-  if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-    if (argc != 2) {
-      emit_usage_diag("USAGE");
+    size_t with_nul;
+    if (!size_add_ok(len, 1, &with_nul) ||
+        !size_add_ok(total_bytes, with_nul, &total_bytes)) {
+      free(roots);
+      free(path_storage);
+      emit_diag_reason("ROOT_BYTES_LIMIT");
       return 2;
     }
-    return handle_version();
+    if (total_bytes > PATHAUDIT_MAX_ROOT_BYTES) {
+      free(roots);
+      free(path_storage);
+      emit_diag_reason("ROOT_BYTES_LIMIT");
+      return 2;
+    }
+
+    if (index >= root_count) {
+      free(roots);
+      free(path_storage);
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+
+    roots[index].text = start;
+    roots[index].index = index;
+    roots[index].len = len;
+    index++;
+
+    if (at_end) {
+      break;
+    }
+    start = p + 1;
   }
 
-  int argi = 1;
-  bool end_of_options = false;
-  if (argi < argc && strcmp(argv[argi], "--") == 0) {
-    end_of_options = true;
-    argi++;
+  if (index != root_count) {
+    free(roots);
+    free(path_storage);
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
   }
 
+  int status = run_audit(roots, root_count);
+  free(roots);
+  free(path_storage);
+  return status;
+}
+
+static int run_explicit_roots(int argc, char **argv, int argi,
+                              bool end_of_options) {
   if (argi >= argc) {
     emit_usage_diag("USAGE");
     return 2;
@@ -430,4 +507,51 @@ int main(int argc, char **argv) {
   int status = run_audit(roots, root_count);
   free(roots);
   return status;
+}
+
+int main(int argc, char **argv) {
+  if (argc < 1) {
+    emit_usage_diag("USAGE");
+    return 2;
+  }
+
+  {
+    int sigpipe_status = ignore_sigpipe_for_stdout();
+    if (sigpipe_status != 0) {
+      return sigpipe_status;
+    }
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--help") == 0) {
+    if (argc != 2) {
+      emit_usage_diag("USAGE");
+      return 2;
+    }
+    return handle_help();
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
+    if (argc != 2) {
+      emit_usage_diag("USAGE");
+      return 2;
+    }
+    return handle_version();
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--path") == 0) {
+    if (argc != 2) {
+      emit_usage_diag("USAGE");
+      return 2;
+    }
+    return run_path_mode();
+  }
+
+  int argi = 1;
+  bool end_of_options = false;
+  if (argi < argc && strcmp(argv[argi], "--") == 0) {
+    end_of_options = true;
+    argi++;
+  }
+
+  return run_explicit_roots(argc, argv, argi, end_of_options);
 }

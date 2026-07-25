@@ -1,5 +1,38 @@
 # Result Review
 
+## Writable PATH Directories
+
+Governed run `d27d2ade171f` (playbook
+`pathaudit_detect_writable_path_directories`) delivered the additive
+opt-in `pathaudit --path` mode that reads process `PATH` once, splits on
+ASCII `:`, retains empty and duplicate components, and applies the shared
+hazard taxonomy (including `GROUP_WRITABLE` / `WORLD_WRITABLE`) without
+changing explicit-root behavior. Exact deliverables touched in-run:
+`docs/pathaudit-contract.md`, `src/pathaudit.c`, `tests/test_pathaudit.py`,
+`man/pathaudit.1`, README/CHANGELOG docs. Exact step-5 verification:
+`make clean && make test` → 196 passed, 1 skipped; `format-check`,
+`clang-tidy-check`, `cppcheck-check`, `clang-analyzer-check`,
+`pathaudit-sanitize`, and `pathaudit-valgrind` exited 0; ASan+UBSan
+pathaudit suite → 56 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `196 passed, 1 skipped in
+18.33s`. The pinned smoke oracle remains the sysdiff fixture path and does
+**not** directly exercise `--path`; pathaudit coverage is
+`tests/test_pathaudit.py`. Independent review artifacts:
+`code-reviews/review-pathaudit-writable-path.md` and
+`code-reviews/review-pathaudit-writable-path.verdict.json`. Verdict:
+`pass` at the High/Critical threshold with no Critical, High, or Medium
+findings and four Low findings (PA-WP-1 duplicated limit accounting;
+PA-WP-2 misleading `OUT_OF_MEMORY` on unreachable guards; PA-WP-3
+redundant PATH scans; PA-WP-4 host-limited `--path` aggregate bytes-limit
+probe, covered via explicit-root). Allowlisted review check:
+`python3 -m pytest -p no:cacheprovider tests/test_pathaudit.py -q` →
+exit 0, 56 passed, 1 skipped in ~1.56s. Remaining risks: Low PA-WP-1–PA-WP-4
+plus prior pathaudit/sysdiff Medium backlogs not closed by this review.
+Recommended next action: optional Low polish; resume prior Medium backlog
+repair. Do not claim that `pathaudit` is released.
+
 ## pathaudit Vertical-Slice Bootstrap
 
 Governed run `4dec475ef201` (playbook

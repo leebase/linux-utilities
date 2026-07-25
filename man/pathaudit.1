@@ -1,29 +1,64 @@
 .\" Copyright (c) 2026 Lee Harrington
 .\" SPDX-License-Identifier: MIT
-.TH PATHAUDIT 1 "2026-07-24" "pathaudit 0.1.0" "User Commands"
+.TH PATHAUDIT 1 "2026-07-25" "pathaudit 0.1.0" "User Commands"
 .SH NAME
-pathaudit \(em scan explicitly supplied PATH directory roots for hazards
+pathaudit \(em scan PATH directory roots for hazards
 .SH SYNOPSIS
 .B pathaudit
 .RI [ \-\- ]
 .I ROOT...
+.P
+.B pathaudit \-\-path
 .P
 .B pathaudit \-\-help
 .P
 .B pathaudit \-\-version
 .SH DESCRIPTION
 .B pathaudit
-is a small ISO C17 command\-line scanner for risks in explicitly supplied
-PATH directory entries.
-It inspects only the operands named by the caller.
-It never reads the
-.B PATH
-environment variable, searches for executables, walks directory contents, or
-examines ancestor directories.
+is a small ISO C17 command\-line scanner for risks in PATH directory entries.
+It supports two exclusive invocation modes.
 .P
-One operand is one inspection root; duplicate operands remain distinct inputs.
+Explicit\-root mode is
+.BR "pathaudit [\-\-] ROOT..." .
+Every inspection root is named as a command\-line operand.
+In that mode the process
+.B PATH
+environment variable is ignored.
+.P
+Opt\-in
+.B pathaudit \-\-path
+reads
+.B PATH
+exactly once, splits the value on ASCII colon
+.RB ( : )
+only, and classifies each resulting component with the same hazard rules used
+for explicit roots.
+Empty components created by leading, trailing, or consecutive colons are
+retained.
+Duplicate components are retained in their original positions.
+If
+.B PATH
+is unset,
+.B \-\-path
+is reject\-closed: stdout remains empty, stderr reports
+.BR PATH_UNSET ,
+and the exit status is
+.BR 2 .
+If
+.B PATH
+is set to an empty string, the mode treats that value as exactly one empty
+component
+.RB ( EMPTY_ROOT )
+and exits with status
+.B 1
+when inspection completes.
+.P
+Neither mode searches for executables, walks directory contents, examines
+ancestor directories, or remediates anything.
+One root or one PATH component is one inspection input; duplicates remain
+distinct.
 Inspection is read\-only and requires no special privilege.
-Classification uses the operand bytes and one
+Classification uses the root bytes and one
 .BR stat (2) \-equivalent
 lookup of the final target.
 Ordering and escaping are byte\-oriented and locale\-independent.
@@ -38,6 +73,21 @@ observed during that invocation and is not a security lock.
 .B \-\-
 End option processing so a root may begin with
 .BR \- .
+.TP
+.B \-\-path
+Read the process
+.B PATH
+environment variable once, split on
+.BR : ,
+and audit each component.
+Accepts no root operands and no other options.
+Combining
+.B \-\-path
+with any
+.I ROOT
+operand, with another non\-informational option, or with a second
+.B \-\-path
+is a usage error.
 .TP
 .B \-\-help
 Print the usage summary to standard output and exit with status
@@ -55,20 +105,35 @@ Extra operands are a usage error.
 A stdout write or flush failure returns status
 .BR 2 .
 .SH PATH HAZARDS
-The closed hazard taxonomy for this slice is:
+The closed hazard taxonomy for this slice is shared by explicit roots and by
+every
+.B \-\-path
+component:
 .TP
 .B EMPTY_ROOT
-The operand has zero bytes.
+The operand or PATH component has zero bytes.
 It is not translated to the current directory and receives no filesystem lookup.
+An explicitly empty
+.B PATH
+yields exactly one
+.B EMPTY_ROOT
+finding (status
+.BR 1 ),
+which must not be confused with unset
+.B PATH
+.RB ( PATH_UNSET ,
+status
+.BR 2 ).
 .TP
 .B RELATIVE_ROOT
-The nonempty operand does not begin with
+The nonempty input does not begin with
 .BR / ,
 including
 .B .
 and
 .BR .. .
-The operand is still looked up relative to the process working directory.
+The input is still looked up relative to the process working directory, so it
+may also receive a resolution or permission finding.
 .TP
 .B MISSING_ROOT
 Target lookup reports
@@ -108,20 +173,24 @@ neither suppress nor create a finding.
 Each finding is one stdout line:
 .B CODE
 , a TAB, a quoted escaped root, and a newline.
-Findings are ordered by raw root bytes, then original operand position for
+Findings are ordered by raw root bytes, then original input position for
 byte\-identical duplicates, then the fixed code rank above.
-Every applicable code is emitted once per operand.
+Every applicable code is emitted once per input.
 .P
 Exit status
 .B 0
-means every root was inspected and no hazard was found.
+means every root or PATH component was inspected and no hazard was found.
 Status
 .B 1
 means inspection completed and at least one hazard was emitted.
 Status
 .B 2
-means usage failure, an input\-limit violation, a metadata error not classified
-as a hazard (for example symlink loops or
+means usage failure, unset
+.B PATH
+in
+.B \-\-path
+mode, an input\-limit violation, a metadata error not classified as a hazard
+(for example symlink loops or
 .BR EACCES ),
 allocation failure, or an output write/flush failure.
 Limit and inspection failures are reject\-closed: buffered findings are
@@ -143,41 +212,77 @@ and
 .BR \e\e ;
 every other byte is uppercase
 .BR \exHH .
+An empty operand or empty PATH component is rendered as
+.BR \&"" .
 Diagnostics go only to stderr as
 .B pathaudit: REASON
 optionally followed by a quoted root.
+.B PATH_UNSET
+does not append the usage synopsis.
 .SH EXIT STATUS
 .TP
 .B 0
-Every root inspected; no hazard found.
+Every root or PATH component inspected; no hazard found.
 Also used for successful
 .B \-\-help
 and
 .BR \-\-version .
 .TP
 .B 1
-Inspection completed; at least one hazard emitted.
+Inspection completed; at least one hazard emitted
+(including empty
+.B PATH
+as one
+.BR EMPTY_ROOT ).
 .TP
 .B 2
-Usage error, limit violation, operational metadata error, allocation failure,
+Usage error, unset
+.B PATH
+in
+.B \-\-path
+mode
+.RB ( PATH_UNSET ),
+limit violation, operational metadata error, allocation failure,
 or stdout write/flush failure.
 .SH RESOURCE LIMITS
 .IP \(bu 3
-Maximum roots: 65\|536.
+Maximum roots or PATH components: 65\|536.
 .IP \(bu 3
-Maximum root length: 65\|536 bytes excluding the terminating NUL.
+Maximum root or component length: 65\|536 bytes excluding the terminating NUL.
 .IP \(bu 3
-Maximum aggregate root bytes including terminating NULs: 1\|048\|576.
+Maximum aggregate root/component bytes including terminating NULs: 1\|048\|576.
+.P
+In
+.B \-\-path
+mode those limits apply to components after colon splitting.
 .SH EXAMPLES
 .RS
 .nf
 pathaudit /tmp
 pathaudit \-\- \-dash-root
 pathaudit /safe /group-writable /missing
+pathaudit \-\-path
+env \-u PATH pathaudit \-\-path
+PATH=/safe:/tmp:/safe pathaudit \-\-path
 .fi
 .RE
+.P
+The
+.B env \-u PATH
+example exits with status
+.B 2
+and prints
+.B pathaudit: PATH_UNSET
+on stderr with empty stdout.
+A controlled
+.B PATH
+with a private directory and a world\-writable directory emits
+.B WORLD_WRITABLE
+for the writable component and exits with status
+.BR 1 .
 .SH SEE ALSO
 .BR stat (2),
+.BR environ (7),
 .BR sysdiff (1)
 .SH AUTHOR
 Lee Harrington
@@ -186,4 +291,4 @@ Copyright \(co 2026 Lee Harrington.
 .B pathaudit
 is released under the MIT License.
 .SH VERSION
-pathaudit 0.1.0 (2026\-07\-24)
+pathaudit 0.1.0 (2026\-07\-25)

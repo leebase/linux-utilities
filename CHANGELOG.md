@@ -32,6 +32,17 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+`pathaudit` gains an opt-in `pathaudit --path` mode that reads the process
+`PATH` once, splits on ASCII `:`, and classifies each component with the same
+closed hazard taxonomy as explicit roots. Explicit-root mode
+(`pathaudit [--] ROOT...`) still ignores `PATH`. Empty components, relative
+entries, writable-directory findings (`GROUP_WRITABLE` / `WORLD_WRITABLE`),
+unset `PATH` (`PATH_UNSET`, exit `2`), empty `PATH` (one `EMPTY_ROOT`, exit
+`1`), exit statuses `0`/`1`/`2`, and documented limitations are covered in
+README, `man/pathaudit.1`, and `docs/pathaudit-contract.md`. Help/usage now
+show the two-form synopsis. This does not claim a `pathaudit` release or install
+target.
+
 `make quality` now runs the complete sysdiff quality floor in one aggregate:
 strict GCC and Clang link builds, clang-format, clang-tidy, cppcheck, Clang
 static analysis (`clang --analyze` with analyzer-werror), man-check, shell and

@@ -1,5 +1,24 @@
 # Sprint Plan
 
+## Writable PATH Directories
+
+Governed run `d27d2ade171f` (playbook
+`pathaudit_detect_writable_path_directories`) delivered additive
+`pathaudit --path` (writable PATH directories via shared hazard taxonomy).
+Exact verification: step-5 `make clean && make test` → 196 passed, 1
+skipped; format/tidy/cppcheck/analyzer + `pathaudit-sanitize` /
+`pathaudit-valgrind` exited 0; ASan+UBSan pathaudit → 56 passed, 1
+skipped. Exact smoke: `artifacts/user-smoke/result.json` →
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors` (check.log pytest
+`196 passed, 1 skipped in 18.33s`). Review
+`code-reviews/review-pathaudit-writable-path.{md,verdict.json}` verdict
+`pass` (0 Critical/High/Medium, 4 Low PA-WP-1–PA-WP-4). Allowlisted
+review check: pytest `tests/test_pathaudit.py` → 56 passed, 1 skipped.
+Do **not** claim that `pathaudit` is released. Next: keep Low PA-WP
+visible; resume prior Medium backlog; do not treat sysdiff smoke as
+`--path` coverage.
+
 ## pathaudit Vertical-Slice Bootstrap
 
 Governed run `4dec475ef201` (playbook
@@ -174,6 +193,22 @@ or release closure from this slice.
 
 ## Current sprint
 
+- [x] Deliver, smoke-test, independently review, and close out additive
+  `pathaudit --path` (writable PATH directories) in run `d27d2ade171f`,
+  `pathaudit_detect_writable_path_directories`. Exact evidence: step-5
+  `make clean && make test` → 196 passed, 1 skipped; format/tidy/
+  cppcheck/analyzer + `pathaudit-sanitize`/`pathaudit-valgrind` exit 0;
+  ASan+UBSan pathaudit 56 passed, 1 skipped; smoke start/check 0 with
+  empty `blocking_errors` (check.log pytest `196 passed, 1 skipped in
+  18.33s`); review verdict `pass` with 0 Critical/High/Medium and 4 Low
+  (PA-WP-1–PA-WP-4); allowlisted pytest → 56 passed, 1 skipped. Not a
+  pathaudit release; sysdiff smoke oracle does not directly exercise
+  `--path`.
+- [ ] Next after `d27d2ade171f`: keep Low PA-WP-1–PA-WP-4 visible for
+  optional polish; resume prior Medium backlog (pathaudit PA-M2 /
+  PA-M1 leftovers and sysdiff packaging Mediums) without claiming those
+  were closed by this review; do not claim that `pathaudit` is released
+  or that `tests/smoke_manifest.json` covers `--path`.
 - [x] Deliver, smoke-test, independently review, and close out the additive
   `pathaudit` 0.1.0 vertical slice in run `4dec475ef201`,
   `pathaudit_bootstrap_deterministic_scanner`. Deliverables:
@@ -187,10 +222,9 @@ or release closure from this slice.
   Critical/High, 2 Medium (PA-M1, PA-M2), 7 Low (PA-L1–PA-L7). Not a
   pathaudit release; sysdiff smoke oracle does not directly exercise
   pathaudit.
-- [ ] Next after `4dec475ef201`: repair Medium PA-M2 (hostile-byte stderr
-  diagnostic fixture) and finish PA-M1 leftovers (CHANGELOG Unreleased
-  entry + architecture.md FindingBuffer ownership); keep Low PA-L1–PA-L7
-  visible; do not claim that `pathaudit` is released or that
+- [ ] Keep bootstrap Medium PA-M2 / PA-M1 leftovers and Low PA-L1–PA-L7
+  visible after `4dec475ef201` unless a later review explicitly closes
+  them; do not claim that `pathaudit` is released or that
   `tests/smoke_manifest.json` covers pathaudit.
 - [x] Prepare, verify, smoke-test, and independently review the unpublished
   `sysdiff` **0.1.0** release candidate in run `580b0f6ff811`,

@@ -2,9 +2,12 @@
 
 Encodes docs/pathaudit-contract.md. Builds src/pathaudit.c into a test-owned
 temporary directory, exercises only deterministic temporary fixtures, and never
-inspects the worker's real PATH, requires root, uses the network, or leaves
-binaries in the workspace. Sanitizer/Valgrind options declared by Makefile
-memory gates are allowlist-forwarded into the child environment.
+inspects the worker's ambient PATH for discovery, requires root, uses the
+network, or leaves binaries in the workspace. Child processes receive a
+controlled environment: explicit-root cases seal PATH against search, while
+`--path` cases set or unset PATH deliberately. Sanitizer/Valgrind options
+declared by Makefile memory gates are allowlist-forwarded into the child
+environment.
 
 Also encodes the stable Makefile contract for pathaudit-sanitize and
 pathaudit-valgrind: ASan+UBSan with strict warnings and frame pointers, a
@@ -55,12 +58,18 @@ SANITIZER_ENV_KEYS = (
     "ASAN_SYMBOLIZER_PATH",
 )
 
+USAGE_SYNOPSIS = (
+    b"usage: pathaudit [--] ROOT...\n"
+    b"   or: pathaudit --path\n"
+)
 HELP_STDOUT = (
     b"usage: pathaudit [--] ROOT...\n"
-    b"Scan explicitly supplied PATH directory roots.\n"
+    b"   or: pathaudit --path\n"
+    b"Scan PATH directory roots for hazards.\n"
 )
 VERSION_STDOUT = b"pathaudit 0.1.0\n"
-USAGE_LINE = b"usage: pathaudit [--] ROOT...\n"
+# Retained alias: usage diagnostics append the two-line synopsis.
+USAGE_LINE = USAGE_SYNOPSIS
 
 CODE_RANK = (
     "EMPTY_ROOT",
@@ -184,10 +193,17 @@ def _finish_valgrind(result, vg_log):
     return result
 
 
-def _base_child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """Build a PATH-hardened child env, forwarding declared sanitizer knobs."""
+def _base_child_env(
+    extra: dict[str, str | None] | None = None,
+) -> dict[str, str]:
+    """Build a controlled child env, forwarding declared sanitizer knobs.
 
-    run_env = {
+    Default PATH is an unreachable sealed value so ambient search cannot leak
+    in. Callers may override PATH with a fixture string, or pass PATH=None to
+    unset it for the reject-closed PATH_UNSET contract.
+    """
+
+    run_env: dict[str, str] = {
         # Never consult the worker PATH; keep an explicit unreachable value.
         "PATH": "/pathaudit-tests-must-not-search-here",
         "LC_ALL": "C",
@@ -198,7 +214,11 @@ def _base_child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
         if value is not None:
             run_env[key] = value
     if extra:
-        run_env.update(extra)
+        for key, value in extra.items():
+            if value is None:
+                run_env.pop(key, None)
+            else:
+                run_env[key] = value
     return run_env
 
 
@@ -206,7 +226,7 @@ def run_pathaudit(
     binary: Path,
     *args: bytes | str | os.PathLike[str],
     cwd: str | os.PathLike[str] | None = None,
-    env: dict[str, str] | None = None,
+    env: dict[str, str | None] | None = None,
 ):
     """Run pathaudit with byte-preserving argv and a controlled environment."""
 
@@ -228,6 +248,26 @@ def run_pathaudit(
         env=run_env,
     )
     return _finish_valgrind(result, vg_log)
+
+
+def run_pathaudit_path_mode(
+    binary: Path,
+    path_value: str | None,
+    *extra_args: bytes | str | os.PathLike[str],
+    cwd: str | os.PathLike[str] | None = None,
+    env: dict[str, str | None] | None = None,
+):
+    """Run exclusive `pathaudit --path` with a controlled PATH value or unset."""
+
+    path_env: dict[str, str | None] = dict(env) if env else {}
+    path_env["PATH"] = path_value
+    return run_pathaudit(
+        binary,
+        "--path",
+        *extra_args,
+        cwd=cwd,
+        env=path_env,
+    )
 
 
 def run_with_closed_stdout_pipe(binary: Path, *args: str):
@@ -472,6 +512,8 @@ def test_safe_private_absolute_root_exits_zero(pathaudit_bin, fixture_tree):
 
 
 def test_does_not_consult_path_environment(pathaudit_bin, fixture_tree):
+    """Explicit-root mode must ignore PATH; only `--path` reads it."""
+
     polluted = {
         "PATH": f"{fixture_tree.world_w}:/bin:/usr/bin",
         "LC_ALL": "C",
@@ -492,6 +534,446 @@ def test_does_not_consult_path_environment(pathaudit_bin, fixture_tree):
     assert second.returncode == 0
     assert first.stdout == second.stdout == b""
     assert first.stderr == second.stderr == b""
+
+
+def test_path_mode_private_component_exits_zero(pathaudit_bin, fixture_tree):
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.private), cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_path_mode_group_world_and_both_writable(pathaudit_bin, fixture_tree):
+    group = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.group_w))
+    assert group.returncode == 1
+    assert group.stderr == b""
+    assert group.stdout == findings_stdout(
+        [("GROUP_WRITABLE", fixture_tree.group_w)]
+    )
+
+    world = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.world_w))
+    assert world.returncode == 1
+    assert world.stderr == b""
+    assert world.stdout == findings_stdout(
+        [("WORLD_WRITABLE", fixture_tree.world_w)]
+    )
+
+    both = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.both_w))
+    assert both.returncode == 1
+    assert both.stderr == b""
+    assert both.stdout == findings_stdout(
+        [
+            ("GROUP_WRITABLE", fixture_tree.both_w),
+            ("WORLD_WRITABLE", fixture_tree.both_w),
+        ]
+    )
+
+
+def test_path_mode_relative_empty_missing_nondirectory(pathaudit_bin, fixture_tree):
+    empty = run_pathaudit_path_mode(pathaudit_bin, "", cwd=fixture_tree.cwd)
+    assert empty.returncode == 1
+    assert empty.stderr == b""
+    assert empty.stdout == findings_stdout([("EMPTY_ROOT", b"")])
+
+    relative = run_pathaudit_path_mode(
+        pathaudit_bin, "rel-missing", cwd=fixture_tree.cwd
+    )
+    assert relative.returncode == 1
+    assert relative.stderr == b""
+    assert relative.stdout == findings_stdout(
+        [
+            ("RELATIVE_ROOT", "rel-missing"),
+            ("MISSING_ROOT", "rel-missing"),
+        ]
+    )
+
+    missing = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.missing))
+    assert missing.returncode == 1
+    assert missing.stderr == b""
+    assert missing.stdout == findings_stdout(
+        [("MISSING_ROOT", fixture_tree.missing)]
+    )
+
+    nondir = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.regular))
+    assert nondir.returncode == 1
+    assert nondir.stderr == b""
+    assert nondir.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.regular)]
+    )
+
+
+def test_path_mode_unset_path_is_reject_closed(pathaudit_bin):
+    result = run_pathaudit_path_mode(pathaudit_bin, None)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_lines("PATH_UNSET")
+    assert b"usage:" not in result.stderr
+
+
+def test_path_mode_empty_path_is_single_empty_root(pathaudit_bin):
+    result = run_pathaudit_path_mode(pathaudit_bin, "")
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("EMPTY_ROOT", b"")])
+
+
+def test_path_mode_colon_split_retains_empty_and_duplicates(pathaudit_bin, fixture_tree):
+    private = str(fixture_tree.private)
+    missing = str(fixture_tree.missing)
+
+    # PATH value -> list of (index, component, codes)
+    cases: list[tuple[str, list[tuple[int, bytes | str, list[str]]]]] = [
+        (":", [(0, b"", ["EMPTY_ROOT"]), (1, b"", ["EMPTY_ROOT"])]),
+        (
+            "::",
+            [
+                (0, b"", ["EMPTY_ROOT"]),
+                (1, b"", ["EMPTY_ROOT"]),
+                (2, b"", ["EMPTY_ROOT"]),
+            ],
+        ),
+        (
+            f"{private}:{private}",
+            [(0, private, []), (1, private, [])],
+        ),
+        (
+            f"{private}:",
+            [(0, private, []), (1, b"", ["EMPTY_ROOT"])],
+        ),
+        (
+            f":{private}",
+            [(0, b"", ["EMPTY_ROOT"]), (1, private, [])],
+        ),
+        (
+            f"{private}::{missing}",
+            [
+                (0, private, []),
+                (1, b"", ["EMPTY_ROOT"]),
+                (2, missing, ["MISSING_ROOT"]),
+            ],
+        ),
+    ]
+    for path_value, components in cases:
+        result = run_pathaudit_path_mode(
+            pathaudit_bin, path_value, cwd=fixture_tree.cwd
+        )
+        items: list[tuple[int, bytes | str, str]] = []
+        for index, component, codes in components:
+            for code in codes:
+                items.append((index, component, code))
+        if items:
+            assert result.returncode == 1, path_value
+            assert result.stderr == b"", path_value
+            assert result.stdout == findings_stdout(sort_findings(items)), path_value
+        else:
+            assert result.returncode == 0, path_value
+            assert result.stdout == b"", path_value
+            assert result.stderr == b"", path_value
+
+
+def test_path_mode_duplicate_components_preserve_position(pathaudit_bin, fixture_tree):
+    root = str(fixture_tree.group_w)
+    result = run_pathaudit_path_mode(pathaudit_bin, f"{root}:{root}")
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("GROUP_WRITABLE", root),
+            ("GROUP_WRITABLE", root),
+        ]
+    )
+
+
+def test_path_mode_leading_dash_component(pathaudit_bin, tmp_path):
+    dash_root = tmp_path / "-dash-component"
+    dash_root.mkdir()
+    os.chmod(dash_root, MODE_PRIVATE)
+    abs_dash = str(dash_root.resolve())
+
+    absolute = run_pathaudit_path_mode(pathaudit_bin, abs_dash)
+    assert absolute.returncode == 0
+    assert absolute.stdout == b""
+    assert absolute.stderr == b""
+
+    relative = run_pathaudit_path_mode(
+        pathaudit_bin, "-dash-component", cwd=tmp_path
+    )
+    assert relative.returncode == 1
+    assert relative.stderr == b""
+    assert relative.stdout == findings_stdout(
+        [("RELATIVE_ROOT", "-dash-component")]
+    )
+
+    # Leading-dash on argv remains an option error; only PATH components may
+    # begin with '-' without `--`.
+    argv_dash = run_pathaudit(pathaudit_bin, "-dash-component", cwd=tmp_path)
+    assert argv_dash.returncode == 2
+    assert argv_dash.stdout == b""
+    assert argv_dash.stderr == diagnostic_lines("UNKNOWN_OPTION")
+
+
+def test_path_mode_stable_ordering_across_component_permutations(
+    pathaudit_bin, fixture_tree
+):
+    a = str(fixture_tree.both_w)
+    b = str(fixture_tree.missing)
+    c = str(fixture_tree.private)
+    d = str(fixture_tree.regular)
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, a, "GROUP_WRITABLE"),
+                (0, a, "WORLD_WRITABLE"),
+                (1, b, "MISSING_ROOT"),
+                (3, d, "NON_DIRECTORY_ROOT"),
+            ]
+        )
+    )
+
+    first = run_pathaudit_path_mode(pathaudit_bin, f"{a}:{b}:{c}:{d}")
+    second = run_pathaudit_path_mode(pathaudit_bin, f"{d}:{c}:{b}:{a}")
+    # Second permutation remaps indices; recompute expected for that PATH.
+    expected_second = findings_stdout(
+        sort_findings(
+            [
+                (0, d, "NON_DIRECTORY_ROOT"),
+                (2, b, "MISSING_ROOT"),
+                (3, a, "GROUP_WRITABLE"),
+                (3, a, "WORLD_WRITABLE"),
+            ]
+        )
+    )
+
+    assert first.returncode == 1
+    assert second.returncode == 1
+    assert first.stderr == second.stderr == b""
+    assert first.stdout == expected
+    assert second.stdout == expected_second
+    # Same multiset of finding lines regardless of PATH order (byte identity
+    # of roots still drives primary sort; indices only break ties).
+    assert sorted(first.stdout.splitlines()) == sorted(second.stdout.splitlines())
+
+
+def test_path_mode_rejects_extra_operands_and_options(pathaudit_bin, fixture_tree):
+    with_root = run_pathaudit(
+        pathaudit_bin,
+        "--path",
+        str(fixture_tree.private),
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert with_root.returncode == 2
+    assert with_root.stdout == b""
+    assert with_root.stderr == diagnostic_lines("USAGE")
+
+    double = run_pathaudit(
+        pathaudit_bin,
+        "--path",
+        "--path",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert double.returncode == 2
+    assert double.stdout == b""
+    assert double.stderr == diagnostic_lines("USAGE")
+
+    mixed_option = run_pathaudit(
+        pathaudit_bin,
+        "--path",
+        "--version",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert mixed_option.returncode == 2
+    assert mixed_option.stdout == b""
+    assert mixed_option.stderr == diagnostic_lines("USAGE")
+
+    root_then_path = run_pathaudit(
+        pathaudit_bin,
+        str(fixture_tree.private),
+        "--path",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert root_then_path.returncode == 2
+    assert root_then_path.stdout == b""
+    # Leading absolute root is fine; trailing `--path` is an unknown option
+    # under explicit-root scanning, or USAGE if exclusive-mode parsing rejects
+    # the mixture. Either way status is 2 with the shared usage synopsis.
+    assert root_then_path.stderr in (
+        diagnostic_lines("USAGE"),
+        diagnostic_lines("UNKNOWN_OPTION"),
+    )
+
+
+def test_path_mode_component_count_limit(pathaudit_bin, fixture_tree):
+    # n colons produce n+1 empty components; stay under OS env size.
+    at_path = ":" * (MAX_ROOT_COUNT - 1)
+    assert at_path.count(":") + 1 == MAX_ROOT_COUNT
+    at_result = run_pathaudit_path_mode(pathaudit_bin, at_path, cwd=fixture_tree.cwd)
+    assert at_result.returncode == 1
+    assert at_result.stderr == b""
+    assert b"ROOT_COUNT_LIMIT" not in at_result.stderr
+    assert at_result.stdout.count(b"EMPTY_ROOT\t") == MAX_ROOT_COUNT
+
+    over_path = ":" * MAX_ROOT_COUNT
+    assert over_path.count(":") + 1 == MAX_ROOT_COUNT + 1
+    over = run_pathaudit_path_mode(pathaudit_bin, over_path, cwd=fixture_tree.cwd)
+    assert over.returncode == 2
+    assert over.stdout == b""
+    assert over.stderr == diagnostic_lines("ROOT_COUNT_LIMIT")
+
+
+def test_path_mode_component_bytes_limit(pathaudit_bin):
+    # Aggregate component bytes (with NULs) must exceed 1 MiB. On Linux each
+    # environment string is also capped near MAX_ARG_STRLEN (~128 KiB), and
+    # colon-split aggregate size is len(PATH)+1, so a real PATH cannot reach the
+    # contract's ROOT_BYTES_LIMIT. Probe first; skip when the OS rejects the env.
+    chunk = "/" + ("b" * 4095)
+    per_component = len(chunk) + 1
+    count = (MAX_ROOT_BYTES // per_component) + 1
+    path_value = ":".join([chunk] * count)
+    aggregate = sum(len(part) + 1 for part in path_value.split(":"))
+    assert aggregate > MAX_ROOT_BYTES
+    assert count <= MAX_ROOT_COUNT
+
+    probe_env = _base_child_env({"PATH": path_value})
+    try:
+        probe = subprocess.run(
+            [str(pathaudit_bin), "--path"],
+            capture_output=True,
+            check=False,
+            env=probe_env,
+        )
+    except OSError as exc:
+        if exc.errno == errno_mod.E2BIG:
+            pytest.skip(
+                "host rejects PATH large enough to exceed ROOT_BYTES_LIMIT "
+                f"(aggregate={aggregate}, path_len={len(path_value)}); "
+                "explicit-root test_root_bytes_limit covers the same gate"
+            )
+        raise
+
+    assert probe.returncode == 2
+    assert probe.stdout == b""
+    assert probe.stderr == diagnostic_lines("ROOT_BYTES_LIMIT")
+
+
+def test_path_mode_large_but_host_legal_path_is_not_bytes_limit(
+    pathaudit_bin, fixture_tree
+):
+    """A large PATH under host env limits must not spuriously hit ROOT_BYTES_LIMIT."""
+
+    # Stay under typical MAX_ARG_STRLEN (128 KiB) while exercising many components.
+    chunk = str(fixture_tree.private)
+    path_value = ":".join([chunk] * 200)
+    assert len(path_value) < 128 * 1024
+    aggregate = sum(len(part) + 1 for part in path_value.split(":"))
+    assert aggregate < MAX_ROOT_BYTES
+
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    assert b"ROOT_BYTES_LIMIT" not in result.stderr
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_path_mode_component_length_limit(pathaudit_bin):
+    at_limit = "/" + ("a" * (MAX_ROOT_LENGTH - 1))
+    over_limit = "/" + ("a" * MAX_ROOT_LENGTH)
+    assert len(at_limit) == MAX_ROOT_LENGTH
+    assert len(over_limit) == MAX_ROOT_LENGTH + 1
+
+    at_result = run_pathaudit_path_mode(pathaudit_bin, at_limit)
+    assert at_result.returncode in (0, 1, 2)
+    assert b"ROOT_LENGTH_LIMIT" not in at_result.stderr
+    if at_result.returncode == 2:
+        assert at_result.stdout == b""
+        assert at_result.stderr.startswith(b"pathaudit: INSPECTION_ERROR_")
+    else:
+        assert at_result.stderr == b""
+
+    over = run_pathaudit_path_mode(pathaudit_bin, over_limit)
+    assert over.returncode == 2
+    assert over.stdout == b""
+    assert over.stderr == diagnostic_lines("ROOT_LENGTH_LIMIT")
+
+
+def test_path_mode_does_not_traverse_or_search_executables(pathaudit_bin, fixture_tree):
+    """Nested contents must not be inspected; only the PATH component itself."""
+
+    nested_world = fixture_tree.private / "nested-world"
+    nested_world.mkdir()
+    os.chmod(nested_world, MODE_WORLD_WRITABLE)
+    decoy = fixture_tree.private / "evil-bin"
+    decoy.write_bytes(b"#!/bin/sh\nexit 0\n")
+    os.chmod(decoy, 0o755)
+
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.private), cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+    assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"evil-bin" not in result.stdout
+
+
+def test_path_mode_exit_status_classes(pathaudit_bin, fixture_tree):
+    ok = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.private))
+    assert ok.returncode == 0
+
+    hazard = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.group_w))
+    assert hazard.returncode == 1
+
+    unset = run_pathaudit_path_mode(pathaudit_bin, None)
+    assert unset.returncode == 2
+    assert unset.stderr == diagnostic_lines("PATH_UNSET")
+
+    usage = run_pathaudit(
+        pathaudit_bin, "--path", "extra", env={"PATH": str(fixture_tree.private)}
+    )
+    assert usage.returncode == 2
+    assert usage.stderr == diagnostic_lines("USAGE")
+
+
+def test_path_mode_exact_diagnostics_for_inspection_error(pathaudit_bin, fixture_tree):
+    result = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.loop_a))
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    assert result.stderr == diagnostic_lines(reason, fixture_tree.loop_a)
+    assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def test_path_mode_mixed_hazard_components_deterministic(
+    pathaudit_bin, fixture_tree
+):
+    empty = ""
+    relative = "rel-missing"
+    missing = str(fixture_tree.missing)
+    nondir = str(fixture_tree.regular)
+    group = str(fixture_tree.group_w)
+    world = str(fixture_tree.world_w)
+    path_value = ":".join([empty, relative, missing, nondir, group, world])
+
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, path_value, cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    ordered = sort_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (1, relative, "RELATIVE_ROOT"),
+            (1, relative, "MISSING_ROOT"),
+            (2, missing, "MISSING_ROOT"),
+            (3, nondir, "NON_DIRECTORY_ROOT"),
+            (4, group, "GROUP_WRITABLE"),
+            (5, world, "WORLD_WRITABLE"),
+        ]
+    )
+    assert result.stdout == findings_stdout(ordered)
+    for code in CODE_RANK:
+        assert code.encode("ascii") in result.stdout
 
 
 def test_group_writable_world_writable_and_both(pathaudit_bin, fixture_tree):
@@ -979,6 +1461,12 @@ def test_runners_forward_sanitizer_options_without_reopening_path(monkeypatch):
     assert overridden["PATH"] == "/pathaudit-tests-must-not-search-here"
     assert overridden["EXTRA"] == "1"
 
+    # PATH=None unsets for PATH_UNSET coverage; empty string remains set-but-empty.
+    unset = _base_child_env({"PATH": None})
+    assert "PATH" not in unset
+    empty = _base_child_env({"PATH": ""})
+    assert empty["PATH"] == ""
+
 
 def test_run_pathaudit_forwards_sanitizer_options_to_real_child(
     tmp_path, monkeypatch
@@ -1153,7 +1641,7 @@ def test_inherited_pathaudit_bin_decoy_fails_unless_scrubbed(tmp_path):
             "pytest",
             "-p",
             "no:cacheprovider",
-            "tests/test_pathaudit.py::test_help_and_version",
+            "tests/test_pathaudit.py::test_safe_private_absolute_root_exits_zero",
             "-q",
         ],
         cwd=str(ROOT),
@@ -1177,7 +1665,7 @@ def test_inherited_pathaudit_bin_decoy_fails_unless_scrubbed(tmp_path):
             "pytest",
             "-p",
             "no:cacheprovider",
-            "tests/test_pathaudit.py::test_help_and_version",
+            "tests/test_pathaudit.py::test_safe_private_absolute_root_exits_zero",
             "-q",
         ],
         cwd=str(ROOT),
@@ -1514,7 +2002,16 @@ def test_makefile_pathaudit_quality_targets_preserve_existing_make_surface():
 def test_pathaudit_behavior_contract_pins_remain_stable():
     """Protect existing pathaudit CLI/hazard contract surface from drift."""
 
-    assert HELP_STDOUT.startswith(b"usage: pathaudit")
+    assert HELP_STDOUT == (
+        b"usage: pathaudit [--] ROOT...\n"
+        b"   or: pathaudit --path\n"
+        b"Scan PATH directory roots for hazards.\n"
+    )
+    assert USAGE_SYNOPSIS == (
+        b"usage: pathaudit [--] ROOT...\n"
+        b"   or: pathaudit --path\n"
+    )
+    assert USAGE_LINE == USAGE_SYNOPSIS
     assert VERSION_STDOUT == b"pathaudit 0.1.0\n"
     assert CODE_RANK == (
         "EMPTY_ROOT",
@@ -1529,5 +2026,9 @@ def test_pathaudit_behavior_contract_pins_remain_stable():
     assert MAX_ROOT_BYTES == 1024 * 1024
     assert escape_root(b"a\npathaudit: FORGED") == b'"a\\x0Apathaudit: FORGED"'
     assert finding_line("EMPTY_ROOT", b"") == b'EMPTY_ROOT\t""\n'
+    assert diagnostic_lines("PATH_UNSET") == b"pathaudit: PATH_UNSET\n"
+    assert diagnostic_lines("USAGE") == (
+        b"pathaudit: USAGE\n" + USAGE_SYNOPSIS
+    )
     assert SRC.is_file()
     assert MAKEFILE.is_file()

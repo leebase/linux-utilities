@@ -267,18 +267,63 @@ no changes
 
 ## pathaudit
 
-`pathaudit` 0.1.0 is a small ISO C17 scanner for hazards in explicitly named
-PATH directory roots. Callers pass every root on the command line; the tool
-never reads the `PATH` environment variable, walks directory contents, or
-remediates anything. Lookup follows symbolic links like `stat(2)`. Findings use
-a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
+`pathaudit` 0.1.0 is a small ISO C17 scanner for hazards in PATH directory
+roots. It has two exclusive modes. Explicit-root mode is
+`pathaudit [--] ROOT...`: every inspection root is a command-line operand, and
+the process `PATH` environment variable is ignored. Opt-in `pathaudit --path`
+reads `PATH` once, splits on ASCII `:`, and classifies each component with the
+same hazard rules. Neither mode searches for executables, walks directory
+contents, examines ancestors, or remediates anything. Lookup follows symbolic
+links like `stat(2)`.
+
+Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
 `NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`) with deterministic
-bytewise ordering. Exit status `0` means clean, `1` means hazards were found,
-and `2` means usage, limit, inspection, or write failure (reject-closed). The
-contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
+bytewise ordering. Empty PATH components (leading, trailing, or consecutive
+colons, or an explicitly empty `PATH`) are retained and report `EMPTY_ROOT`;
+they are not translated to the current directory. Relative components (not
+starting with `/`, including `.` and `..`) report `RELATIVE_ROOT` and are still
+looked up against the process working directory. Writable-directory findings
+use only the final directory target's `S_IWGRP` / `S_IWOTH` bits.
+
+Exit status `0` means every root or PATH component was inspected with no
+hazard. Status `1` means inspection completed and at least one hazard was
+emitted (including empty `PATH` → one `EMPTY_ROOT`). Status `2` means usage
+error, unset `PATH` in `--path` mode (`PATH_UNSET` on stderr, empty stdout),
+limit violation, operational metadata error, allocation failure, or stdout
+write/flush failure (reject-closed). `--path` accepts no root operands and no
+other options; mixing it with roots is a usage error.
+
+Limitations: this is a metadata snapshot, not a security lock; filesystem
+state can change concurrently. The taxonomy does not cover packages, processes,
+services, capabilities, ACLs, mount options, ownership policy, PATH shadowing,
+or executable search. Symlink loops and permission denials are status `2`, not
+new hazard codes. There is no install target for `pathaudit` yet.
+
+The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
 manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
 workspace binary via `make pathaudit` (mktemp only), or let pytest build into
-its temporary directory. Example: `pathaudit /tmp` or `pathaudit -- -dash-root`.
+its temporary directory.
+
+Examples:
+
+```sh
+pathaudit /tmp
+pathaudit -- -dash-root
+pathaudit --path
+env -u PATH pathaudit --path   # reject-closed: PATH_UNSET, exit 2
+PATH=/safe:/tmp:/safe pathaudit --path
+```
+
+### Writable PATH Directories
+
+`GROUP_WRITABLE` and `WORLD_WRITABLE` report when a resolved PATH directory
+target has group-write (`S_IWGRP`) or other-write (`S_IWOTH`) set. Both codes
+can appear for the same component. Sticky, set-ID, execute, read, owner, ACL,
+credential, and mount-policy bits neither suppress nor create these findings.
+Missing and non-directory roots receive no permission finding. Prefer private
+directory modes (for example `0700`) for trusted PATH entries, and treat
+writable PATH directories as a prompt to harden permissions rather than as a
+remediation performed by `pathaudit` itself.
 
 ## Documentation
 

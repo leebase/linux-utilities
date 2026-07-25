@@ -1,5 +1,23 @@
 # Where Am I
 
+## Writable PATH Directories
+
+Governed run `d27d2ade171f` delivered additive `pathaudit --path`: an
+opt-in mode that audits process `PATH` directory components with the
+shared hazard taxonomy (including writable-directory findings). Exact
+evidence: step-5 `make clean && make test` → 196 passed, 1 skipped;
+format/tidy/cppcheck/analyzer + `pathaudit-sanitize` /
+`pathaudit-valgrind` exit 0; ASan+UBSan pathaudit 56 passed, 1 skipped.
+Exact smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `196 passed, 1 skipped in
+18.33s`. Review
+`code-reviews/review-pathaudit-writable-path.{md,verdict.json}` is
+`pass` (0 Critical/High/Medium, 4 Low PA-WP-1–PA-WP-4); allowlisted
+pytest → 56 passed, 1 skipped. This does **not** claim that `pathaudit`
+is released or that the sysdiff smoke oracle covers `--path`. Next: keep
+Low PA-WP visible; resume prior Medium backlog.
+
 ## pathaudit Vertical-Slice Bootstrap
 
 Governed run `4dec475ef201` delivered the second utility in this suite:
@@ -16,8 +34,9 @@ coverage clean. Exact smoke (`artifacts/user-smoke/result.json`):
 `code-reviews/review-pathaudit-bootstrap.{md,verdict.json}` is `pass`
 (0 Critical/High, 2 Medium PA-M1/PA-M2, 7 Low PA-L1–PA-L7). This does
 **not** claim that `pathaudit` is released, installable, or covered by
-the existing sysdiff smoke oracle. Next: repair PA-M2 and finish PA-M1
-leftovers (CHANGELOG + architecture.md).
+the existing sysdiff smoke oracle. Prior to `--path`, next was PA-M2 /
+PA-M1 leftovers; those Mediums remain separately visible after
+`d27d2ade171f` unless a later review closes them.
 
 ## Prepared Unpublished sysdiff 0.1.0 Release Candidate
 
@@ -163,17 +182,23 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `4dec475ef201` is the additive
-`pathaudit` 0.1.0 vertical-slice bootstrap: contract, C17 scanner, man
-page, 26-test suite, and quality-gate wiring, with independent review
-`code-reviews/review-pathaudit-bootstrap.verdict.json` = `pass` (0
-Critical/High, 2 Medium PA-M1/PA-M2, 7 Low). This is **not** a pathaudit
+The current milestone after recording run `d27d2ade171f` is additive
+`pathaudit --path` (writable PATH directories): contract/scanner/tests/
+docs for the exclusive `--path` form, with independent review
+`code-reviews/review-pathaudit-writable-path.verdict.json` = `pass` (0
+Critical/High/Medium, 4 Low PA-WP-1–PA-WP-4). This is **not** a pathaudit
 release and does not change the separately prepared unpublished
-`sysdiff` 0.1.0 package from run `580b0f6ff811`. Pathaudit is covered by
-`tests/test_pathaudit.py`, not by the existing sysdiff smoke oracle.
+`sysdiff` 0.1.0 package from run `580b0f6ff811`. Pathaudit `--path` is
+covered by `tests/test_pathaudit.py`, not by the existing sysdiff smoke
+oracle.
 
 ## Milestone state
 
+- Run `d27d2ade171f` delivered and reviewed additive `pathaudit --path`:
+  step-5 full test 196 passed / 1 skipped; sanitize/valgrind/static
+  gates exit 0; smoke start/check 0; review `pass` with Low PA-WP-1–PA-WP-4
+  only; allowlisted pytest 56 passed, 1 skipped. Not a pathaudit release;
+  smoke oracle does not directly exercise `--path`.
 - Run `4dec475ef201` delivered and reviewed additive `pathaudit` 0.1.0:
   contract/source/man/26 tests/Makefile wiring; pytest 26 + full 158;
   smoke start/check 0; review `pass` with Medium PA-M1/PA-M2 and Low
@@ -355,10 +380,10 @@ release and does not change the separately prepared unpublished
 
 ## Next milestone
 
-Close Medium findings from run `4dec475ef201`: repair PA-M2 (hostile-byte
-stderr diagnostic fixture) and finish PA-M1 leftovers (CHANGELOG
-Unreleased entry plus architecture.md FindingBuffer ownership). Keep Low
-PA-L1–PA-L7 visible. Do not claim that `pathaudit` is released, and do
-not treat `tests/smoke_manifest.json` as pathaudit coverage. Separately
-preserve the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`
-and keep prior sysdiff Medium backlogs visible until repaired.
+Keep Low PA-WP-1–PA-WP-4 from run `d27d2ade171f` visible for optional
+polish. Resume prior Medium backlog repair (pathaudit PA-M2 hostile-byte
+stderr fixture / PA-M1 architecture leftovers, plus sysdiff packaging
+Mediums) without claiming those were closed by the writable-PATH review.
+Do not claim that `pathaudit` is released, and do not treat
+`tests/smoke_manifest.json` as `--path` coverage. Separately preserve
+the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`.
