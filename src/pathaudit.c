@@ -9,6 +9,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/*
+ * realpath(3) is POSIX/XSI. Declare it explicitly instead of enabling a
+ * feature-test macro: under -std=c17 those macros trip clang-tidy's
+ * bugprone-reserved-identifier check, while the rest of pathaudit compiles
+ * without feature macros (same pattern as HEAD before --command).
+ */
+char *realpath(const char *path, char *resolved_path);
+
 #define PATHAUDIT_MAX_ROOT_COUNT ((size_t)65536)
 #define PATHAUDIT_MAX_ROOT_LENGTH ((size_t)65536)
 #define PATHAUDIT_MAX_ROOT_BYTES ((size_t)(1024 * 1024))
@@ -45,10 +53,24 @@ struct FindingBuffer {
   size_t cap;
 };
 
+struct MatchBuffer {
+  char **paths; /* owned realpath strings */
+  size_t len;
+  size_t cap;
+};
+
+struct PathComponents {
+  char *storage;      /* owned PATH copy with ':' replaced by NUL */
+  struct Root *roots; /* owned; text pointers alias into storage */
+  size_t count;
+};
+
 static const char USAGE_TEXT[] = "usage: pathaudit [--] ROOT...\n"
-                                 "   or: pathaudit --path\n";
+                                 "   or: pathaudit --path\n"
+                                 "   or: pathaudit --command NAME\n";
 static const char HELP_TEXT[] = "usage: pathaudit [--] ROOT...\n"
                                 "   or: pathaudit --path\n"
+                                "   or: pathaudit --command NAME\n"
                                 "Scan PATH directory roots for hazards.\n";
 static const char VERSION_TEXT[] = "pathaudit 0.1.0\n";
 
@@ -164,6 +186,48 @@ static bool findings_append(struct FindingBuffer *buffer, const char *root,
   buffer->items[buffer->len].code = code;
   buffer->len++;
   return true;
+}
+
+static void matches_free(struct MatchBuffer *buffer) {
+  if (buffer->paths != NULL) {
+    for (size_t i = 0; i < buffer->len; i++) {
+      free(buffer->paths[i]);
+      buffer->paths[i] = NULL;
+    }
+  }
+  free((void *)buffer->paths);
+  buffer->paths = NULL;
+  buffer->len = 0;
+  buffer->cap = 0;
+}
+
+static bool matches_append(struct MatchBuffer *buffer, char *owned_path) {
+  if (buffer->len == buffer->cap) {
+    size_t new_cap = buffer->cap == 0 ? 8 : buffer->cap * 2;
+    if (new_cap <= buffer->cap ||
+        new_cap > SIZE_MAX / sizeof(buffer->paths[0])) {
+      return false;
+    }
+    char **grown = (char **)realloc((void *)buffer->paths,
+                                    new_cap * sizeof(buffer->paths[0]));
+    if (grown == NULL) {
+      return false;
+    }
+    buffer->paths = grown;
+    buffer->cap = new_cap;
+  }
+
+  buffer->paths[buffer->len] = owned_path;
+  buffer->len++;
+  return true;
+}
+
+static void path_components_free(struct PathComponents *components) {
+  free(components->roots);
+  free(components->storage);
+  components->roots = NULL;
+  components->storage = NULL;
+  components->count = 0;
 }
 
 static int compare_roots_by_bytes_then_index(const void *left,
@@ -352,16 +416,24 @@ static int handle_version(void) {
 }
 
 /*
- * Exclusive `pathaudit --path` mode.
+ * Exclusive `pathaudit --path` mode and shared PATH component loading.
  *
  * Ownership: path_storage is a malloc'd copy of the PATH value with ':'
  * replaced by NULs so each component is a C string. roots[].text pointers
  * alias into path_storage and must not outlive it. Both path_storage and
- * roots are freed on every exit path from this function. getenv("PATH") is
- * called once; its returned pointer is treated as hostile opaque bytes and
- * is only read to compute length/count and to copy into path_storage.
+ * roots are freed on every exit path from callers via path_components_free.
+ * getenv("PATH") is called once; its returned pointer is treated as hostile
+ * opaque bytes and is only read to compute length/count and to copy into
+ * path_storage.
+ *
+ * Returns 0 on success. On failure, emits a diagnostic and returns 2 with
+ * *components left zeroed / freed.
  */
-static int run_path_mode(void) {
+static int path_components_load(struct PathComponents *components) {
+  components->storage = NULL;
+  components->roots = NULL;
+  components->count = 0;
+
   const char *path_env = getenv("PATH");
   if (path_env == NULL) {
     emit_diag_reason("PATH_UNSET");
@@ -455,9 +527,327 @@ static int run_path_mode(void) {
     return 2;
   }
 
-  int status = run_audit(roots, root_count);
-  free(roots);
-  free(path_storage);
+  components->storage = path_storage;
+  components->roots = roots;
+  components->count = root_count;
+  return 0;
+}
+
+static int run_path_mode(void) {
+  struct PathComponents components;
+  int load_status = path_components_load(&components);
+  if (load_status != 0) {
+    return load_status;
+  }
+
+  int status = run_audit(components.roots, components.count);
+  path_components_free(&components);
+  return status;
+}
+
+static bool command_name_is_valid(const char *name) {
+  if (name[0] == '\0') {
+    return false;
+  }
+  for (const unsigned char *p = (const unsigned char *)name; *p != '\0'; p++) {
+    if (*p == '/') {
+      return false;
+    }
+  }
+  return true;
+}
+
+/*
+ * Build dir/command candidate path. Empty PATH components search the cwd via
+ * the bare command name (POSIX empty-field-as-"." search). Caller owns *out
+ * on success. Returns 0 on success, 2 on allocation failure.
+ * On success with an overlong candidate, *out is NULL (treated as no match).
+ */
+static int build_command_candidate(const struct Root *root, const char *command,
+                                   char **out) {
+  *out = NULL;
+  size_t cmd_len = strlen(command);
+
+  if (root->len == 0) {
+    if (cmd_len > PATHAUDIT_MAX_ROOT_LENGTH) {
+      return 0;
+    }
+    char *candidate = malloc(cmd_len + 1);
+    if (candidate == NULL) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    memcpy(candidate, command, cmd_len + 1);
+    *out = candidate;
+    return 0;
+  }
+
+  bool need_slash = root->text[root->len - 1] != '/';
+  size_t slash = need_slash ? (size_t)1 : (size_t)0;
+  size_t total;
+  if (!size_add_ok(root->len, slash, &total) ||
+      !size_add_ok(total, cmd_len, &total)) {
+    return 0;
+  }
+  if (total > PATHAUDIT_MAX_ROOT_LENGTH) {
+    return 0;
+  }
+
+  char *candidate = malloc(total + 1);
+  if (candidate == NULL) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  memcpy(candidate, root->text, root->len);
+  size_t pos = root->len;
+  if (need_slash) {
+    candidate[pos++] = '/';
+  }
+  memcpy(candidate + pos, command, cmd_len + 1);
+  *out = candidate;
+  return 0;
+}
+
+/*
+ * If root/command names a regular executable, set *match_out to an owned
+ * realpath string. Otherwise *match_out is NULL. Returns 0, or 2 on fatal
+ * allocation failure (diagnostics emitted).
+ */
+static int try_command_match(const struct Root *root, const char *command,
+                             char **match_out) {
+  *match_out = NULL;
+
+  char *candidate = NULL;
+  int build_status = build_command_candidate(root, command, &candidate);
+  if (build_status != 0) {
+    return build_status;
+  }
+  if (candidate == NULL) {
+    return 0;
+  }
+
+  struct stat st;
+  if (stat(candidate, &st) != 0 || !S_ISREG(st.st_mode) ||
+      access(candidate, X_OK) != 0) {
+    free(candidate);
+    return 0;
+  }
+
+  char *resolved_buf = malloc(PATHAUDIT_MAX_ROOT_LENGTH + 1);
+  if (resolved_buf == NULL) {
+    free(candidate);
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+
+  errno = 0;
+  if (realpath(candidate, resolved_buf) == NULL) {
+    int err = errno;
+    free(candidate);
+    free(resolved_buf);
+    if (err == ENOMEM) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    /* ENAMETOOLONG and other resolution failures: no match. */
+    return 0;
+  }
+  free(candidate);
+
+  *match_out = resolved_buf;
+  return 0;
+}
+
+/*
+ * Command-query hazard classification: same taxonomy as classify_root, but
+ * only appends findings that are applicable to a bounded command search.
+ * Cwd-dependent codes always apply. Absolute MISSING/NON_DIRECTORY are
+ * suppressed. Permission findings apply when this component produced a MATCH
+ * or when no earlier MATCH exists (plant risk before the winner).
+ */
+static int classify_command_component(const struct Root *root,
+                                      bool permission_applicable,
+                                      struct FindingBuffer *findings) {
+  bool cwd_dependent = root_is_cwd_dependent(root);
+
+  if (root->len == 0) {
+    if (!findings_append(findings, root->text, root->index,
+                         HAZARD_EMPTY_ROOT)) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    return 0;
+  }
+
+  if (cwd_dependent) {
+    if (!findings_append(findings, root->text, root->index,
+                         HAZARD_RELATIVE_ROOT)) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+  }
+
+  struct stat st;
+  if (stat(root->text, &st) != 0) {
+    int err = errno;
+    if (err == ENOENT) {
+      if (cwd_dependent) {
+        if (!findings_append(findings, root->text, root->index,
+                             HAZARD_MISSING_ROOT)) {
+          emit_diag_reason("OUT_OF_MEMORY");
+          return 2;
+        }
+      }
+      return 0;
+    }
+    if (err == ENOTDIR) {
+      if (cwd_dependent) {
+        if (!findings_append(findings, root->text, root->index,
+                             HAZARD_NON_DIRECTORY_ROOT)) {
+          emit_diag_reason("OUT_OF_MEMORY");
+          return 2;
+        }
+      }
+      return 0;
+    }
+
+    char reason[64];
+    int written = snprintf(reason, sizeof(reason), "INSPECTION_ERROR_%d", err);
+    if (written < 0 || (size_t)written >= sizeof(reason)) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    emit_diag_reason_root(reason, root->text);
+    return 2;
+  }
+
+  if (!S_ISDIR(st.st_mode)) {
+    if (cwd_dependent) {
+      if (!findings_append(findings, root->text, root->index,
+                           HAZARD_NON_DIRECTORY_ROOT)) {
+        emit_diag_reason("OUT_OF_MEMORY");
+        return 2;
+      }
+    }
+    return 0;
+  }
+
+  if (permission_applicable) {
+    if ((st.st_mode & S_IWGRP) != 0) {
+      if (!findings_append(findings, root->text, root->index,
+                           HAZARD_GROUP_WRITABLE)) {
+        emit_diag_reason("OUT_OF_MEMORY");
+        return 2;
+      }
+    }
+    if ((st.st_mode & S_IWOTH) != 0) {
+      if (!findings_append(findings, root->text, root->index,
+                           HAZARD_WORLD_WRITABLE)) {
+        emit_diag_reason("OUT_OF_MEMORY");
+        return 2;
+      }
+    }
+  }
+  return 0;
+}
+
+static int emit_command_query(const struct MatchBuffer *matches,
+                              const struct FindingBuffer *findings) {
+  for (size_t i = 0; i < matches->len; i++) {
+    if (fputs_checked("MATCH", stdout) != 0 ||
+        fputc_checked('\t', stdout) != 0 ||
+        put_escaped_quoted(stdout, matches->paths[i]) != 0 ||
+        fputc_checked('\n', stdout) != 0) {
+      return emit_stdout_write_error();
+    }
+  }
+
+  for (size_t i = 0; i < findings->len; i++) {
+    const struct Finding *item = &findings->items[i];
+    if (fputs_checked(HAZARD_NAMES[item->code], stdout) != 0 ||
+        fputc_checked('\t', stdout) != 0 ||
+        put_escaped_quoted(stdout, item->root) != 0 ||
+        fputc_checked('\n', stdout) != 0) {
+      return emit_stdout_write_error();
+    }
+  }
+  return complete_stdout(findings->len == 0 ? 0 : 1);
+}
+
+/*
+ * Exclusive `pathaudit --command NAME` mode.
+ *
+ * Walks PATH components in resolution order. MATCH lines name realpath'd
+ * regular executables for this basename only. Hazard lines use the existing
+ * taxonomy but only when applicable to the query (cwd-dependent entries,
+ * permission plant-risk before the first MATCH, and permission findings on
+ * match-bearing directories). Absolute MISSING/NON_DIRECTORY noise is omitted.
+ *
+ * Ownership: PathComponents storage aliases into findings roots; MatchBuffer
+ * owns realpath strings. All heap state is freed on every exit path.
+ */
+static int run_command_mode(const char *command) {
+  if (!command_name_is_valid(command)) {
+    emit_diag_reason_root("INVALID_COMMAND", command);
+    return 2;
+  }
+
+  struct PathComponents components;
+  int load_status = path_components_load(&components);
+  if (load_status != 0) {
+    return load_status;
+  }
+
+  struct MatchBuffer matches = {0};
+  struct FindingBuffer findings = {0};
+  bool seen_match = false;
+
+  for (size_t i = 0; i < components.count; i++) {
+    const struct Root *root = &components.roots[i];
+    char *match_path = NULL;
+    int match_status = try_command_match(root, command, &match_path);
+    if (match_status != 0) {
+      matches_free(&matches);
+      findings_free(&findings);
+      path_components_free(&components);
+      return match_status;
+    }
+
+    bool has_match = (match_path != NULL);
+    bool permission_applicable = has_match || !seen_match;
+
+    int class_status =
+        classify_command_component(root, permission_applicable, &findings);
+    if (class_status != 0) {
+      free(match_path);
+      matches_free(&matches);
+      findings_free(&findings);
+      path_components_free(&components);
+      return class_status;
+    }
+
+    if (has_match) {
+      if (!matches_append(&matches, match_path)) {
+        free(match_path);
+        matches_free(&matches);
+        findings_free(&findings);
+        path_components_free(&components);
+        emit_diag_reason("OUT_OF_MEMORY");
+        return 2;
+      }
+      seen_match = true;
+    }
+  }
+
+  if (findings.len > 1) {
+    qsort(findings.items, findings.len, sizeof(findings.items[0]),
+          compare_findings);
+  }
+
+  int status = emit_command_query(&matches, &findings);
+  matches_free(&matches);
+  findings_free(&findings);
+  path_components_free(&components);
   return status;
 }
 
@@ -557,6 +947,14 @@ int main(int argc, char **argv) {
       return 2;
     }
     return run_path_mode();
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--command") == 0) {
+    if (argc != 3) {
+      emit_usage_diag("USAGE");
+      return 2;
+    }
+    return run_command_mode(argv[2]);
   }
 
   int argi = 1;

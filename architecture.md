@@ -131,3 +131,31 @@ networking, or background work in this architecture.
   local harness executables before governed work depends on those routes, but
   they must not launch Agent-Orch, start model sessions, choose fallback routes,
   mutate playbooks, install packages, or expand `sysdiff` product behavior.
+
+## 2026-07-25 — pathaudit `--command` single-basename inspection
+
+**Decision:** Exclusive opt-in `pathaudit --command NAME` walks the process
+`PATH` once in resolution order for a single basename. It emits `MATCH`
+lines (`realpath` of regular files with `X_OK`) in PATH order, then
+applicable shared-taxonomy hazard lines with plant-risk-before-winner
+applicability (`permission_applicable = has_match || !seen_match`). Empty
+or `/`-containing names reject-close as `INVALID_COMMAND`; unset `PATH`
+reject-closes as `PATH_UNSET`. Unrelated basenames in the same directories
+are never enumerated.
+
+**Rationale:** Operators often care whether a named command is plantable or
+shadowed, not about every PATH directory in isolation. Scoping to one
+basename keeps output auditable and avoids collision flooding while reusing
+the existing PATH split, hazard taxonomy, and escape rules.
+
+**Alternatives rejected:** Extending `--path` with optional name filtering
+(mixed mode semantics and harder arity rules); enumerating all same-directory
+basenames (noisy and out of scope); rewriting empty PATH fields to `.`
+before lookup (would hide cwd-dependent plant risk already classified by
+`--path`).
+
+**Consequences:** `pathaudit` now has three exclusive modes (explicit roots,
+`--path`, `--command`). Classification for `--command` currently near-
+duplicates `--path` root classification with applicability gating
+(Low pathaudit-cmd-1). This slice does not add an install target or claim a
+`pathaudit` release.

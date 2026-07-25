@@ -1,5 +1,26 @@
 # Where Am I
 
+## Command-Specific PATH Risk Inspection
+
+Governed run `2b2fb272c21a` delivered bounded command-specific PATH
+risk inspection for `pathaudit --command NAME`: PATH-order `MATCH`
+lines for one basename; plant-risk-before-winner shared-taxonomy
+hazards; `INVALID_COMMAND` / `PATH_UNSET` reject-close; single-
+basename collision filtering. Exact evidence: step-4
+`make clean && make test` → 230 passed, 1 skipped; full pytest 230
+passed, 1 skipped; format/tidy/cppcheck/analyzer/man-check +
+`pathaudit-sanitize` / `pathaudit-valgrind` exit 0; pathaudit pytest
+90 passed, 1 skipped. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`230 passed, 1 skipped in 18.98s`. Review
+`code-reviews/review-command-specific-path-risk.{md,verdict.json}`
+is `pass` (0 Critical/High/Medium, 2 Low pathaudit-cmd-1/2);
+allowlisted full pytest → 230 passed, 1 skipped. This does **not**
+claim that `pathaudit` is released or that the sysdiff smoke oracle
+covers `--command`. Next: keep Low pathaudit-cmd visible; resume
+prior Medium backlog.
+
 ## Working-Directory-Dependent PATH Entries
 
 Governed run `79a1cc2bac7a` delivered working-directory-dependent PATH
@@ -201,18 +222,26 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `79a1cc2bac7a` is
-working-directory-dependent PATH detection for `pathaudit --path`
-(empty/`RELATIVE_ROOT` classification and cwd lookup), with independent
-review `code-reviews/review-pathaudit-working-directory-path.verdict.json`
-= `pass` (0 Critical/High/Medium, 2 Low pathaudit-wdp-1/2). This is
-**not** a pathaudit release and does not change the separately prepared
-unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`. Cwd-dependent
-`--path` behavior is covered by `tests/test_pathaudit.py`, not by the
-existing sysdiff smoke oracle.
+The current milestone after recording run `2b2fb272c21a` is
+command-specific PATH risk inspection for `pathaudit --command NAME`
+(PATH-order MATCH lines, plant-risk-before-winner hazards,
+single-basename collision filtering), with independent review
+`code-reviews/review-command-specific-path-risk.verdict.json` = `pass`
+(0 Critical/High/Medium, 2 Low pathaudit-cmd-1/2). This is **not** a
+pathaudit release and does not change the separately prepared
+unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
+`--command` behavior is covered by `tests/test_pathaudit.py`, not by
+the existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `2b2fb272c21a` delivered and reviewed command-specific PATH risk
+  inspection: step-4 `make clean && make test` → 230/1; full pytest
+  230/1; format/tidy/cppcheck/analyzer/man + sanitize/valgrind exit 0;
+  pathaudit pytest 90/1; smoke start/check 0; review `pass` with Low
+  pathaudit-cmd-1/2 only; allowlisted full pytest 230 passed, 1
+  skipped. Not a pathaudit release; smoke oracle does not directly
+  exercise `--command`.
 - Run `79a1cc2bac7a` delivered and reviewed working-directory-dependent
   PATH detection: step-4 GCC/Clang `-fsyntax-only` + cppcheck exit 0;
   pathaudit pytest 62/1; full pytest 202/1; smoke start/check 0; review
@@ -405,11 +434,11 @@ existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep Low pathaudit-wdp-1/2 from run `79a1cc2bac7a` and prior Low
-PA-WP-1–PA-WP-4 visible for optional polish. Resume prior Medium backlog
-repair (pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
-leftovers, plus sysdiff packaging Mediums) without claiming those were
-closed by the cwd-dependent PATH review. Do not claim that `pathaudit`
-is released, and do not treat `tests/smoke_manifest.json` as
-cwd-dependent `--path` coverage. Separately preserve the unpublished
-`sysdiff` 0.1.0 candidate from `580b0f6ff811`.
+Keep Low pathaudit-cmd-1/2 from run `2b2fb272c21a` and prior Low
+pathaudit-wdp-1/2 and PA-WP-1–PA-WP-4 visible for optional polish.
+Resume prior Medium backlog repair (pathaudit PA-M2 hostile-byte
+stderr fixture / PA-M1 architecture leftovers, plus sysdiff packaging
+Mediums) without claiming those were closed by the `--command` review.
+Do not claim that `pathaudit` is released, and do not treat
+`tests/smoke_manifest.json` as `--command` coverage. Separately
+preserve the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`.

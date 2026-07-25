@@ -1,5 +1,27 @@
 # Sprint Plan
 
+## Command-Specific PATH Risk Inspection
+
+Governed run `2b2fb272c21a` (playbook
+`template_repair_before_review_feature_delivery`) delivered bounded
+command-specific PATH risk inspection for `pathaudit --command NAME`
+(PATH-order MATCH lines for one basename; plant-risk-before-winner
+hazards; `INVALID_COMMAND` / `PATH_UNSET` reject-close). Exact
+verification (step-4): `make clean && make test` → 230 passed, 1
+skipped; full pytest → 230 passed, 1 skipped; format/tidy/cppcheck/
+analyzer/man-check + `pathaudit-sanitize` / `pathaudit-valgrind`
+exited 0; pathaudit pytest → 90 passed, 1 skipped. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `230 passed, 1 skipped in
+18.98s`). Review
+`code-reviews/review-command-specific-path-risk.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium, 2 Low pathaudit-cmd-1/2).
+Allowlisted review check: full pytest → 230 passed, 1 skipped. Do
+**not** claim that `pathaudit` is released. Next: keep Low
+pathaudit-cmd visible; resume prior Medium backlog; do not treat
+sysdiff smoke as `--command` coverage.
+
 ## Working-Directory-Dependent PATH Entries
 
 Governed run `79a1cc2bac7a` (playbook
@@ -215,6 +237,25 @@ or release closure from this slice.
 ## Current sprint
 
 - [x] Deliver, smoke-test, independently review, and close out
+  command-specific PATH risk inspection for `pathaudit --command NAME`
+  in run `2b2fb272c21a`,
+  `template_repair_before_review_feature_delivery`. Exact evidence:
+  step-4 `make clean && make test` → 230 passed, 1 skipped; full pytest
+  230 passed / 1 skipped; format/tidy/cppcheck/analyzer/man-check +
+  `pathaudit-sanitize`/`pathaudit-valgrind` exit 0; pathaudit pytest
+  90 passed / 1 skipped; smoke start/check 0 with empty
+  `blocking_errors` (check.log pytest `230 passed, 1 skipped in
+  18.98s`); review verdict `pass` with 0 Critical/High/Medium and 2
+  Low (pathaudit-cmd-1, pathaudit-cmd-2); allowlisted full pytest →
+  230 passed, 1 skipped. Not a pathaudit release; sysdiff smoke oracle
+  does not directly exercise `--command`.
+- [ ] Next after `2b2fb272c21a`: keep Low pathaudit-cmd-1/2 and prior
+  Low pathaudit-wdp-1/2 and PA-WP-1–PA-WP-4 visible for optional
+  polish; resume prior Medium backlog (pathaudit PA-M2 / PA-M1
+  leftovers and sysdiff packaging Mediums) without claiming those were
+  closed by this review; do not claim that `pathaudit` is released or
+  that `tests/smoke_manifest.json` covers `--command` behavior.
+- [x] Deliver, smoke-test, independently review, and close out
   working-directory-dependent PATH detection for `pathaudit --path` in
   run `79a1cc2bac7a`,
   `pathaudit_working_directory_dependent_path_entries`. Exact evidence:
@@ -226,10 +267,8 @@ or release closure from this slice.
   allowlisted pathaudit pytest → 62 passed, 1 skipped; full pytest →
   202 passed, 1 skipped. Not a pathaudit release; sysdiff smoke oracle
   does not directly exercise cwd-dependent `--path` detection.
-- [ ] Next after `79a1cc2bac7a`: keep Low pathaudit-wdp-1/2 and prior
-  Low PA-WP-1–PA-WP-4 visible for optional polish; resume prior Medium
-  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
-  Mediums) without claiming those were closed by this review; do not
+- [ ] Keep Low pathaudit-wdp-1/2 from `79a1cc2bac7a` visible for
+  optional polish unless a later review explicitly closes them; do not
   claim that `pathaudit` is released or that `tests/smoke_manifest.json`
   covers cwd-dependent `--path` behavior.
 - [x] Deliver, smoke-test, independently review, and close out additive

@@ -1,5 +1,43 @@
 # Result Review
 
+## Command-Specific PATH Risk Inspection
+
+Governed run `2b2fb272c21a` (playbook
+`template_repair_before_review_feature_delivery`) delivered bounded
+command-specific PATH risk inspection for exclusive opt-in
+`pathaudit --command NAME`: walk process `PATH` in resolution order
+for one basename; emit `MATCH` lines (`realpath` of regular `X_OK`
+files) in PATH order including shadows/repeats; then emit applicable
+shared-taxonomy hazard lines with plant-risk-before-winner
+applicability; reject empty or `/`-containing names as
+`INVALID_COMMAND`; unset `PATH` reject-closes as `PATH_UNSET`. Exact
+deliverables touched in-run: `tests/test_pathaudit.py`,
+`src/pathaudit.c`, `README.md`, `man/pathaudit.1`. Exact step-4
+verification: `make clean && make test` → 230 passed, 1 skipped;
+`python3 -m pytest tests/ -q` → 230 passed, 1 skipped; format-check,
+clang-tidy-check, cppcheck-check, clang-analyzer-check, man-check,
+`pathaudit-sanitize`, and `pathaudit-valgrind` exited 0; pathaudit
+suite alone → 90 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `230 passed, 1 skipped in
+18.98s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise `--command`; pathaudit coverage is
+`tests/test_pathaudit.py`. Independent review artifacts:
+`code-reviews/review-command-specific-path-risk.md` and
+`code-reviews/review-command-specific-path-risk.verdict.json`.
+Verdict: `pass` with no Critical, High, or Medium findings and two
+Low findings (pathaudit-cmd-1 near-duplicate classification logic
+between `classify_command_component` and `classify_root`;
+pathaudit-cmd-2 dead `root->len == 0` disjunct in
+`root_is_cwd_dependent`). Allowlisted review check:
+`python3 -m pytest tests/ -q` → exit 0, 230 passed, 1 skipped in
+~18.7s. Remaining risks: Low pathaudit-cmd-1/2 plus prior pathaudit
+Low pathaudit-wdp-1/2 and PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2
+leftovers, and sysdiff Medium backlogs not closed by this review.
+Recommended next action: optional Low polish; resume prior Medium
+backlog repair. Do not claim that `pathaudit` is released.
+
 ## Working-Directory-Dependent PATH Entries
 
 Governed run `79a1cc2bac7a` (playbook

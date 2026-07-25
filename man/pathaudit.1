@@ -10,13 +10,16 @@ pathaudit \(em scan PATH directory roots for hazards
 .P
 .B pathaudit \-\-path
 .P
+.B pathaudit \-\-command
+.I NAME
+.P
 .B pathaudit \-\-help
 .P
 .B pathaudit \-\-version
 .SH DESCRIPTION
 .B pathaudit
 is a small ISO C17 command\-line scanner for risks in PATH directory entries.
-It supports two exclusive invocation modes.
+It supports three exclusive invocation modes.
 .P
 Explicit\-root mode is
 .BR "pathaudit [\-\-] ROOT..." .
@@ -53,14 +56,43 @@ and exits with status
 .B 1
 when inspection completes.
 .P
-Neither mode searches for executables, walks directory contents, examines
-ancestor directories, or remediates anything.
+Opt\-in
+.B pathaudit \-\-command
+.I NAME
+reads
+.B PATH
+the same way as
+.BR \-\-path ,
+then walks components in resolution order for one command basename only.
+It emits
+.B MATCH
+lines for regular executable candidates of that basename, then applicable
+hazard lines from the shared taxonomy.
+It does not flood stdout with unrelated executables that merely share a PATH
+directory
+.RI ( "benign basename collisions" ).
+Unset
+.B PATH
+is reject\-closed exactly as for
+.BR \-\-path .
+.P
+Explicit\-root and
+.B \-\-path
+modes do not search for executables.
+None of the modes walk directory contents, examine ancestor directories, or
+remediate anything.
 One root or one PATH component is one inspection input; duplicates remain
 distinct.
 Inspection is read\-only and requires no special privilege.
 Classification uses the root bytes and one
 .BR stat (2) \-equivalent
-lookup of the final target.
+lookup of the final target
+.RB ( \-\-command
+also probes
+.IR dir/NAME
+candidates and may
+.BR realpath (3)
+matches).
 Ordering and escaping are byte\-oriented and locale\-independent.
 .P
 This narrow slice does not inspect packages, processes, services, capabilities,
@@ -85,8 +117,38 @@ Combining
 .B \-\-path
 with any
 .I ROOT
-operand, with another non\-informational option, or with a second
+operand, with
+.BR \-\-command ,
+with another non\-informational option, or with a second
 .B \-\-path
+is a usage error.
+.TP
+.BI \-\-command " NAME"
+Walk process
+.B PATH
+in resolution order for the single command basename
+.IR NAME .
+Requires exactly one
+.I NAME
+operand and accepts no roots or other options.
+.I NAME
+must be nonempty and must not contain
+.BR / ;
+otherwise stderr reports
+.B INVALID_COMMAND
+with the escaped operand and the exit status is
+.B 2
+with empty stdout.
+Leading\-dash names are accepted as
+.I NAME
+(for example
+.BR \-\-command \-tool ).
+Combining
+.B \-\-command
+with roots,
+.BR \-\-path ,
+extra operands, or a missing
+.I NAME
 is a usage error.
 .TP
 .B \-\-help
@@ -105,10 +167,11 @@ Extra operands are a usage error.
 A stdout write or flush failure returns status
 .BR 2 .
 .SH PATH HAZARDS
-The closed hazard taxonomy for this slice is shared by explicit roots and by
-every
+The closed hazard taxonomy for this slice is shared by explicit roots, by every
 .B \-\-path
-component:
+component, and by applicable
+.B \-\-command
+components:
 .TP
 .B EMPTY_ROOT
 The operand or PATH component has zero bytes.
@@ -170,6 +233,27 @@ A directory with both group\- and world\-write bits produces both findings.
 Sticky, set\-ID, execute, read, owner, ACL, credential, and mount\-policy state
 neither suppress nor create a finding.
 .P
+In
+.B \-\-command
+mode, hazard applicability is narrowed to the query:
+empty and relative PATH fields always remain cwd\-dependent hazards;
+absolute
+.B MISSING_ROOT
+and
+.B NON_DIRECTORY_ROOT
+before a clean winner are omitted;
+.B GROUP_WRITABLE
+and
+.B WORLD_WRITABLE
+apply to directories that produced a
+.B MATCH
+and to writable directories that still precede the first
+.B MATCH
+(plant risk);
+a writable absolute directory after the winner with no match for
+.I NAME
+is not reported.
+.P
 Each finding is one stdout line:
 .B CODE
 , a TAB, a quoted escaped root, and a newline.
@@ -179,7 +263,13 @@ Every applicable code is emitted once per input.
 .P
 Exit status
 .B 0
-means every root or PATH component was inspected and no hazard was found.
+means inspection completed and no hazard was found
+(in
+.B \-\-command
+mode,
+.B MATCH
+lines alone do not force status
+.BR 1 ).
 Status
 .B 1
 means inspection completed and at least one hazard was emitted.
@@ -189,15 +279,58 @@ means usage failure, unset
 .B PATH
 in
 .B \-\-path
-mode, an input\-limit violation, a metadata error not classified as a hazard
+or
+.B \-\-command
+mode, an invalid
+.B \-\-command
+.IR NAME ,
+an input\-limit violation, a metadata error not classified as a hazard
 (for example symlink loops or
 .BR EACCES ),
 allocation failure, or an output write/flush failure.
 Limit and inspection failures are reject\-closed: buffered findings are
 discarded and stdout remains empty.
+.SH COMMAND QUERY
+.B pathaudit \-\-command
+.I NAME
+is bounded command\-specific PATH risk inspection.
+It walks PATH components left to right.
+For each component it builds a candidate path
+.RI ( NAME
+alone when the component is empty;
+otherwise
+.IR dir/NAME )
+and, when that path names a regular file with execute permission, appends one
+.B MATCH
+line whose value is the
+.BR realpath (3)
+of the candidate.
+Non\-executable files and directories named like
+.I NAME
+are not matches.
+Repeated PATH entries preserve separate match positions.
+Shadowing is visible as multiple
+.B MATCH
+lines in PATH order.
+.P
+Stdout order is all
+.B MATCH
+lines first (PATH order), then applicable hazard lines (deterministic finding
+order).
+Other executables that share a PATH directory but have a different basename
+are unrelated benign collisions and never appear.
+.P
+Diagnostics go only to stderr.
+.B INVALID_COMMAND
+includes the escaped
+.IR NAME .
+.B PATH_UNSET
+does not append the usage synopsis.
 .SH OUTPUT
 Findings use the form
 .BR CODE<TAB>"ESCAPED_ROOT" .
+Command\-query matches use the form
+.BR MATCH<TAB>"ESCAPED_PATH" .
 Inside the quotes, printable ASCII bytes
 .B 0x20
 through
@@ -216,17 +349,21 @@ An empty operand or empty PATH component is rendered as
 .BR \&"" .
 Diagnostics go only to stderr as
 .B pathaudit: REASON
-optionally followed by a quoted root.
+optionally followed by a quoted root or command name.
 .B PATH_UNSET
 does not append the usage synopsis.
 .SH EXIT STATUS
 .TP
 .B 0
-Every root or PATH component inspected; no hazard found.
+Inspection completed; no hazard found.
 Also used for successful
 .B \-\-help
 and
 .BR \-\-version .
+In
+.B \-\-command
+mode, successful matches with no applicable hazard still exit
+.BR 0 .
 .TP
 .B 1
 Inspection completed; at least one hazard emitted
@@ -240,8 +377,14 @@ Usage error, unset
 .B PATH
 in
 .B \-\-path
+or
+.B \-\-command
 mode
 .RB ( PATH_UNSET ),
+invalid
+.B \-\-command
+.I NAME
+.RB ( INVALID_COMMAND ),
 limit violation, operational metadata error, allocation failure,
 or stdout write/flush failure.
 .SH RESOURCE LIMITS
@@ -254,7 +397,12 @@ Maximum aggregate root/component bytes including terminating NULs: 1\|048\|576.
 .P
 In
 .B \-\-path
-mode those limits apply to components after colon splitting.
+and
+.B \-\-command
+modes those limits apply to components after colon splitting.
+Overlong
+.B \-\-command
+candidate paths are treated as non\-matches rather than limit failures.
 .SH EXAMPLES
 .RS
 .nf
@@ -262,8 +410,10 @@ pathaudit /tmp
 pathaudit \-\- \-dash-root
 pathaudit /safe /group-writable /missing
 pathaudit \-\-path
+pathaudit \-\-command ls
 env \-u PATH pathaudit \-\-path
 PATH=/safe:/tmp:/safe pathaudit \-\-path
+PATH=/safe:/tmp pathaudit \-\-command tool
 .fi
 .RE
 .P
@@ -280,8 +430,16 @@ with a private directory and a world\-writable directory emits
 .B WORLD_WRITABLE
 for the writable component and exits with status
 .BR 1 .
+.B pathaudit \-\-command tool
+emits
+.B MATCH
+lines only for the basename
+.B tool
+in PATH order, then applicable hazards for that query, without listing other
+basenames in the same directories.
 .SH SEE ALSO
 .BR stat (2),
+.BR realpath (3),
 .BR environ (7),
 .BR sysdiff (1)
 .SH AUTHOR

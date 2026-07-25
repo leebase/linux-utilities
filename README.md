@@ -268,13 +268,16 @@ no changes
 ## pathaudit
 
 `pathaudit` 0.1.0 is a small ISO C17 scanner for hazards in PATH directory
-roots. It has two exclusive modes. Explicit-root mode is
+roots. It has three exclusive modes. Explicit-root mode is
 `pathaudit [--] ROOT...`: every inspection root is a command-line operand, and
 the process `PATH` environment variable is ignored. Opt-in `pathaudit --path`
 reads `PATH` once, splits on ASCII `:`, and classifies each component with the
-same hazard rules. Neither mode searches for executables, walks directory
-contents, examines ancestors, or remediates anything. Lookup follows symbolic
-links like `stat(2)`.
+same hazard rules. Opt-in `pathaudit --command NAME` reads `PATH` the same way
+but walks components in resolution order for one basename only (see
+Command-specific PATH risk inspection below). Explicit-root and `--path` modes
+do not search for executables. None of the modes walk directory contents,
+examine ancestors, or remediate anything. Lookup follows symbolic links like
+`stat(2)`.
 
 Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
 `NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`) with deterministic
@@ -288,15 +291,17 @@ use only the final directory target's `S_IWGRP` / `S_IWOTH` bits.
 Exit status `0` means every root or PATH component was inspected with no
 hazard. Status `1` means inspection completed and at least one hazard was
 emitted (including empty `PATH` → one `EMPTY_ROOT`). Status `2` means usage
-error, unset `PATH` in `--path` mode (`PATH_UNSET` on stderr, empty stdout),
-limit violation, operational metadata error, allocation failure, or stdout
-write/flush failure (reject-closed). `--path` accepts no root operands and no
-other options; mixing it with roots is a usage error.
+error, unset `PATH` in `--path` or `--command` mode (`PATH_UNSET` on stderr,
+empty stdout), invalid `--command` name (`INVALID_COMMAND`), limit violation,
+operational metadata error, allocation failure, or stdout write/flush failure
+(reject-closed). `--path` and `--command` accept no root operands and no other
+options; mixing them with roots or with each other is a usage error.
 
 Limitations: this is a metadata snapshot, not a security lock; filesystem
 state can change concurrently. The taxonomy does not cover packages, processes,
-services, capabilities, ACLs, mount options, ownership policy, PATH shadowing,
-or executable search. Symlink loops and permission denials are status `2`, not
+services, capabilities, ACLs, mount options, or ownership policy. Explicit-root
+and `--path` do not perform executable search; `--command` searches only the
+queried basename. Symlink loops and permission denials are status `2`, not
 new hazard codes. There is no install target for `pathaudit` yet.
 
 The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
@@ -310,6 +315,7 @@ Examples:
 pathaudit /tmp
 pathaudit -- -dash-root
 pathaudit --path
+pathaudit --command ls
 env -u PATH pathaudit --path   # reject-closed: PATH_UNSET, exit 2
 PATH=/safe:/tmp:/safe pathaudit --path
 ```
@@ -346,6 +352,34 @@ Missing and non-directory roots receive no permission finding. Prefer private
 directory modes (for example `0700`) for trusted PATH entries, and treat
 writable PATH directories as a prompt to harden permissions rather than as a
 remediation performed by `pathaudit` itself.
+
+### Command-specific PATH risk inspection
+
+Exclusive `pathaudit --command NAME` walks the process `PATH` in resolution
+order for one command basename. `NAME` must be nonempty and must not contain
+`/`; otherwise stderr reports `INVALID_COMMAND` with the escaped operand and
+the process exits `2` with empty stdout. Unset `PATH` is reject-closed
+(`PATH_UNSET`, exit `2`), matching `--path`. Extra operands, missing `NAME`,
+or mixing `--command` with roots or `--path` is a usage error (exit `2`).
+
+Stdout lists every regular executable match for that basename as
+`MATCH<TAB>"realpath"` lines in PATH order (including shadows and repeated
+components), then applicable hazard lines from the shared taxonomy. Empty and
+relative PATH fields always remain cwd-dependent hazards (`EMPTY_ROOT` /
+`RELATIVE_ROOT`, plus missing or non-directory findings when those relative
+lookups fail). Absolute `MISSING_ROOT` / `NON_DIRECTORY_ROOT` noise before a
+winner is omitted. `GROUP_WRITABLE` / `WORLD_WRITABLE` apply to directories
+that produced a `MATCH` and to writable absolute directories that still precede
+the first match (plant risk); a writable directory after the winner with no
+match for `NAME` is not reported. Exit `0` means the query finished with no
+hazard lines (matches alone do not force status `1`); exit `1` means at least
+one hazard was emitted; exit `2` covers usage, `INVALID_COMMAND`, `PATH_UNSET`,
+limits, inspection errors, allocation failure, and stdout write/flush failure.
+
+This is targeted risk inspection for one basename: other executables that
+happen to share a PATH directory are unrelated benign basename collisions and
+are never listed. Non-executable files and directories named like `NAME` are
+not matches. `pathaudit` still does not remediate `PATH` or rewrite entries.
 
 ## Documentation
 

@@ -5,8 +5,8 @@ temporary directory, exercises only deterministic temporary fixtures, and never
 inspects the worker's ambient PATH for discovery, requires root, uses the
 network, or leaves binaries in the workspace. Child processes receive a
 controlled environment: explicit-root cases seal PATH against search, while
-`--path` cases set or unset PATH deliberately. Sanitizer/Valgrind options
-declared by Makefile memory gates are allowlist-forwarded into the child
+`--path` and `--command` cases set or unset PATH deliberately. Sanitizer/Valgrind
+options declared by Makefile memory gates are allowlist-forwarded into the child
 environment.
 
 Also encodes the stable Makefile contract for pathaudit-sanitize and
@@ -14,6 +14,10 @@ pathaudit-valgrind: ASan+UBSan with strict warnings and frame pointers, a
 separate non-sanitized Valgrind debug binary with full leak checking and a
 nonzero error-exitcode, temporary paths under /tmp cleaned on every exit, and
 regression pins for existing pathaudit behavior and Make targets.
+
+Command-query coverage (`pathaudit --command NAME`) is authored ahead of
+implementation: MATCH lines in PATH order for one basename, applicable existing
+PATH hazards only, and no unrelated benign basename-collision flood.
 """
 
 from __future__ import annotations
@@ -61,14 +65,16 @@ SANITIZER_ENV_KEYS = (
 USAGE_SYNOPSIS = (
     b"usage: pathaudit [--] ROOT...\n"
     b"   or: pathaudit --path\n"
+    b"   or: pathaudit --command NAME\n"
 )
 HELP_STDOUT = (
     b"usage: pathaudit [--] ROOT...\n"
     b"   or: pathaudit --path\n"
+    b"   or: pathaudit --command NAME\n"
     b"Scan PATH directory roots for hazards.\n"
 )
 VERSION_STDOUT = b"pathaudit 0.1.0\n"
-# Retained alias: usage diagnostics append the two-line synopsis.
+# Retained alias: usage diagnostics append the synopsis.
 USAGE_LINE = USAGE_SYNOPSIS
 
 CODE_RANK = (
@@ -119,12 +125,39 @@ def finding_line(code: str, root: bytes | str | os.PathLike[str]) -> bytes:
     return f"{code}\t".encode("ascii") + escape_root(root) + b"\n"
 
 
+def match_line(exe: bytes | str | os.PathLike[str]) -> bytes:
+    """One command-query MATCH record for an executable candidate."""
+
+    return b"MATCH\t" + escape_root(exe) + b"\n"
+
+
 def findings_stdout(
     items: list[tuple[str, bytes | str | os.PathLike[str]]],
 ) -> bytes:
     """Build expected stdout for (code, root) pairs already in contract order."""
 
     return b"".join(finding_line(code, root) for code, root in items)
+
+
+def command_query_stdout(
+    matches: list[bytes | str | os.PathLike[str]],
+    findings: list[tuple[str, bytes | str | os.PathLike[str]]] | None = None,
+) -> bytes:
+    """MATCH lines in PATH order, then applicable hazard findings."""
+
+    body = b"".join(match_line(exe) for exe in matches)
+    if findings:
+        body += findings_stdout(findings)
+    return body
+
+
+def install_executable(directory: Path, name: str, mode: int = 0o755) -> Path:
+    """Create a regular executable basename under directory; return resolved path."""
+
+    path = directory / name
+    path.write_bytes(b"#!/bin/sh\nexit 0\n")
+    os.chmod(path, mode)
+    return path.resolve()
 
 
 def sort_findings(
@@ -264,6 +297,28 @@ def run_pathaudit_path_mode(
     return run_pathaudit(
         binary,
         "--path",
+        *extra_args,
+        cwd=cwd,
+        env=path_env,
+    )
+
+
+def run_pathaudit_command_mode(
+    binary: Path,
+    command: bytes | str,
+    path_value: str | None,
+    *extra_args: bytes | str | os.PathLike[str],
+    cwd: str | os.PathLike[str] | None = None,
+    env: dict[str, str | None] | None = None,
+):
+    """Run exclusive `pathaudit --command NAME` with a controlled PATH value."""
+
+    path_env: dict[str, str | None] = dict(env) if env else {}
+    path_env["PATH"] = path_value
+    return run_pathaudit(
+        binary,
+        "--command",
+        command,
         *extra_args,
         cwd=cwd,
         env=path_env,
@@ -2376,11 +2431,13 @@ def test_pathaudit_behavior_contract_pins_remain_stable():
     assert HELP_STDOUT == (
         b"usage: pathaudit [--] ROOT...\n"
         b"   or: pathaudit --path\n"
+        b"   or: pathaudit --command NAME\n"
         b"Scan PATH directory roots for hazards.\n"
     )
     assert USAGE_SYNOPSIS == (
         b"usage: pathaudit [--] ROOT...\n"
         b"   or: pathaudit --path\n"
+        b"   or: pathaudit --command NAME\n"
     )
     assert USAGE_LINE == USAGE_SYNOPSIS
     assert VERSION_STDOUT == b"pathaudit 0.1.0\n"
@@ -2397,9 +2454,568 @@ def test_pathaudit_behavior_contract_pins_remain_stable():
     assert MAX_ROOT_BYTES == 1024 * 1024
     assert escape_root(b"a\npathaudit: FORGED") == b'"a\\x0Apathaudit: FORGED"'
     assert finding_line("EMPTY_ROOT", b"") == b'EMPTY_ROOT\t""\n'
+    assert match_line("/tmp/tool") == b'MATCH\t"/tmp/tool"\n'
     assert diagnostic_lines("PATH_UNSET") == b"pathaudit: PATH_UNSET\n"
+    assert diagnostic_lines("INVALID_COMMAND", "a/b") == (
+        b'pathaudit: INVALID_COMMAND: "a/b"\n'
+    )
     assert diagnostic_lines("USAGE") == (
         b"pathaudit: USAGE\n" + USAGE_SYNOPSIS
     )
     assert SRC.is_file()
     assert MAKEFILE.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Bounded command-specific PATH risk inspection (`pathaudit --command NAME`)
+#
+# Authored ahead of implementation. Encodes: PATH-order MATCH lines for one
+# basename, applicable existing PATH hazards only (no unrelated basename
+# flood), missing commands, repeated PATH entries, shadowing, unsafe or
+# malformed PATH entries in the existing risk model, invalid query arguments,
+# diagnostics, and exit status. Existing no-argument USAGE behavior remains
+# covered by test_usage_errors_for_missing_roots_and_unknown_options.
+# ---------------------------------------------------------------------------
+
+
+def test_command_mode_single_private_match_exits_zero(pathaudit_bin, fixture_tree):
+    cmd = "tool"
+    exe = install_executable(fixture_tree.private, cmd)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private), cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+
+
+def test_command_mode_reports_matches_in_path_resolution_order(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    first = install_executable(fixture_tree.private, cmd)
+    second = install_executable(fixture_tree.group_w, cmd)
+    path_value = f"{fixture_tree.private}:{fixture_tree.group_w}"
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, path_value, cwd=fixture_tree.cwd
+    )
+    # First MATCH wins; second is a shadow. GROUP_WRITABLE applies to the
+    # match-bearing later component.
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [first, second],
+        [("GROUP_WRITABLE", fixture_tree.group_w)],
+    )
+
+
+def test_command_mode_shadowing_across_safe_directories_exits_zero(
+    pathaudit_bin, tmp_path
+):
+    """Multiple private matches are reported in order without hazard noise."""
+
+    early = tmp_path / "early"
+    late = tmp_path / "late"
+    early.mkdir()
+    late.mkdir()
+    os.chmod(tmp_path, MODE_PRIVATE)
+    os.chmod(early, MODE_PRIVATE)
+    os.chmod(late, MODE_PRIVATE)
+    cmd = "shadowed"
+    first = install_executable(early, cmd)
+    second = install_executable(late, cmd)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([first, second])
+    # Winner is the first PATH hit.
+    assert result.stdout.startswith(match_line(first))
+
+
+def test_command_mode_does_not_flood_unrelated_basename_collisions(
+    pathaudit_bin, tmp_path
+):
+    """Querying one command must not list other executables in the same dirs."""
+
+    d1 = tmp_path / "d1"
+    d2 = tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    os.chmod(tmp_path, MODE_PRIVATE)
+    os.chmod(d1, MODE_PRIVATE)
+    os.chmod(d2, MODE_PRIVATE)
+
+    wanted = install_executable(d1, "wanted")
+    install_executable(d1, "unrelated-a")
+    install_executable(d1, "unrelated-b")
+    install_executable(d2, "unrelated-c")
+    install_executable(d2, "wanted")
+    second = (d2 / "wanted").resolve()
+
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "wanted", f"{d1.resolve()}:{d2.resolve()}"
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([wanted, second])
+    for noise in (b"unrelated-a", b"unrelated-b", b"unrelated-c"):
+        assert noise not in result.stdout
+
+
+def test_command_mode_missing_command_on_clean_path_exits_zero(
+    pathaudit_bin, fixture_tree
+):
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "absent-tool", str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_command_mode_non_executable_same_basename_is_not_a_match(
+    pathaudit_bin, fixture_tree
+):
+    decoy = fixture_tree.private / "tool"
+    decoy.write_bytes(b"not-executable\n")
+    os.chmod(decoy, 0o644)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "tool", str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_command_mode_directory_same_basename_is_not_a_match(
+    pathaudit_bin, fixture_tree
+):
+    named = fixture_tree.private / "tool"
+    named.mkdir()
+    os.chmod(named, MODE_PRIVATE)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "tool", str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+def test_command_mode_repeated_path_entries_preserve_match_positions(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    exe = install_executable(fixture_tree.private, cmd)
+    root = str(fixture_tree.private)
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, f"{root}:{root}")
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe, exe])
+
+
+def test_command_mode_writable_earlier_entry_is_applicable_plant_risk(
+    pathaudit_bin, fixture_tree
+):
+    """A writable absolute dir before the winner is applicable even without a hit."""
+
+    cmd = "tool"
+    winner = install_executable(fixture_tree.private, cmd)
+    # world_w has no matching executable; it still precedes the winner.
+    path_value = f"{fixture_tree.world_w}:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [winner],
+        [("WORLD_WRITABLE", fixture_tree.world_w)],
+    )
+
+
+def test_command_mode_skips_unrelated_absolute_missing_before_winner(
+    pathaudit_bin, fixture_tree
+):
+    """Absolute MISSING_ROOT before a clean winner must not flood command output."""
+
+    cmd = "tool"
+    winner = install_executable(fixture_tree.private, cmd)
+    path_value = f"{fixture_tree.missing}:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([winner])
+    assert b"MISSING_ROOT" not in result.stdout
+
+
+def test_command_mode_skips_unrelated_absolute_nondirectory_before_winner(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    winner = install_executable(fixture_tree.private, cmd)
+    path_value = f"{fixture_tree.regular}:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([winner])
+    assert b"NON_DIRECTORY_ROOT" not in result.stdout
+
+
+def test_command_mode_writable_after_winner_without_match_is_not_applicable(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    winner = install_executable(fixture_tree.private, cmd)
+    path_value = f"{fixture_tree.private}:{fixture_tree.world_w}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([winner])
+    assert b"WORLD_WRITABLE" not in result.stdout
+
+
+def test_command_mode_match_in_writable_directory_reports_permission(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    exe = install_executable(fixture_tree.both_w, cmd)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.both_w)
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        [
+            ("GROUP_WRITABLE", fixture_tree.both_w),
+            ("WORLD_WRITABLE", fixture_tree.both_w),
+        ],
+    )
+
+
+def test_command_mode_empty_and_relative_path_entries_remain_applicable(
+    pathaudit_bin, fixture_tree
+):
+    """Empty/relative PATH fields stay cwd-dependent hazards for the query."""
+
+    cmd = "tool"
+    cwd = fixture_tree.cwd
+    bin_dir = cwd / "bin"
+    bin_dir.mkdir()
+    os.chmod(bin_dir, MODE_PRIVATE)
+    via_rel = install_executable(bin_dir, cmd)
+    via_cwd = install_executable(cwd, cmd)
+
+    # Empty component searches cwd; relative `bin` searches cwd/bin.
+    path_value = f":bin:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, path_value, cwd=cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [via_cwd, via_rel],
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (1, "bin", "RELATIVE_ROOT"),
+            ]
+        ),
+    )
+    # Private absolute without a match contributes no hazard lines.
+    assert escape_root(fixture_tree.private) not in result.stdout
+
+
+def test_command_mode_missing_command_still_reports_cwd_dependent_hazards(
+    pathaudit_bin, fixture_tree
+):
+    path_value = f":rel-missing:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "absent-tool", path_value, cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [],
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (1, "rel-missing", "RELATIVE_ROOT"),
+                (1, "rel-missing", "MISSING_ROOT"),
+            ]
+        ),
+    )
+    assert b"MATCH\t" not in result.stdout
+
+
+def test_command_mode_symlink_executable_counts_as_match(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    real = install_executable(fixture_tree.private, cmd)
+    link_dir = fixture_tree.root / "link-dir"
+    link_dir.mkdir()
+    os.chmod(link_dir, MODE_PRIVATE)
+    link = link_dir / cmd
+    link.symlink_to(real)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(link_dir.resolve())
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([link.resolve()])
+
+
+def test_command_mode_unset_path_is_reject_closed(pathaudit_bin):
+    result = run_pathaudit_command_mode(pathaudit_bin, "tool", None)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_lines("PATH_UNSET")
+    assert b"usage:" not in result.stderr
+
+
+def test_command_mode_rejects_missing_name_and_extra_operands(
+    pathaudit_bin, fixture_tree
+):
+    missing_name = run_pathaudit(
+        pathaudit_bin,
+        "--command",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert missing_name.returncode == 2
+    assert missing_name.stdout == b""
+    assert missing_name.stderr == diagnostic_lines("USAGE")
+
+    extra = run_pathaudit_command_mode(
+        pathaudit_bin,
+        "tool",
+        str(fixture_tree.private),
+        "extra",
+    )
+    assert extra.returncode == 2
+    assert extra.stdout == b""
+    assert extra.stderr == diagnostic_lines("USAGE")
+
+
+def test_command_mode_rejects_mixture_with_path_and_roots(
+    pathaudit_bin, fixture_tree
+):
+    with_path = run_pathaudit(
+        pathaudit_bin,
+        "--command",
+        "tool",
+        "--path",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert with_path.returncode == 2
+    assert with_path.stdout == b""
+    assert with_path.stderr == diagnostic_lines("USAGE")
+
+    path_then_command = run_pathaudit(
+        pathaudit_bin,
+        "--path",
+        "--command",
+        "tool",
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert path_then_command.returncode == 2
+    assert path_then_command.stdout == b""
+    assert path_then_command.stderr == diagnostic_lines("USAGE")
+
+    with_root = run_pathaudit(
+        pathaudit_bin,
+        "--command",
+        "tool",
+        str(fixture_tree.private),
+        env={"PATH": str(fixture_tree.private)},
+    )
+    assert with_root.returncode == 2
+    assert with_root.stdout == b""
+    assert with_root.stderr == diagnostic_lines("USAGE")
+
+
+def test_command_mode_rejects_empty_and_path_like_command_names(
+    pathaudit_bin, fixture_tree
+):
+    empty = run_pathaudit_command_mode(
+        pathaudit_bin, b"", str(fixture_tree.private)
+    )
+    assert empty.returncode == 2
+    assert empty.stdout == b""
+    assert empty.stderr == diagnostic_lines("INVALID_COMMAND", b"")
+    assert b"usage:" not in empty.stderr
+
+    nested = run_pathaudit_command_mode(
+        pathaudit_bin, "foo/bar", str(fixture_tree.private)
+    )
+    assert nested.returncode == 2
+    assert nested.stdout == b""
+    assert nested.stderr == diagnostic_lines("INVALID_COMMAND", "foo/bar")
+
+    abs_like = run_pathaudit_command_mode(
+        pathaudit_bin, "/bin/tool", str(fixture_tree.private)
+    )
+    assert abs_like.returncode == 2
+    assert abs_like.stdout == b""
+    assert abs_like.stderr == diagnostic_lines("INVALID_COMMAND", "/bin/tool")
+
+    dotted = run_pathaudit_command_mode(
+        pathaudit_bin, "../tool", str(fixture_tree.private)
+    )
+    assert dotted.returncode == 2
+    assert dotted.stdout == b""
+    assert dotted.stderr == diagnostic_lines("INVALID_COMMAND", "../tool")
+
+
+def test_command_mode_accepts_leading_dash_command_name(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "-dash-tool"
+    exe = install_executable(fixture_tree.private, cmd)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+
+
+def test_command_mode_escapes_hostile_command_name_in_diagnostics(
+    pathaudit_bin, fixture_tree
+):
+    hostile = os.fsdecode(b'bad-\n\tpathaudit: FORGED-\x1b-\xff/"-\\-name')
+    # Slash makes it path-like -> INVALID_COMMAND with escaped operand.
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, hostile, str(fixture_tree.private)
+    )
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_lines("INVALID_COMMAND", hostile)
+    assert_no_raw_unsafe_bytes(result.stderr)
+    assert b"\npathaudit: FORGED" not in result.stderr
+    assert result.stderr.count(b"\n") == 1
+
+
+def test_command_mode_match_path_escaping_on_stdout(pathaudit_bin, tmp_path):
+    weird_dir = tmp_path / os.fsdecode(b'dir-\n\tMATCH\t"forged"-\x1b-\xff')
+    weird_dir.mkdir()
+    os.chmod(tmp_path, MODE_PRIVATE)
+    os.chmod(weird_dir, MODE_PRIVATE)
+    exe = install_executable(weird_dir, "tool")
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, "tool", str(weird_dir.resolve())
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert result.stdout.count(b"\t") == 1
+    assert result.stdout.count(b"\n") == 1
+    assert b"\nMATCH\t" not in result.stdout
+
+
+def test_command_mode_preserves_no_argument_usage_behavior(pathaudit_bin):
+    """Existing no-operand invocation remains a USAGE error (exit 2)."""
+
+    no_args = run_pathaudit(pathaudit_bin)
+    assert no_args.returncode == 2
+    assert no_args.stdout == b""
+    assert no_args.stderr == diagnostic_lines("USAGE")
+
+
+def test_command_mode_exit_status_classes(pathaudit_bin, fixture_tree):
+    cmd = "tool"
+    install_executable(fixture_tree.private, cmd)
+    install_executable(fixture_tree.world_w, cmd)
+
+    ok = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert ok.returncode == 0
+
+    hazard = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.world_w)
+    )
+    assert hazard.returncode == 1
+
+    unset = run_pathaudit_command_mode(pathaudit_bin, cmd, None)
+    assert unset.returncode == 2
+    assert unset.stderr == diagnostic_lines("PATH_UNSET")
+
+    invalid = run_pathaudit_command_mode(
+        pathaudit_bin, "a/b", str(fixture_tree.private)
+    )
+    assert invalid.returncode == 2
+    assert invalid.stderr == diagnostic_lines("INVALID_COMMAND", "a/b")
+
+    usage = run_pathaudit(
+        pathaudit_bin, "--command", env={"PATH": str(fixture_tree.private)}
+    )
+    assert usage.returncode == 2
+    assert usage.stderr == diagnostic_lines("USAGE")
+
+
+def test_command_mode_inspection_error_on_loop_component_reject_closes(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    install_executable(fixture_tree.private, cmd)
+    # Loop sorts before private by path bytes when under the same parent; use
+    # the fixture loop as the sole earlier component.
+    path_value = f"{fixture_tree.loop_a}:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    assert result.stderr == diagnostic_lines(reason, fixture_tree.loop_a)
+
+
+def test_command_mode_does_not_alter_explicit_root_relative_operands(
+    pathaudit_bin, fixture_tree
+):
+    """Bare relative operands remain explicit-root mode, not command query."""
+
+    result = run_pathaudit(
+        pathaudit_bin, "rel-missing", cwd=fixture_tree.cwd
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("RELATIVE_ROOT", "rel-missing"),
+            ("MISSING_ROOT", "rel-missing"),
+        ]
+    )
+    assert b"MATCH\t" not in result.stdout
+
+
+def test_command_mode_mixed_shadow_and_plant_risk_deterministic(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    early_private = install_executable(fixture_tree.private, cmd)
+    late_world = install_executable(fixture_tree.world_w, cmd)
+    # Missing absolute between them must stay silent; group_w before winner
+    # without a hit is applicable plant risk.
+    path_value = ":".join(
+        [
+            str(fixture_tree.group_w),
+            str(fixture_tree.missing),
+            str(fixture_tree.private),
+            str(fixture_tree.world_w),
+        ]
+    )
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [early_private, late_world],
+        sort_findings(
+            [
+                (0, fixture_tree.group_w, "GROUP_WRITABLE"),
+                (3, fixture_tree.world_w, "WORLD_WRITABLE"),
+            ]
+        ),
+    )
+    assert b"MISSING_ROOT" not in result.stdout
+    assert b"unrelated" not in result.stdout
