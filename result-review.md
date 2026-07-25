@@ -1,5 +1,45 @@
 # Result Review
 
+## Working-Directory-Dependent PATH Entries
+
+Governed run `79a1cc2bac7a` (playbook
+`pathaudit_working_directory_dependent_path_entries`) delivered
+working-directory-dependent PATH detection for opt-in `pathaudit --path`:
+empty colon fields retain `""` and report `EMPTY_ROOT` without rewriting
+to `.` or looking them up; every non-absolute component (`.`, `..`,
+`./bin`, bare names) reports `RELATIVE_ROOT` and is still looked up
+against the process cwd so missing/writable relative targets can add
+further codes; absolute `/`-prefixed entries never receive
+`EMPTY_ROOT`/`RELATIVE_ROOT`. Exact deliverables touched in-run:
+`tests/test_pathaudit.py`, `src/pathaudit.c`, `README.md`. Exact step-4
+verification (non-writing; no `make`/build dir):
+`gcc`/`clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only
+src/pathaudit.c` exited 0; `cppcheck --quiet --enable=all
+--suppress=missingIncludeSystem src/pathaudit.c` exited 0;
+`python3 -B -m pytest tests/test_pathaudit.py -q -p no:cacheprovider` →
+62 passed, 1 skipped in 3.87s; full `python3 -B -m pytest tests/ -q -p
+no:cacheprovider` → 202 passed, 1 skipped in 22.46s. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `202 passed, 1 skipped in
+18.42s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise cwd-dependent `--path` detection;
+pathaudit coverage is `tests/test_pathaudit.py`. Independent review
+artifacts: `code-reviews/review-pathaudit-working-directory-path.md` and
+`code-reviews/review-pathaudit-working-directory-path.verdict.json`.
+Verdict: `pass` at the High threshold with no Critical, High, or Medium
+findings and two Low findings (pathaudit-wdp-1 dead `root->len == 0`
+disjunct in `root_is_cwd_dependent`; pathaudit-wdp-2 misleading
+`OUT_OF_MEMORY` on practically unreachable `signal(SIGPIPE)` failure).
+Allowlisted review checks: `python3 -m pytest tests/test_pathaudit.py -q
+-p no:cacheprovider` → exit 0, 62 passed, 1 skipped in ~1.6s;
+`python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 202 passed,
+1 skipped in ~17.5s. Remaining risks: Low pathaudit-wdp-1/2 plus prior
+pathaudit Low PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2 leftovers,
+and sysdiff Medium backlogs not closed by this review. Recommended next
+action: optional Low polish; resume prior Medium backlog repair. Do not
+claim that `pathaudit` is released.
+
 ## Writable PATH Directories
 
 Governed run `d27d2ade171f` (playbook

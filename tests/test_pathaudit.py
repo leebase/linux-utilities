@@ -976,6 +976,377 @@ def test_path_mode_mixed_hazard_components_deterministic(
         assert code.encode("ascii") in result.stdout
 
 
+def test_path_mode_cwd_dependent_empty_fields_leading_middle_trailing(
+    pathaudit_bin, fixture_tree
+):
+    """Empty PATH fields mean cwd for command search; report EMPTY_ROOT only.
+
+    Leading, middle, and trailing empty colon fields are retained with their
+    original positions. Empty components are not looked up as `.` and must not
+    be rewritten to a relative path string.
+    """
+
+    private = str(fixture_tree.private)
+
+    leading = run_pathaudit_path_mode(
+        pathaudit_bin, f":{private}", cwd=fixture_tree.cwd
+    )
+    assert leading.returncode == 1
+    assert leading.stderr == b""
+    assert leading.stdout == findings_stdout(
+        sort_findings([(0, b"", "EMPTY_ROOT")])
+    )
+    assert b"RELATIVE_ROOT" not in leading.stdout
+    assert escape_root(b"") in leading.stdout
+    assert escape_root(b".") not in leading.stdout
+
+    middle = run_pathaudit_path_mode(
+        pathaudit_bin, f"{private}::{private}", cwd=fixture_tree.cwd
+    )
+    assert middle.returncode == 1
+    assert middle.stderr == b""
+    assert middle.stdout == findings_stdout(
+        sort_findings([(1, b"", "EMPTY_ROOT")])
+    )
+
+    trailing = run_pathaudit_path_mode(
+        pathaudit_bin, f"{private}:", cwd=fixture_tree.cwd
+    )
+    assert trailing.returncode == 1
+    assert trailing.stderr == b""
+    assert trailing.stdout == findings_stdout(
+        sort_findings([(1, b"", "EMPTY_ROOT")])
+    )
+
+    # Leading + middle + trailing empties around one safe absolute.
+    combo = run_pathaudit_path_mode(
+        pathaudit_bin, f":{private}::{private}:", cwd=fixture_tree.cwd
+    )
+    assert combo.returncode == 1
+    assert combo.stderr == b""
+    assert combo.stdout == findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (2, b"", "EMPTY_ROOT"),
+                (4, b"", "EMPTY_ROOT"),
+            ]
+        )
+    )
+    # Absolute private components contribute no hazard lines.
+    assert escape_root(private) not in combo.stdout
+
+
+def test_path_mode_cwd_dependent_repeated_empty_fields(pathaudit_bin, fixture_tree):
+    """Repeated empty fields remain distinct and keep original indices."""
+
+    private = str(fixture_tree.private)
+
+    only_colons = run_pathaudit_path_mode(
+        pathaudit_bin, ":::", cwd=fixture_tree.cwd
+    )
+    assert only_colons.returncode == 1
+    assert only_colons.stderr == b""
+    assert only_colons.stdout == findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (1, b"", "EMPTY_ROOT"),
+                (2, b"", "EMPTY_ROOT"),
+                (3, b"", "EMPTY_ROOT"),
+            ]
+        )
+    )
+    assert only_colons.stdout.count(b"EMPTY_ROOT\t") == 4
+
+    # Three consecutive empty fields between safe absolutes (four colons).
+    mixed = run_pathaudit_path_mode(
+        pathaudit_bin, f"{private}::::{private}", cwd=fixture_tree.cwd
+    )
+    assert mixed.returncode == 1
+    assert mixed.stderr == b""
+    assert f"{private}::::{private}".split(":") == [
+        private,
+        "",
+        "",
+        "",
+        private,
+    ]
+    assert mixed.stdout == findings_stdout(
+        sort_findings(
+            [
+                (1, b"", "EMPTY_ROOT"),
+                (2, b"", "EMPTY_ROOT"),
+                (3, b"", "EMPTY_ROOT"),
+            ]
+        )
+    )
+    # Duplicate empties sort by original index after identical root bytes.
+    assert mixed.stdout == (
+        finding_line("EMPTY_ROOT", b"")
+        + finding_line("EMPTY_ROOT", b"")
+        + finding_line("EMPTY_ROOT", b"")
+    )
+
+
+def test_path_mode_cwd_dependent_dot_dotdot_dotslash_and_bin(
+    pathaudit_bin, fixture_tree
+):
+    """Non-absolute PATH entries are working-directory-dependent hazards."""
+
+    cwd = fixture_tree.cwd
+    bin_dir = cwd / "bin"
+    bin_dir.mkdir()
+    os.chmod(bin_dir, MODE_PRIVATE)
+
+    cases = (
+        (".", [("RELATIVE_ROOT", ".")]),
+        ("..", [("RELATIVE_ROOT", "..")]),
+        ("./bin", [("RELATIVE_ROOT", "./bin")]),
+        ("bin", [("RELATIVE_ROOT", "bin")]),
+    )
+    for component, expected_items in cases:
+        result = run_pathaudit_path_mode(
+            pathaudit_bin, component, cwd=cwd
+        )
+        assert result.returncode == 1, component
+        assert result.stderr == b"", component
+        assert result.stdout == findings_stdout(expected_items), component
+        assert b"EMPTY_ROOT" not in result.stdout, component
+
+    # Combined PATH: preserve entry text and emit RELATIVE_ROOT for each.
+    path_value = ".:..:./bin:bin"
+    combined = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd)
+    assert combined.returncode == 1
+    assert combined.stderr == b""
+    assert combined.stdout == findings_stdout(
+        sort_findings(
+            [
+                (0, ".", "RELATIVE_ROOT"),
+                (1, "..", "RELATIVE_ROOT"),
+                (2, "./bin", "RELATIVE_ROOT"),
+                (3, "bin", "RELATIVE_ROOT"),
+            ]
+        )
+    )
+
+
+def test_path_mode_cwd_dependent_absolute_entries_not_misclassified(
+    pathaudit_bin, fixture_tree
+):
+    """Absolute PATH components must not be reported as cwd-dependent."""
+
+    private = str(fixture_tree.private)
+    missing = str(fixture_tree.missing)
+    group = str(fixture_tree.group_w)
+    assert private.startswith("/")
+    assert missing.startswith("/")
+    assert group.startswith("/")
+
+    # Safe absolute alone: no EMPTY_ROOT / RELATIVE_ROOT.
+    safe = run_pathaudit_path_mode(pathaudit_bin, private, cwd=fixture_tree.cwd)
+    assert safe.returncode == 0
+    assert safe.stdout == b""
+    assert safe.stderr == b""
+
+    # Mixed absolute hazards still omit RELATIVE_ROOT / EMPTY_ROOT.
+    mixed = run_pathaudit_path_mode(
+        pathaudit_bin, f"{private}:{missing}:{group}", cwd=fixture_tree.cwd
+    )
+    assert mixed.returncode == 1
+    assert mixed.stderr == b""
+    assert mixed.stdout == findings_stdout(
+        sort_findings(
+            [
+                (1, missing, "MISSING_ROOT"),
+                (2, group, "GROUP_WRITABLE"),
+            ]
+        )
+    )
+    assert b"RELATIVE_ROOT" not in mixed.stdout
+    assert b"EMPTY_ROOT" not in mixed.stdout
+
+    # Absolute beside empty/relative: only the non-absolute entries are
+    # cwd-dependent; absolute private stays silent.
+    beside = run_pathaudit_path_mode(
+        pathaudit_bin,
+        f"{private}:bin:{private}:",
+        cwd=fixture_tree.cwd,
+    )
+    # `bin` is absent under fixture_tree.cwd → RELATIVE + MISSING; trailing empty.
+    assert beside.returncode == 1
+    assert beside.stderr == b""
+    assert beside.stdout == findings_stdout(
+        sort_findings(
+            [
+                (1, "bin", "RELATIVE_ROOT"),
+                (1, "bin", "MISSING_ROOT"),
+                (3, b"", "EMPTY_ROOT"),
+            ]
+        )
+    )
+    assert escape_root(private) not in beside.stdout
+
+
+def test_path_mode_cwd_dependent_stable_ordering_and_indexing(
+    pathaudit_bin, fixture_tree
+):
+    """Findings sort by root bytes, then original PATH index, then code rank."""
+
+    private = str(fixture_tree.private)
+    cwd = fixture_tree.cwd
+    (cwd / "bin").mkdir()
+    os.chmod(cwd / "bin", MODE_PRIVATE)
+
+    # Indices: 0="", 1="bin", 2=".", 3="", 4="./bin", 5="..", 6=private, 7="bin"
+    path_value = f":bin:.:{''}:./bin:..:{private}:bin"
+    # The f-string above yields ":bin:.::./bin:..:{private}:bin"
+    assert path_value == f":bin:.::./bin:..:{private}:bin"
+
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (3, b"", "EMPTY_ROOT"),
+                (2, ".", "RELATIVE_ROOT"),
+                (5, "..", "RELATIVE_ROOT"),
+                (4, "./bin", "RELATIVE_ROOT"),
+                (1, "bin", "RELATIVE_ROOT"),
+                (7, "bin", "RELATIVE_ROOT"),
+            ]
+        )
+    )
+    assert result.stdout == expected
+
+    # Permuting PATH remaps indices but keeps the same primary byte order for
+    # distinct roots; identical `bin` / empty entries break ties by index.
+    # Trailing `bin::` yields two empty components at indices 6 and 7.
+    permuted = f"{private}:bin:..:./bin:.:bin::"
+    assert permuted.split(":") == [
+        private,
+        "bin",
+        "..",
+        "./bin",
+        ".",
+        "bin",
+        "",
+        "",
+    ]
+    second = run_pathaudit_path_mode(pathaudit_bin, permuted, cwd=cwd)
+    assert second.returncode == 1
+    assert second.stderr == b""
+    assert second.stdout == findings_stdout(
+        sort_findings(
+            [
+                (6, b"", "EMPTY_ROOT"),
+                (7, b"", "EMPTY_ROOT"),
+                (4, ".", "RELATIVE_ROOT"),
+                (2, "..", "RELATIVE_ROOT"),
+                (3, "./bin", "RELATIVE_ROOT"),
+                (1, "bin", "RELATIVE_ROOT"),
+                (5, "bin", "RELATIVE_ROOT"),
+            ]
+        )
+    )
+
+
+def test_path_mode_cwd_dependent_behavior_across_two_working_directories(
+    pathaudit_bin, tmp_path
+):
+    """Same PATH bytes resolve differently under two working directories."""
+
+    cwd_a = tmp_path / "cwd-a"
+    cwd_b = tmp_path / "cwd-b"
+    cwd_a.mkdir()
+    cwd_b.mkdir()
+    os.chmod(tmp_path, MODE_PRIVATE)
+    os.chmod(cwd_a, MODE_PRIVATE)
+    os.chmod(cwd_b, MODE_WORLD_WRITABLE)
+
+    # Under cwd-a: private bin/ (also reached via ./bin). Under cwd-b: the
+    # same relative names resolve to a world-writable bin/.
+    bin_a = cwd_a / "bin"
+    bin_a.mkdir()
+    os.chmod(bin_a, MODE_PRIVATE)
+
+    bin_b = cwd_b / "bin"
+    bin_b.mkdir()
+    os.chmod(bin_b, MODE_WORLD_WRITABLE)
+
+    safe_abs = tmp_path / "absolute-safe"
+    safe_abs.mkdir()
+    os.chmod(safe_abs, MODE_PRIVATE)
+    abs_safe = str(safe_abs.resolve())
+
+    # Empty + relative forms + one absolute that must stay clean in both cwds.
+    path_value = f":.:..:./bin:bin:{abs_safe}:"
+
+    from_a = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd_a)
+    from_b = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd_b)
+
+    expected_a = findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (6, b"", "EMPTY_ROOT"),
+                (1, ".", "RELATIVE_ROOT"),
+                (2, "..", "RELATIVE_ROOT"),
+                (3, "./bin", "RELATIVE_ROOT"),
+                (4, "bin", "RELATIVE_ROOT"),
+            ]
+        )
+    )
+    expected_b = findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (6, b"", "EMPTY_ROOT"),
+                (1, ".", "RELATIVE_ROOT"),
+                (1, ".", "WORLD_WRITABLE"),
+                (2, "..", "RELATIVE_ROOT"),
+                (3, "./bin", "RELATIVE_ROOT"),
+                (3, "./bin", "WORLD_WRITABLE"),
+                (4, "bin", "RELATIVE_ROOT"),
+                (4, "bin", "WORLD_WRITABLE"),
+            ]
+        )
+    )
+
+    assert from_a.returncode == 1
+    assert from_b.returncode == 1
+    assert from_a.stderr == from_b.stderr == b""
+    assert from_a.stdout == expected_a
+    assert from_b.stdout == expected_b
+    # Absolute safe entry never appears; cwd-dependent permission findings differ.
+    assert escape_root(abs_safe) not in from_a.stdout
+    assert escape_root(abs_safe) not in from_b.stdout
+    assert from_a.stdout != from_b.stdout
+    assert b"WORLD_WRITABLE" not in from_a.stdout
+    assert b"WORLD_WRITABLE" in from_b.stdout
+
+    # Missing relative under one cwd only: proves lookup uses process cwd.
+    path_missing = "rel-only-in-a"
+    (cwd_a / path_missing).mkdir()
+    os.chmod(cwd_a / path_missing, MODE_PRIVATE)
+    assert not (cwd_b / path_missing).exists()
+
+    miss_a = run_pathaudit_path_mode(pathaudit_bin, path_missing, cwd=cwd_a)
+    miss_b = run_pathaudit_path_mode(pathaudit_bin, path_missing, cwd=cwd_b)
+    assert miss_a.stdout == findings_stdout(
+        [("RELATIVE_ROOT", path_missing)]
+    )
+    assert miss_b.stdout == findings_stdout(
+        [
+            ("RELATIVE_ROOT", path_missing),
+            ("MISSING_ROOT", path_missing),
+        ]
+    )
+    assert miss_a.stdout != miss_b.stdout
+
+
 def test_group_writable_world_writable_and_both(pathaudit_bin, fixture_tree):
     group = run_pathaudit(pathaudit_bin, str(fixture_tree.group_w))
     assert group.returncode == 1

@@ -1,5 +1,26 @@
 # Sprint Plan
 
+## Working-Directory-Dependent PATH Entries
+
+Governed run `79a1cc2bac7a` (playbook
+`pathaudit_working_directory_dependent_path_entries`) delivered
+working-directory-dependent PATH detection for `pathaudit --path`
+(empty fields → `EMPTY_ROOT` retained as `""`; non-absolute →
+`RELATIVE_ROOT` plus cwd lookup; absolute never mislabeled). Exact
+verification (step-4, non-writing): GCC/Clang `-fsyntax-only` exit 0;
+cppcheck exit 0; pathaudit pytest → 62 passed, 1 skipped in 3.87s; full
+pytest → 202 passed, 1 skipped in 22.46s. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `202 passed, 1 skipped in
+18.42s`). Review
+`code-reviews/review-pathaudit-working-directory-path.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium, 2 Low pathaudit-wdp-1/2).
+Allowlisted review checks: pathaudit pytest → 62 passed, 1 skipped;
+full pytest → 202 passed, 1 skipped. Do **not** claim that `pathaudit`
+is released. Next: keep Low pathaudit-wdp visible; resume prior Medium
+backlog; do not treat sysdiff smoke as cwd-dependent `--path` coverage.
+
 ## Writable PATH Directories
 
 Governed run `d27d2ade171f` (playbook
@@ -193,6 +214,24 @@ or release closure from this slice.
 
 ## Current sprint
 
+- [x] Deliver, smoke-test, independently review, and close out
+  working-directory-dependent PATH detection for `pathaudit --path` in
+  run `79a1cc2bac7a`,
+  `pathaudit_working_directory_dependent_path_entries`. Exact evidence:
+  step-4 GCC/Clang `-fsyntax-only` + cppcheck exit 0; pathaudit pytest
+  62 passed / 1 skipped (3.87s); full pytest 202 passed / 1 skipped
+  (22.46s); smoke start/check 0 with empty `blocking_errors` (check.log
+  pytest `202 passed, 1 skipped in 18.42s`); review verdict `pass` with
+  0 Critical/High/Medium and 2 Low (pathaudit-wdp-1, pathaudit-wdp-2);
+  allowlisted pathaudit pytest → 62 passed, 1 skipped; full pytest →
+  202 passed, 1 skipped. Not a pathaudit release; sysdiff smoke oracle
+  does not directly exercise cwd-dependent `--path` detection.
+- [ ] Next after `79a1cc2bac7a`: keep Low pathaudit-wdp-1/2 and prior
+  Low PA-WP-1–PA-WP-4 visible for optional polish; resume prior Medium
+  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
+  Mediums) without claiming those were closed by this review; do not
+  claim that `pathaudit` is released or that `tests/smoke_manifest.json`
+  covers cwd-dependent `--path` behavior.
 - [x] Deliver, smoke-test, independently review, and close out additive
   `pathaudit --path` (writable PATH directories) in run `d27d2ade171f`,
   `pathaudit_detect_writable_path_directories`. Exact evidence: step-5
@@ -204,11 +243,10 @@ or release closure from this slice.
   (PA-WP-1–PA-WP-4); allowlisted pytest → 56 passed, 1 skipped. Not a
   pathaudit release; sysdiff smoke oracle does not directly exercise
   `--path`.
-- [ ] Next after `d27d2ade171f`: keep Low PA-WP-1–PA-WP-4 visible for
-  optional polish; resume prior Medium backlog (pathaudit PA-M2 /
-  PA-M1 leftovers and sysdiff packaging Mediums) without claiming those
-  were closed by this review; do not claim that `pathaudit` is released
-  or that `tests/smoke_manifest.json` covers `--path`.
+- [ ] Keep Low PA-WP-1–PA-WP-4 from `d27d2ade171f` visible for optional
+  polish unless a later review explicitly closes them; do not claim that
+  `pathaudit` is released or that `tests/smoke_manifest.json` covers
+  `--path`.
 - [x] Deliver, smoke-test, independently review, and close out the additive
   `pathaudit` 0.1.0 vertical slice in run `4dec475ef201`,
   `pathaudit_bootstrap_deterministic_scanner`. Deliverables:

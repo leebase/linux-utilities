@@ -1,5 +1,24 @@
 # Where Am I
 
+## Working-Directory-Dependent PATH Entries
+
+Governed run `79a1cc2bac7a` delivered working-directory-dependent PATH
+detection for `pathaudit --path`: empty fields retain `""` →
+`EMPTY_ROOT`; non-absolute components → `RELATIVE_ROOT` plus cwd
+lookup; absolute entries never mislabeled. Exact evidence: step-4
+GCC/Clang `-fsyntax-only` + cppcheck exit 0; pathaudit pytest 62
+passed, 1 skipped; full pytest 202 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `202 passed, 1 skipped in
+18.42s`. Review
+`code-reviews/review-pathaudit-working-directory-path.{md,verdict.json}`
+is `pass` (0 Critical/High/Medium, 2 Low pathaudit-wdp-1/2); allowlisted
+pathaudit pytest → 62 passed, 1 skipped; full pytest → 202 passed, 1
+skipped. This does **not** claim that `pathaudit` is released or that
+the sysdiff smoke oracle covers cwd-dependent `--path` detection. Next:
+keep Low pathaudit-wdp visible; resume prior Medium backlog.
+
 ## Writable PATH Directories
 
 Governed run `d27d2ade171f` delivered additive `pathaudit --path`: an
@@ -15,8 +34,8 @@ empty `blocking_errors`; check.log pytest `196 passed, 1 skipped in
 `code-reviews/review-pathaudit-writable-path.{md,verdict.json}` is
 `pass` (0 Critical/High/Medium, 4 Low PA-WP-1–PA-WP-4); allowlisted
 pytest → 56 passed, 1 skipped. This does **not** claim that `pathaudit`
-is released or that the sysdiff smoke oracle covers `--path`. Next: keep
-Low PA-WP visible; resume prior Medium backlog.
+is released or that the sysdiff smoke oracle covers `--path`. Prior Low
+PA-WP findings remain visible after `79a1cc2bac7a`.
 
 ## pathaudit Vertical-Slice Bootstrap
 
@@ -182,18 +201,24 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `d27d2ade171f` is additive
-`pathaudit --path` (writable PATH directories): contract/scanner/tests/
-docs for the exclusive `--path` form, with independent review
-`code-reviews/review-pathaudit-writable-path.verdict.json` = `pass` (0
-Critical/High/Medium, 4 Low PA-WP-1–PA-WP-4). This is **not** a pathaudit
-release and does not change the separately prepared unpublished
-`sysdiff` 0.1.0 package from run `580b0f6ff811`. Pathaudit `--path` is
-covered by `tests/test_pathaudit.py`, not by the existing sysdiff smoke
-oracle.
+The current milestone after recording run `79a1cc2bac7a` is
+working-directory-dependent PATH detection for `pathaudit --path`
+(empty/`RELATIVE_ROOT` classification and cwd lookup), with independent
+review `code-reviews/review-pathaudit-working-directory-path.verdict.json`
+= `pass` (0 Critical/High/Medium, 2 Low pathaudit-wdp-1/2). This is
+**not** a pathaudit release and does not change the separately prepared
+unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`. Cwd-dependent
+`--path` behavior is covered by `tests/test_pathaudit.py`, not by the
+existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `79a1cc2bac7a` delivered and reviewed working-directory-dependent
+  PATH detection: step-4 GCC/Clang `-fsyntax-only` + cppcheck exit 0;
+  pathaudit pytest 62/1; full pytest 202/1; smoke start/check 0; review
+  `pass` with Low pathaudit-wdp-1/2 only; allowlisted checks match. Not a
+  pathaudit release; smoke oracle does not directly exercise
+  cwd-dependent `--path` detection.
 - Run `d27d2ade171f` delivered and reviewed additive `pathaudit --path`:
   step-5 full test 196 passed / 1 skipped; sanitize/valgrind/static
   gates exit 0; smoke start/check 0; review `pass` with Low PA-WP-1–PA-WP-4
@@ -380,10 +405,11 @@ oracle.
 
 ## Next milestone
 
-Keep Low PA-WP-1–PA-WP-4 from run `d27d2ade171f` visible for optional
-polish. Resume prior Medium backlog repair (pathaudit PA-M2 hostile-byte
-stderr fixture / PA-M1 architecture leftovers, plus sysdiff packaging
-Mediums) without claiming those were closed by the writable-PATH review.
-Do not claim that `pathaudit` is released, and do not treat
-`tests/smoke_manifest.json` as `--path` coverage. Separately preserve
-the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`.
+Keep Low pathaudit-wdp-1/2 from run `79a1cc2bac7a` and prior Low
+PA-WP-1–PA-WP-4 visible for optional polish. Resume prior Medium backlog
+repair (pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
+leftovers, plus sysdiff packaging Mediums) without claiming those were
+closed by the cwd-dependent PATH review. Do not claim that `pathaudit`
+is released, and do not treat `tests/smoke_manifest.json` as
+cwd-dependent `--path` coverage. Separately preserve the unpublished
+`sysdiff` 0.1.0 candidate from `580b0f6ff811`.

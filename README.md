@@ -314,6 +314,28 @@ env -u PATH pathaudit --path   # reject-closed: PATH_UNSET, exit 2
 PATH=/safe:/tmp:/safe pathaudit --path
 ```
 
+### Working-Directory-Dependent PATH Entries
+
+Empty and relative PATH components make command lookup depend on the process
+current working directory. POSIX treats an empty colon field as `.`, so a
+leading, trailing, or consecutive `:` (or an empty `PATH`) searches the cwd
+for the named command. Any component that does not begin with `/`—including
+`.`, `..`, `./bin`, and bare names like `bin`—is likewise resolved against the
+cwd, so the same PATH bytes can find different directories after `cd`. Absolute
+components that start with `/` are not cwd-dependent under this rule.
+
+`pathaudit --path` retains empty fields as the empty string and reports
+`EMPTY_ROOT` without rewriting them to `.` or looking them up. Non-absolute
+components report `RELATIVE_ROOT` and are still looked up against the process
+cwd (so missing or writable relative targets can add further codes). Absolute
+entries keep their existing hazard classification only; they are never labeled
+`EMPTY_ROOT` or `RELATIVE_ROOT`.
+
+To remediate, remove empty fields (collapse `::`, drop leading/trailing `:`)
+and replace relative components with absolute directory paths you intend to
+search. Leave legitimate absolute entries unchanged. `pathaudit` itself does
+not edit `PATH`.
+
 ### Writable PATH Directories
 
 `GROUP_WRITABLE` and `WORLD_WRITABLE` report when a resolved PATH directory

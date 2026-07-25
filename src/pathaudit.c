@@ -213,9 +213,22 @@ static bool size_add_ok(size_t a, size_t b, size_t *out) {
   return true;
 }
 
+/*
+ * Command-search meaning of a PATH entry depends on the process cwd when the
+ * entry is empty (POSIX treats "" as ".") or non-absolute (".", "..", "./bin",
+ * "bin", ...). Detect those cases without rewriting the original entry text:
+ * empty fields keep "" and report EMPTY_ROOT with no lookup; non-absolute
+ * fields report RELATIVE_ROOT and are still looked up against the process cwd.
+ * Absolute entries (first byte '/') are not cwd-dependent under this rule.
+ */
+static bool root_is_cwd_dependent(const struct Root *root) {
+  return root->len == 0 || root->text[0] != '/';
+}
+
 static int classify_root(const struct Root *root,
                          struct FindingBuffer *findings) {
   if (root->len == 0) {
+    /* Empty colon field: cwd-dependent for search; keep "" as EMPTY_ROOT. */
     if (!findings_append(findings, root->text, root->index,
                          HAZARD_EMPTY_ROOT)) {
       emit_diag_reason("OUT_OF_MEMORY");
@@ -224,7 +237,7 @@ static int classify_root(const struct Root *root,
     return 0;
   }
 
-  if (root->text[0] != '/') {
+  if (root_is_cwd_dependent(root)) {
     if (!findings_append(findings, root->text, root->index,
                          HAZARD_RELATIVE_ROOT)) {
       emit_diag_reason("OUT_OF_MEMORY");
