@@ -1,6 +1,6 @@
 .\" Copyright (c) 2026 Lee Harrington
 .\" SPDX-License-Identifier: MIT
-.TH PATHAUDIT 1 "2026-07-25" "pathaudit 0.1.0" "User Commands"
+.TH PATHAUDIT 1 "2026-07-26" "pathaudit 0.1.0" "User Commands"
 .SH NAME
 pathaudit \(em scan PATH directory roots for hazards
 .SH SYNOPSIS
@@ -85,10 +85,15 @@ Unset
 is reject\-closed exactly as for
 .BR \-\-path .
 .P
-Explicit\-root and
+Explicit\-root mode does not search for executables and remains ownership\-blind.
 .B \-\-path
-modes do not search for executables.
-None of the modes walk directory contents, examine ancestor directories, or
+scans top\-level regular executables for shadowing and for the shared
+executable trust model;
+.B \-\-command
+applies that same trust model to each
+.B MATCH
+target.
+None of the modes walk nested directory trees, examine ancestor directories, or
 remediate anything.
 One root or one PATH component is one inspection input; duplicates remain
 distinct.
@@ -96,19 +101,29 @@ Inspection is read\-only and requires no special privilege.
 Classification uses the root bytes and one
 .BR stat (2) \-equivalent
 lookup of the final target
-.RB ( \-\-command
-also probes
-.IR dir/NAME
-candidates and may
+.RB ( \-\-path
+and
+.B \-\-command
+also probe executable candidates and may
 .BR realpath (3)
 matches).
 Ordering and escaping are byte\-oriented and locale\-independent.
 .P
 This narrow slice does not inspect packages, processes, services, capabilities,
-ACLs, mount options, or ownership policy, and it performs no remediation,
-networking, persistence, monitoring, or daemon work.
+ACLs, or mount options.
+The only ownership rule is the narrow
+.B UNSAFE_OWNER
+check on executable targets resolved by
+.B \-\-path
+and
+.BR \-\-command
+(final\-target owner must be UID 0 or the invoking real UID).
+It performs no remediation, networking, persistence, monitoring, or daemon work.
 Filesystem state can change concurrently, so a result describes metadata
 observed during that invocation and is not a security lock.
+This manual does not claim that
+.B pathaudit
+is released.
 .SH OPTIONS
 .TP
 .B \-\-
@@ -231,22 +246,90 @@ are mutually exclusive.
 The final directory target has
 .B S_IWGRP
 set.
+Under
+.B \-\-path
+and
+.BR \-\-command ,
+the same code may also name a resolved executable
+.B realpath
+when that target has
+.B S_IWGRP
+set.
 .TP
 .B WORLD_WRITABLE
 The final directory target has
 .B S_IWOTH
 set.
+Under
+.B \-\-path
+and
+.BR \-\-command ,
+the same code may also name a resolved executable
+.B realpath
+when that target has
+.B S_IWOTH
+set.
+.TP
+.B UNSAFE_OWNER
+Emitted only for executable targets resolved by
+.B \-\-path
+or
+.BR \-\-command
+when the final followed\-target owner
+.RB ( st_uid )
+is neither UID 0 nor the invoking real UID from
+.BR getuid (2) .
+The finding names the executable
+.BR realpath ,
+not the PATH directory component.
+Symlink candidates follow the final target for ownership metadata.
+Trusted owners are root and the invoking user only.
+Explicit\-root mode never searches executables and never emits
+.BR UNSAFE_OWNER .
+Directory ownership is not classified.
 .P
 Lookup follows symbolic links like
 .BR stat (2) ;
 a symlink is not itself a hazard.
-Permission findings use only the final directory target's
+Directory permission findings use only the final directory target's
 .B st_mode
 bits.
 Missing and non\-directory roots receive no permission finding.
 A directory with both group\- and world\-write bits produces both findings.
 Sticky, set\-ID, execute, read, owner, ACL, credential, and mount\-policy state
 neither suppress nor create a finding.
+Executable writability reuses
+.B GROUP_WRITABLE
+/
+.B WORLD_WRITABLE
+on the executable
+.BR realpath ;
+.B UNSAFE_OWNER
+ranks after those permission codes for the same root.
+Under
+.BR \-\-path ,
+shared\-taxonomy findings (including
+.BR UNSAFE_OWNER )
+precede all
+.B SHADOWED
+lines
+.RI ( SHADOWED
+reports a later distinct executable
+.B realpath
+for a basename already won earlier in
+.BR PATH ).
+Emitting
+.B UNSAFE_OWNER
+completes inspection with exit status
+.B 1
+and empty stderr on the successful hazard path.
+To remediate, replace foreign\-owned PATH executables with root\-owned or
+self\-owned trusted binaries, or remove the untrusted PATH entry;
+.B pathaudit
+does not
+.B chown
+files or edit
+.BR PATH .
 .P
 In
 .B \-\-command
@@ -268,6 +351,11 @@ and to writable directories that still precede the first
 a writable absolute directory after the winner with no match for
 .I NAME
 is not reported.
+Each
+.B MATCH
+target also receives executable writability codes and may receive
+.B UNSAFE_OWNER
+when the final\-target owner is neither UID 0 nor the invoking real UID.
 .P
 Each finding is one stdout line:
 .B CODE
@@ -287,7 +375,9 @@ lines alone do not force status
 .BR 1 ).
 Status
 .B 1
-means inspection completed and at least one hazard was emitted.
+means inspection completed and at least one hazard was emitted
+(including
+.BR UNSAFE_OWNER ).
 Status
 .B 2
 means usage failure, unset
@@ -386,8 +476,10 @@ Inspection completed; at least one hazard emitted
 .B PATH
 as one
 .BR EMPTY_ROOT ,
-or an existing non\-directory component as
-.BR NON_DIRECTORY_ROOT ).
+an existing non\-directory component as
+.BR NON_DIRECTORY_ROOT ,
+or
+.BR UNSAFE_OWNER ).
 .TP
 .B 2
 Usage error, unset
@@ -454,6 +546,14 @@ lines only for the basename
 .B tool
 in PATH order, then applicable hazards for that query, without listing other
 basenames in the same directories.
+A foreign\-owned
+.B MATCH
+target also emits
+.B UNSAFE_OWNER
+naming the executable
+.B realpath
+and exits with status
+.BR 1 .
 .SH SEE ALSO
 .BR stat (2),
 .BR realpath (3),
@@ -466,4 +566,4 @@ Copyright \(co 2026 Lee Harrington.
 .B pathaudit
 is released under the MIT License.
 .SH VERSION
-pathaudit 0.1.0 (2026\-07\-25)
+pathaudit 0.1.0 (2026\-07\-26)

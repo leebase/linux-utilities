@@ -37,6 +37,16 @@ owner-only write modes stay silent, `S_IWGRP` / `S_IWOTH` reuse
 resolution follows the final target, and unsafe inspection stays reject-closed
 via `INSPECTION_ERROR_N`. Explicit-root mode still does not search executables.
 
+Unsafe executable-ownership coverage pins that `--path` and `--command` emit
+`UNSAFE_OWNER` for a regular executable whose final-target `st_uid` is neither
+root UID 0 nor the invoking real user from `getuid`. Current-user and root
+ownership are trusted; foreign ownership is unsafe. Symlink resolution uses the
+final target owner. Ownership findings interact with `GROUP_WRITABLE` /
+`WORLD_WRITABLE` under the shared code rank, exit status 1, and deterministic
+ordering. Explicit-root mode never searches executables and never emits
+`UNSAFE_OWNER`. Foreign-owner fixtures stay inside the test tree and skip
+honestly when the host cannot create a distinct-owner file.
+
 Hostile-PATH regression coverage pins security-sensitive malformed and
 adversarial `PATH` shapes already supported by the utility: empty components,
 nonexistent directories, duplicate entries, and deterministic finding order.
@@ -49,6 +59,7 @@ from __future__ import annotations
 
 import errno as errno_mod
 import os
+import pwd
 import re
 import shutil
 import subprocess
@@ -109,16 +120,26 @@ CODE_RANK = (
     "NON_DIRECTORY_ROOT",
     "GROUP_WRITABLE",
     "WORLD_WRITABLE",
+    "UNSAFE_OWNER",
 )
 CODE_RANK_INDEX = {code: index for index, code in enumerate(CODE_RANK)}
+
+# Directory-root taxonomy only. UNSAFE_OWNER applies solely to resolved
+# executable targets under `--path` / `--command`, never to directory roots and
+# never under explicit-root mode.
+DIRECTORY_CODE_RANK = tuple(
+    code for code in CODE_RANK if code != "UNSAFE_OWNER"
+)
+EXECUTABLE_ONLY_CODES = frozenset({"UNSAFE_OWNER"})
 
 MAX_ROOT_COUNT = 65536
 MAX_ROOT_LENGTH = 65536
 MAX_ROOT_BYTES = 1024 * 1024
 
-# Controllable mode bits only (no ownership policy assertions).
-# Directory and regular-file targets share the same trust-model bits:
-# group/other write is untrusted; owner write alone is trusted.
+# Controllable mode bits for the shared writability trust model.
+# Directory and regular-file targets share the same write bits: group/other
+# write is untrusted; owner write alone is trusted. Executable ownership is a
+# separate additive check (UNSAFE_OWNER) on final-target st_uid.
 MODE_PRIVATE = 0o700
 MODE_GROUP_WRITABLE = 0o720
 MODE_WORLD_WRITABLE = 0o702
@@ -220,14 +241,93 @@ def install_executable(
 ) -> Path:
     """Create a regular executable basename under directory; return resolved path.
 
-    Default mode is trusted (no group/other write). Pass MODE_GROUP_WRITABLE,
-    MODE_WORLD_WRITABLE, or MODE_BOTH_WRITABLE to plant an untrusted target.
+    Default mode is writability-trusted (no group/other write). Pass
+    MODE_GROUP_WRITABLE, MODE_WORLD_WRITABLE, or MODE_BOTH_WRITABLE to plant an
+    untrusted write mode. Ownership defaults to the creating UID (trusted when
+    that UID is the invoking real user); use the ownership helpers below to
+    plant root-owned or foreign-owned targets inside the fixture tree.
     """
 
     path = directory / name
     path.write_bytes(b"#!/bin/sh\nexit 0\n")
     os.chmod(path, mode)
     return path.resolve()
+
+
+def _foreign_uid_candidates() -> list[int]:
+    """UIDs distinct from root and the invoking real user (no host paths)."""
+
+    me = os.getuid()
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for entry in pwd.getpwall():
+        uid = int(entry.pw_uid)
+        if uid in (0, me) or uid in seen:
+            continue
+        seen.add(uid)
+        ordered.append(uid)
+    # Common nobody/nfsnobody-style IDs even when absent from passwd.
+    for uid in (65534, 65533, 99, 65535, 1, 2):
+        if uid in (0, me) or uid in seen:
+            continue
+        seen.add(uid)
+        ordered.append(uid)
+    return ordered
+
+
+def _try_set_owner(path: Path, uid: int) -> bool:
+    """Return True only when path's final st_uid equals uid after chown."""
+
+    try:
+        os.chown(path, uid, -1)
+    except OSError:
+        return False
+    try:
+        return path.stat().st_uid == uid
+    except OSError:
+        return False
+
+
+def require_root_owned_executable(
+    directory: Path, name: str, mode: int = MODE_EXE_TRUSTED
+) -> Path:
+    """Install an executable owned by UID 0; skip if the host cannot establish it."""
+
+    exe = install_executable(directory, name, mode=mode)
+    if exe.stat().st_uid == 0:
+        return exe
+    if not _try_set_owner(exe, 0):
+        pytest.skip(
+            "host cannot establish root ownership for a trusted-owner fixture"
+        )
+    return exe
+
+
+def require_foreign_owned_executable(
+    directory: Path, name: str, mode: int = MODE_EXE_TRUSTED
+) -> Path:
+    """Install an executable owned by neither root nor getuid(); skip if unable.
+
+    Never consults uncontrolled host paths: ownership is changed only on the
+    fixture file created under directory.
+    """
+
+    candidates = _foreign_uid_candidates()
+    if not candidates:
+        pytest.skip("no distinct non-root foreign UID available on host")
+
+    exe = install_executable(directory, name, mode=mode)
+    me = os.getuid()
+    for uid in candidates:
+        if not _try_set_owner(exe, uid):
+            continue
+        owner = exe.stat().st_uid
+        if owner not in (0, me):
+            return exe
+
+    pytest.skip(
+        "executing user lacks permission to create a distinct-owner fixture"
+    )
 
 
 def sort_findings(
@@ -1131,8 +1231,9 @@ def test_path_mode_mixed_hazard_components_deterministic(
         ]
     )
     assert result.stdout == findings_stdout(ordered)
-    for code in CODE_RANK:
+    for code in DIRECTORY_CODE_RANK:
         assert code.encode("ascii") in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1882,8 +1983,10 @@ def test_all_hazard_classes_in_one_invocation(pathaudit_bin, fixture_tree):
         ]
     )
     assert result.stdout == findings_stdout(ordered)
-    for code in CODE_RANK:
+    for code in DIRECTORY_CODE_RANK:
         assert code.encode("ascii") in result.stdout
+    # Explicit-root mode never searches executables; UNSAFE_OWNER stays absent.
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_missing_and_nondirectory_get_no_permission_findings(
@@ -1898,6 +2001,7 @@ def test_missing_and_nondirectory_get_no_permission_findings(
     assert result.returncode == 1
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
     assert result.stdout == findings_stdout(
         sort_findings(
             [
@@ -2697,12 +2801,25 @@ def test_pathaudit_behavior_contract_pins_remain_stable():
         "NON_DIRECTORY_ROOT",
         "GROUP_WRITABLE",
         "WORLD_WRITABLE",
+        "UNSAFE_OWNER",
     )
+    assert DIRECTORY_CODE_RANK == (
+        "EMPTY_ROOT",
+        "RELATIVE_ROOT",
+        "MISSING_ROOT",
+        "NON_DIRECTORY_ROOT",
+        "GROUP_WRITABLE",
+        "WORLD_WRITABLE",
+    )
+    assert EXECUTABLE_ONLY_CODES == frozenset({"UNSAFE_OWNER"})
     assert MAX_ROOT_COUNT == 65536
     assert MAX_ROOT_LENGTH == 65536
     assert MAX_ROOT_BYTES == 1024 * 1024
     assert escape_root(b"a\npathaudit: FORGED") == b'"a\\x0Apathaudit: FORGED"'
     assert finding_line("EMPTY_ROOT", b"") == b'EMPTY_ROOT\t""\n'
+    assert finding_line("UNSAFE_OWNER", "/tmp/tool") == (
+        b'UNSAFE_OWNER\t"/tmp/tool"\n'
+    )
     assert match_line("/tmp/tool") == b'MATCH\t"/tmp/tool"\n'
     assert diagnostic_lines("PATH_UNSET") == b"pathaudit: PATH_UNSET\n"
     assert diagnostic_lines("INVALID_COMMAND", "a/b") == (
@@ -2921,14 +3038,16 @@ def test_command_mode_writable_after_winner_without_match_is_not_applicable(
     assert result.stderr == b""
     assert result.stdout == command_query_stdout([winner])
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_match_in_writable_directory_reports_permission(
     pathaudit_bin, fixture_tree
 ):
     cmd = "tool"
-    # Executable itself is trusted-mode; only the match-bearing directory is
-    # reported under the shared GROUP_WRITABLE / WORLD_WRITABLE codes.
+    # Executable itself is writability-trusted and current-user owned; only the
+    # match-bearing directory is reported under the shared GROUP_WRITABLE /
+    # WORLD_WRITABLE codes. UNSAFE_OWNER must stay silent for the invoking UID.
     exe = install_executable(
         fixture_tree.both_w, cmd, mode=MODE_EXE_TRUSTED
     )
@@ -2947,6 +3066,8 @@ def test_command_mode_match_in_writable_directory_reports_permission(
     # Permission findings name the directory, not the trusted executable.
     assert finding_line("GROUP_WRITABLE", exe) not in result.stdout
     assert finding_line("WORLD_WRITABLE", exe) not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_empty_and_relative_path_entries_remain_applicable(
@@ -3889,6 +4010,8 @@ def test_hostile_path_shadow_observation_does_not_execute_attacker_plants(
 # safely reject-close with INSPECTION_ERROR_N. Explicit-root mode still does
 # not search executables. Shared-taxonomy findings (directory and executable)
 # precede SHADOWED lines; `--command` keeps MATCH lines before hazards.
+# Current-user ownership of these fixtures is trusted: writable findings must
+# not invent UNSAFE_OWNER for the invoking real UID.
 # ---------------------------------------------------------------------------
 
 
@@ -3905,6 +4028,7 @@ def test_path_mode_trusted_executable_is_silent(pathaudit_bin, tmp_path):
     assert result.stdout == b""
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
     assert b"SHADOWED\t" not in result.stdout
 
 
@@ -3915,11 +4039,13 @@ def test_path_mode_group_writable_executable_reports_group_writable(
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
     exe = install_executable(private, "tool", mode=MODE_GROUP_WRITABLE)
+    assert exe.stat().st_uid == os.getuid()
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
     assert result.returncode == 1
     assert result.stderr == b""
     assert result.stdout == findings_stdout([("GROUP_WRITABLE", exe)])
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
     assert escape_root(private) not in result.stdout
 
 
@@ -3935,6 +4061,7 @@ def test_path_mode_world_writable_executable_reports_world_writable(
     assert result.stderr == b""
     assert result.stdout == findings_stdout([("WORLD_WRITABLE", exe)])
     assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_path_mode_both_writable_executable_reports_both_codes(
@@ -3953,6 +4080,7 @@ def test_path_mode_both_writable_executable_reports_both_codes(
             ("WORLD_WRITABLE", exe),
         ]
     )
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_path_mode_symlink_executable_uses_final_writable_target(
@@ -3973,6 +4101,7 @@ def test_path_mode_symlink_executable_uses_final_writable_target(
     # Finding root is the realpath (final target), matching MATCH/SHADOWED.
     assert link.resolve() == real
     assert escape_root(link_dir) not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_path_mode_directory_and_executable_writability_both_report(
@@ -3996,6 +4125,7 @@ def test_path_mode_directory_and_executable_writability_both_report(
         )
     )
     assert result.stdout == expected
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_path_mode_writable_executable_findings_precede_shadowed(
@@ -4020,6 +4150,7 @@ def test_path_mode_writable_executable_findings_precede_shadowed(
         b"SHADOWED\t"
     )
     assert finding_line("WORLD_WRITABLE", shadow) not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_path_mode_non_executable_writable_same_basename_is_not_reported(
@@ -4036,6 +4167,7 @@ def test_path_mode_non_executable_writable_same_basename_is_not_reported(
     assert result.stderr == b""
     assert result.stdout == b""
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
     assert b"tool" not in result.stdout
 
 
@@ -4052,6 +4184,7 @@ def test_explicit_roots_do_not_report_writable_executables(
     assert result.stdout == b""
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
     assert b"MATCH\t" not in result.stdout
     assert b"tool" not in result.stdout
 
@@ -4073,6 +4206,7 @@ def test_command_mode_trusted_executable_match_exits_zero(
     assert result.stdout == command_query_stdout([exe])
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_world_writable_executable_reports_after_match(
@@ -4097,6 +4231,7 @@ def test_command_mode_world_writable_executable_reports_after_match(
     assert finding_line("WORLD_WRITABLE", fixture_tree.private) not in (
         result.stdout
     )
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_group_writable_executable_reports_group_writable(
@@ -4115,6 +4250,7 @@ def test_command_mode_group_writable_executable_reports_group_writable(
         [exe],
         [("GROUP_WRITABLE", exe)],
     )
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_symlink_match_reports_final_writable_target(
@@ -4145,6 +4281,7 @@ def test_command_mode_symlink_match_reports_final_writable_target(
             ("WORLD_WRITABLE", resolved),
         ],
     )
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_writable_dir_and_writable_exe_both_report(
@@ -4169,6 +4306,7 @@ def test_command_mode_writable_dir_and_writable_exe_both_report(
             ]
         ),
     )
+    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_unreadable_symlink_target_is_inspection_error(
@@ -4283,3 +4421,354 @@ def test_command_mode_symlink_loop_executable_is_inspection_error(
     reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
     assert result.stderr == diagnostic_lines(reason, candidate)
     assert_no_raw_unsafe_bytes(result.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Detect executables with unsafe ownership
+#
+# Additive contract for `--path` and `--command`: a regular executable whose
+# final-target st_uid is neither root UID 0 nor the invoking real user from
+# getuid() emits UNSAFE_OWNER naming the executable realpath. Current-user and
+# root ownership are trusted. Symlinks follow the final target owner.
+# UNSAFE_OWNER ranks after GROUP_WRITABLE / WORLD_WRITABLE for the same root,
+# exits status 1, and sorts with other shared-taxonomy findings ahead of
+# SHADOWED. Explicit-root mode never searches executables and never emits
+# UNSAFE_OWNER. Foreign-owner fixtures chown only files created inside the
+# test tree and skip honestly when the host cannot establish a distinct owner.
+# ---------------------------------------------------------------------------
+
+
+def test_path_mode_current_user_owned_executable_is_trusted(
+    pathaudit_bin, tmp_path
+):
+    """Invoking-user ownership is trusted: no UNSAFE_OWNER, exit 0."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
+    assert exe.stat().st_uid == os.getuid()
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"UNSAFE_OWNER" not in result.stdout
+
+
+def test_path_mode_root_owned_executable_is_trusted_when_establishable(
+    pathaudit_bin, tmp_path
+):
+    """Root UID 0 ownership is trusted where the fixture can establish it."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = require_root_owned_executable(private, "tool", mode=MODE_EXE_TRUSTED)
+    assert exe.stat().st_uid == 0
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"UNSAFE_OWNER" not in result.stdout
+
+
+def test_path_mode_foreign_owned_executable_reports_unsafe_owner(
+    pathaudit_bin, tmp_path
+):
+    """Foreign final-target ownership emits UNSAFE_OWNER with exit status 1."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = require_foreign_owned_executable(
+        private, "tool", mode=MODE_EXE_TRUSTED
+    )
+    owner = exe.stat().st_uid
+    assert owner not in (0, os.getuid())
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("UNSAFE_OWNER", exe)])
+    assert escape_root(private) not in result.stdout
+
+
+def test_path_mode_symlink_executable_uses_final_target_owner(
+    pathaudit_bin, tmp_path
+):
+    """Symlink resolution reports ownership of the final executable target."""
+
+    target_dir, link_dir = _private_path_dirs(
+        tmp_path, ("target-dir", "link-dir")
+    )
+    cmd = "tool"
+    real = require_foreign_owned_executable(
+        target_dir, cmd, mode=MODE_EXE_TRUSTED
+    )
+    link = link_dir / cmd
+    link.symlink_to(real)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(link_dir.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("UNSAFE_OWNER", real)])
+    assert link.resolve() == real
+    assert escape_root(link) not in result.stdout
+    assert escape_root(link_dir) not in result.stdout
+
+
+def test_path_mode_unsafe_owner_with_writability_orders_by_code_rank(
+    pathaudit_bin, tmp_path
+):
+    """UNSAFE_OWNER interacts with GROUP/WORLD_WRITABLE under CODE_RANK order."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = require_foreign_owned_executable(
+        private, "tool", mode=MODE_BOTH_WRITABLE
+    )
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("GROUP_WRITABLE", exe),
+            ("WORLD_WRITABLE", exe),
+            ("UNSAFE_OWNER", exe),
+        ]
+    )
+    assert CODE_RANK_INDEX["GROUP_WRITABLE"] < CODE_RANK_INDEX["UNSAFE_OWNER"]
+    assert CODE_RANK_INDEX["WORLD_WRITABLE"] < CODE_RANK_INDEX["UNSAFE_OWNER"]
+    assert result.stdout.find(b"GROUP_WRITABLE\t") < result.stdout.find(
+        b"UNSAFE_OWNER\t"
+    )
+    assert result.stdout.find(b"WORLD_WRITABLE\t") < result.stdout.find(
+        b"UNSAFE_OWNER\t"
+    )
+
+
+def test_path_mode_unsafe_owner_findings_precede_shadowed(
+    pathaudit_bin, tmp_path
+):
+    """Ownership findings are shared-taxonomy output and precede SHADOWED."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    winner = require_foreign_owned_executable(
+        early, cmd, mode=MODE_EXE_TRUSTED
+    )
+    shadow = install_executable(late, cmd, mode=MODE_EXE_TRUSTED)
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        [("UNSAFE_OWNER", winner)]
+    ) + shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == expected
+    assert result.stdout.find(b"UNSAFE_OWNER\t") < result.stdout.find(
+        b"SHADOWED\t"
+    )
+    assert finding_line("UNSAFE_OWNER", shadow) not in result.stdout
+
+
+def test_path_mode_directory_and_executable_ownership_both_report(
+    pathaudit_bin, tmp_path
+):
+    """Directory writability and executable ownership coexist deterministically."""
+
+    (world,) = _private_path_dirs(tmp_path, ("world",))
+    os.chmod(world, MODE_WORLD_WRITABLE)
+    exe = require_foreign_owned_executable(
+        world, "tool", mode=MODE_EXE_TRUSTED
+    )
+    root = str(world.resolve())
+    result = run_pathaudit_path_mode(pathaudit_bin, root)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, root, "WORLD_WRITABLE"),
+                (0, exe, "UNSAFE_OWNER"),
+            ]
+        )
+    )
+    assert result.stdout == expected
+
+
+def test_explicit_roots_do_not_report_unsafe_owner(
+    pathaudit_bin, tmp_path
+):
+    """Explicit-root mode never searches executables or emits UNSAFE_OWNER."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = require_foreign_owned_executable(
+        private, "tool", mode=MODE_EXE_TRUSTED
+    )
+    assert exe.stat().st_uid not in (0, os.getuid())
+    result = run_pathaudit(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"UNSAFE_OWNER" not in result.stdout
+    assert b"MATCH\t" not in result.stdout
+    assert b"tool" not in result.stdout
+
+
+def test_command_mode_current_user_owned_match_is_trusted(
+    pathaudit_bin, fixture_tree
+):
+    """`--command` MATCH owned by getuid() stays exit 0 without UNSAFE_OWNER."""
+
+    cmd = "tool"
+    exe = install_executable(
+        fixture_tree.private, cmd, mode=MODE_EXE_TRUSTED
+    )
+    assert exe.stat().st_uid == os.getuid()
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+    assert b"UNSAFE_OWNER" not in result.stdout
+
+
+def test_command_mode_root_owned_match_is_trusted_when_establishable(
+    pathaudit_bin, tmp_path
+):
+    """Root-owned MATCH is trusted where the fixture can establish UID 0."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    exe = require_root_owned_executable(private, cmd, mode=MODE_EXE_TRUSTED)
+    assert exe.stat().st_uid == 0
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(private.resolve())
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+    assert b"UNSAFE_OWNER" not in result.stdout
+
+
+def test_command_mode_foreign_owned_match_reports_unsafe_owner(
+    pathaudit_bin, tmp_path
+):
+    """`--command` emits MATCH then UNSAFE_OWNER for a foreign-owned target."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    exe = require_foreign_owned_executable(
+        private, cmd, mode=MODE_EXE_TRUSTED
+    )
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(private.resolve())
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        [("UNSAFE_OWNER", exe)],
+    )
+    assert result.stdout.startswith(match_line(exe))
+    assert finding_line("UNSAFE_OWNER", private) not in result.stdout
+
+
+def test_command_mode_symlink_match_uses_final_target_owner(
+    pathaudit_bin, tmp_path
+):
+    """Symlinked MATCH ownership follows the final realpath target."""
+
+    target_dir, link_dir = _private_path_dirs(
+        tmp_path, ("target-dir", "link-dir")
+    )
+    cmd = "tool"
+    real = require_foreign_owned_executable(
+        target_dir, cmd, mode=MODE_EXE_TRUSTED
+    )
+    link = link_dir / cmd
+    link.symlink_to(real)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(link_dir.resolve())
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    resolved = link.resolve()
+    assert resolved == real
+    assert result.stdout == command_query_stdout(
+        [resolved],
+        [("UNSAFE_OWNER", resolved)],
+    )
+
+
+def test_command_mode_unsafe_owner_with_writability_orders_by_code_rank(
+    pathaudit_bin, tmp_path
+):
+    """`--command` ranks GROUP/WORLD_WRITABLE before UNSAFE_OWNER on one target."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    exe = require_foreign_owned_executable(
+        private, cmd, mode=MODE_BOTH_WRITABLE
+    )
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(private.resolve())
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        [
+            ("GROUP_WRITABLE", exe),
+            ("WORLD_WRITABLE", exe),
+            ("UNSAFE_OWNER", exe),
+        ],
+    )
+
+
+def test_command_mode_writable_dir_and_unsafe_owner_both_report(
+    pathaudit_bin, tmp_path
+):
+    """Directory plant-risk and executable ownership combine deterministically."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    os.chmod(early, MODE_GROUP_WRITABLE)
+    cmd = "tool"
+    exe = require_foreign_owned_executable(late, cmd, mode=MODE_EXE_TRUSTED)
+    path_value = f"{early.resolve()}:{late.resolve()}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        sort_findings(
+            [
+                (0, early.resolve(), "GROUP_WRITABLE"),
+                (1, exe, "UNSAFE_OWNER"),
+            ]
+        ),
+    )
+
+
+def test_path_mode_non_executable_foreign_owned_same_basename_is_not_reported(
+    pathaudit_bin, tmp_path
+):
+    """Foreign-owned non-executable decoys are not UNSAFE_OWNER findings."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    decoy = private / "tool"
+    decoy.write_bytes(b"not-executable\n")
+    os.chmod(decoy, MODE_EXE_TRUSTED)
+    candidates = _foreign_uid_candidates()
+    if not candidates:
+        pytest.skip("no distinct non-root foreign UID available on host")
+    owned = False
+    for uid in candidates:
+        if _try_set_owner(decoy, uid):
+            if decoy.stat().st_uid not in (0, os.getuid()):
+                owned = True
+                break
+    if not owned:
+        pytest.skip(
+            "executing user lacks permission to create a distinct-owner fixture"
+        )
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"UNSAFE_OWNER" not in result.stdout
+    assert b"tool" not in result.stdout

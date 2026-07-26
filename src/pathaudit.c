@@ -33,12 +33,13 @@ enum HazardCode {
   HAZARD_NON_DIRECTORY_ROOT,
   HAZARD_GROUP_WRITABLE,
   HAZARD_WORLD_WRITABLE,
+  HAZARD_UNSAFE_OWNER,
   HAZARD_CODE_COUNT
 };
 
 static const char *const HAZARD_NAMES[HAZARD_CODE_COUNT] = {
-    "EMPTY_ROOT",         "RELATIVE_ROOT",  "MISSING_ROOT",
-    "NON_DIRECTORY_ROOT", "GROUP_WRITABLE", "WORLD_WRITABLE"};
+    "EMPTY_ROOT",     "RELATIVE_ROOT",  "MISSING_ROOT", "NON_DIRECTORY_ROOT",
+    "GROUP_WRITABLE", "WORLD_WRITABLE", "UNSAFE_OWNER"};
 
 struct Root {
   const char *text;
@@ -218,8 +219,7 @@ static bool findings_reserve(struct FindingBuffer *buffer) {
     return true;
   }
   size_t new_cap = buffer->cap == 0 ? 16 : buffer->cap * 2;
-  if (new_cap <= buffer->cap ||
-      new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
+  if (new_cap <= buffer->cap || new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
     return false;
   }
   struct Finding *grown =
@@ -868,10 +868,11 @@ static int probe_exec_image(const char *path, bool *is_image) {
     return read_err;
   }
 
-  if (n >= 2 && hdr[0] == (unsigned char)'#' && hdr[1] == (unsigned char)'!') {
-    *is_image = true;
-  } else if (n >= 4 && hdr[0] == 0x7fU && hdr[1] == (unsigned char)'E' &&
-             hdr[2] == (unsigned char)'L' && hdr[3] == (unsigned char)'F') {
+  const bool shebang =
+      n >= 2 && hdr[0] == (unsigned char)'#' && hdr[1] == (unsigned char)'!';
+  const bool elf = n >= 4 && hdr[0] == 0x7fU && hdr[1] == (unsigned char)'E' &&
+                   hdr[2] == (unsigned char)'L' && hdr[3] == (unsigned char)'F';
+  if (shebang || elf) {
     *is_image = true;
   }
   return 0;
@@ -879,16 +880,18 @@ static int probe_exec_image(const char *path, bool *is_image) {
 
 /*
  * If root/command names a regular executable, set *match_out to an owned
- * realpath string and *mode_out to the followed-target mode bits. Otherwise
- * *match_out is NULL. Returns 0, or 2 on fatal allocation / unsafe inspection
- * failure (diagnostics emitted). ENOENT/ENOTDIR and non-executable targets are
- * silent non-matches. Candidate-specific EACCES and self-basename ELOOP
- * reject-close with INSPECTION_ERROR_N naming the candidate path. When the
- * PATH component itself is uninspectable with the same errno, return a silent
- * non-match so component classification owns the diagnostic.
+ * realpath string, *mode_out to the followed-target mode bits, and *uid_out
+ * to the followed-target owner. Otherwise *match_out is NULL. Returns 0, or
+ * 2 on fatal allocation / unsafe inspection failure (diagnostics emitted).
+ * ENOENT/ENOTDIR and non-executable targets are silent non-matches.
+ * Candidate-specific EACCES and self-basename ELOOP reject-close with
+ * INSPECTION_ERROR_N naming the candidate path. When the PATH component
+ * itself is uninspectable with the same errno, return a silent non-match so
+ * component classification owns the diagnostic.
  */
 static int try_command_match(const struct Root *root, const char *command,
-                             char **match_out, mode_t *mode_out) {
+                             char **match_out, mode_t *mode_out,
+                             uid_t *uid_out) {
   *match_out = NULL;
 
   char *candidate = NULL;
@@ -987,6 +990,7 @@ static int try_command_match(const struct Root *root, const char *command,
 
   *match_out = resolved_buf;
   *mode_out = st.st_mode;
+  *uid_out = st.st_uid;
   return 0;
 }
 
@@ -1016,6 +1020,41 @@ static int append_executable_writability(const char *resolved, size_t index,
 }
 
 /*
+ * Trust only root UID 0 and the invoking real UID from getuid(). Every other
+ * final-target owner is UNSAFE_OWNER naming the executable realpath. Uses
+ * followed-target metadata (same st_uid as the successful stat that accepted
+ * the regular executable).
+ */
+static int append_executable_ownership(const char *resolved, size_t index,
+                                       uid_t owner,
+                                       struct FindingBuffer *findings) {
+  uid_t self = getuid();
+  if (owner == (uid_t)0 || owner == self) {
+    return 0;
+  }
+  if (!findings_append_owned(findings, resolved, index, HAZARD_UNSAFE_OWNER)) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  return 0;
+}
+
+/*
+ * Shared writability and ownership checks for one resolved executable target.
+ * Writability findings use the existing GROUP/WORLD codes; ownership adds
+ * UNSAFE_OWNER after them via code rank. Each finding owns its root copy.
+ */
+static int append_executable_trust_findings(const char *resolved, size_t index,
+                                            mode_t mode, uid_t owner,
+                                            struct FindingBuffer *findings) {
+  int status = append_executable_writability(resolved, index, mode, findings);
+  if (status != 0) {
+    return status;
+  }
+  return append_executable_ownership(resolved, index, owner, findings);
+}
+
+/*
  * Record one regular executable discovered under a PATH component.
  * First PATH-order hit for a basename becomes the winner; later hits with a
  * distinct realpath are shadowed. Identical realpaths (repeated components)
@@ -1026,7 +1065,7 @@ static int record_executable_hit(const char *command, char *owned_resolved,
                                  struct WinnerBuffer *winners,
                                  struct ShadowBuffer *shadows) {
   for (size_t i = 0; i < winners->len; i++) {
-    struct WinnerEntry *winner = &winners->items[i];
+    const struct WinnerEntry *winner = &winners->items[i];
     if (cmp_unsigned_bytes(winner->command, command) != 0) {
       continue;
     }
@@ -1075,7 +1114,7 @@ static int record_executable_hit(const char *command, char *owned_resolved,
  * Scan one PATH component for regular executables. Empty, missing,
  * non-directory, and unreadable components are skipped without inventing
  * shadows. Does not recurse into nested directories. Applies the shared
- * writability trust model to each resolved executable target.
+ * writability and ownership trust model to each resolved executable target.
  */
 static int scan_root_executables(const struct Root *root,
                                  struct WinnerBuffer *winners,
@@ -1098,7 +1137,7 @@ static int scan_root_executables(const struct Root *root,
 
   for (;;) {
     errno = 0;
-    struct dirent *entry = readdir(dir);
+    const struct dirent *entry = readdir(dir);
     if (entry == NULL) {
       if (errno != 0) {
         int err = errno;
@@ -1130,7 +1169,9 @@ static int scan_root_executables(const struct Root *root,
 
     char *match_path = NULL;
     mode_t mode = 0;
-    int match_status = try_command_match(root, name, &match_path, &mode);
+    uid_t owner = 0;
+    int match_status =
+        try_command_match(root, name, &match_path, &mode, &owner);
     if (match_status != 0) {
       closedir(dir);
       return match_status;
@@ -1139,8 +1180,8 @@ static int scan_root_executables(const struct Root *root,
       continue;
     }
 
-    int trust_status =
-        append_executable_writability(match_path, root->index, mode, findings);
+    int trust_status = append_executable_trust_findings(match_path, root->index,
+                                                        mode, owner, findings);
     if (trust_status != 0) {
       free(match_path);
       closedir(dir);
@@ -1182,12 +1223,13 @@ static int emit_shadow_lines(const struct ShadowBuffer *shadows) {
  * Exclusive `pathaudit --path` mode.
  *
  * Classifies each PATH component with the shared directory-hazard taxonomy,
- * then detects executable shadowing and applies the shared writability trust
- * model to resolved executable targets across distinct PATH directories in PATH
- * order. Directory and executable hazard lines precede SHADOWED lines.
- * SHADOWED lines are ordered by command basename bytes, then by PATH position
- * of the shadowed executable. Exit status 1 when any directory hazard,
- * executable writability finding, or shadow is reported.
+ * then detects executable shadowing and applies the shared writability and
+ * ownership trust model to resolved executable targets across distinct PATH
+ * directories in PATH order. Directory and executable hazard lines precede
+ * SHADOWED lines. SHADOWED lines are ordered by command basename bytes, then
+ * by PATH position of the shadowed executable. Exit status 1 when any
+ * directory hazard, executable writability/ownership finding, or shadow is
+ * reported.
  *
  * Ownership: PathComponents aliases feed directory finding roots;
  * executable finding roots are owned copies. WinnerBuffer and ShadowBuffer
@@ -1379,8 +1421,9 @@ static int emit_command_query(const struct MatchBuffer *matches,
  * regular executables for this basename only. Hazard lines use the existing
  * taxonomy but only when applicable to the query (cwd-dependent entries,
  * permission plant-risk before the first MATCH, and permission findings on
- * match-bearing directories), plus the shared writability trust model on each
- * resolved MATCH target. Absolute MISSING/NON_DIRECTORY noise is omitted.
+ * match-bearing directories), plus the shared writability and ownership trust
+ * model on each resolved MATCH target. Absolute MISSING/NON_DIRECTORY noise
+ * is omitted.
  *
  * Ownership: PathComponents storage aliases into directory finding roots;
  * executable finding roots are owned copies; MatchBuffer owns realpath
@@ -1406,7 +1449,9 @@ static int run_command_mode(const char *command) {
     const struct Root *root = &components.roots[i];
     char *match_path = NULL;
     mode_t mode = 0;
-    int match_status = try_command_match(root, command, &match_path, &mode);
+    uid_t owner = 0;
+    int match_status =
+        try_command_match(root, command, &match_path, &mode, &owner);
     if (match_status != 0) {
       matches_free(&matches);
       findings_free(&findings);
@@ -1428,8 +1473,8 @@ static int run_command_mode(const char *command) {
     }
 
     if (has_match) {
-      int trust_status = append_executable_writability(
-          match_path, root->index, mode, &findings);
+      int trust_status = append_executable_trust_findings(
+          match_path, root->index, mode, owner, &findings);
       if (trust_status != 0) {
         free(match_path);
         matches_free(&matches);

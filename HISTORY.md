@@ -169,6 +169,38 @@ writable-executable `--path` / `--command` detection; pathaudit coverage is
 ~18s. This cycle does not claim that `pathaudit` is released, installable via
 `make install`, or that a product release was published.
 
+## 2026-07-26 — Detect executables with unsafe ownership
+
+Governed run `1d5eedc01202` (`template_repair_before_review_feature_delivery`)
+delivered Detect executables with unsafe ownership for `pathaudit --path`
+and `pathaudit --command`. The slice adds `UNSAFE_OWNER` on final
+followed-target executable realpaths when `st_uid` is neither UID 0 nor the
+invoking real UID from `getuid()` (not `geteuid`); ownership composes with
+existing writability findings via shared code-rank sort (`UNSAFE_OWNER`
+after `GROUP_WRITABLE`/`WORLD_WRITABLE`, before `SHADOWED`); shebang/ELF
+probing keeps non-executable decoys out of the candidate set; candidates are
+never executed; explicit-root mode never searches executables and never emits
+`UNSAFE_OWNER`. Exact deliverables: `tests/test_pathaudit.py`,
+`src/pathaudit.c`, `docs/pathaudit-contract.md`, `README.md`,
+`man/pathaudit.1`, `CHANGELOG.md`, `architecture.md`. Exact step-4
+verification: `make quality` exited 0; `clang -std=c17 -Wall -Wextra
+-Wpedantic -Werror -fsyntax-only src/pathaudit.c` exited 0; `cppcheck
+--quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1
+src/pathaudit.c` exited 0; `python3 -m pytest -p no:cacheprovider tests/ -q`
+→ 271 passed, 14 skipped in 19.02s. User smoke
+(`artifacts/user-smoke/result.json`) passed with start/check exit 0 and empty
+blocking errors; check.log pytest reported `271 passed, 14 skipped in
+19.94s`. The pinned sysdiff smoke oracle does not directly exercise an
+ownership-specific `--path` / `--command` user flow; pathaudit coverage is
+`tests/test_pathaudit.py`. Independent review
+`code-reviews/review-pathaudit-unsafe-executable-ownership.verdict.json` is
+`pass` (0 Critical/High/Medium/Low formal findings; empty `findings`).
+Allowlisted review check `python3 -m pytest tests/ -q -p no:cacheprovider`
+→ 271 passed, 14 skipped in ~19s. The 14 skips are privilege-gated
+foreign-owner / root-owner fixtures that honestly `pytest.skip` on this
+non-root host. This cycle does not claim that `pathaudit` is released,
+installable via `make install`, or that a product release was published.
+
 ## 2026-07-25 — Detect non-directory PATH entries
 
 Governed run `35116f657f35` (`detect_non_directory_path_entries`) delivered

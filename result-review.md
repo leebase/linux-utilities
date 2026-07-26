@@ -1,5 +1,53 @@
 # Result Review
 
+## Detect executables with unsafe ownership
+
+Governed run `1d5eedc01202` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect
+executables with unsafe ownership for `pathaudit --path` and
+`pathaudit --command`: final followed-target `st_uid` trusts only UID 0
+and the invoking real UID from `getuid()` (not `geteuid`); every other
+owner emits `UNSAFE_OWNER` on the executable `realpath`; ownership
+composes with writability via shared code-rank sort (`UNSAFE_OWNER`
+after `GROUP_WRITABLE`/`WORLD_WRITABLE`, before `SHADOWED`); symlink
+resolution follows the final target; shebang/ELF probing keeps
+non-executable decoys out of the candidate set; candidates are never
+executed; explicit-root mode never searches executables and never
+emits `UNSAFE_OWNER`. Exact deliverables touched in-run:
+`tests/test_pathaudit.py`, `src/pathaudit.c`,
+`docs/pathaudit-contract.md`, `README.md`, `man/pathaudit.1`,
+`CHANGELOG.md`, `architecture.md`. Exact step-4 verification:
+`make quality` exited 0; `clang -std=c17 -Wall -Wextra -Wpedantic
+-Werror -fsyntax-only src/pathaudit.c` exited 0; `cppcheck --quiet
+--enable=all --suppress=missingIncludeSystem --error-exitcode=1
+src/pathaudit.c` exited 0; `python3 -m pytest -p no:cacheprovider
+tests/ -q` → 271 passed, 14 skipped in 19.02s. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `271 passed, 14 skipped in
+19.94s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise an ownership-specific `--path` /
+`--command` user flow; pathaudit coverage is `tests/test_pathaudit.py`.
+Independent review artifacts:
+`code-reviews/review-pathaudit-unsafe-executable-ownership.md` and
+`code-reviews/review-pathaudit-unsafe-executable-ownership.verdict.json`.
+Verdict: `pass` with no Critical, High, Medium, or Low formal findings
+(empty `findings` array). Allowlisted review check:
+`python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 271 passed,
+14 skipped in ~19s. The 14 skips are privilege-gated foreign-owner /
+root-owner fixtures that honestly `pytest.skip` on this non-root host
+(UID 1000); trusted-owner and explicit-root ownership-blind cases run
+and pass. Remaining risks: informational review notes only
+(per-finding `getuid()` re-call; `stat`/`realpath` TOCTOU under
+concurrent FS change, contract-disclaimed; positive emission path
+host-privilege gated) plus prior Medium pathaudit-shadow-1 and Low
+pathaudit-shadow-2/3, Low PA-W1/PA-W2, Low nondir-1/2,
+pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
+Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
+this review. Recommended next action: keep informational ownership
+notes visible; prefer repairing pathaudit-shadow-1 or resume prior
+Medium backlog. Do not claim that `pathaudit` is released.
+
 ## Detect writable resolved-executables through PATH
 
 Governed run `574d06adfc2a` (playbook

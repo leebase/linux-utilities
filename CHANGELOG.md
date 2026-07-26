@@ -32,6 +32,18 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+`pathaudit` documents the narrow executable ownership rule for opt-in
+`pathaudit --path` and `pathaudit --command`: resolved regular executable
+targets emit `UNSAFE_OWNER` when the final followed-target owner is neither
+UID 0 nor the invoking real UID from `getuid()`. Current-user and root
+ownership stay trusted; symlink resolution uses the final target owner and
+names the executable `realpath`. `UNSAFE_OWNER` ranks after `GROUP_WRITABLE`
+/ `WORLD_WRITABLE` for the same root and, under `--path`, precedes `SHADOWED`.
+Explicit-root mode remains ownership-blind and never searches executables.
+README, `man/pathaudit.1`, `docs/pathaudit-contract.md`, and architecture
+record output shape, ordering, exit status `1`, limitations, and remediation
+without claiming a `pathaudit` release or install target.
+
 `pathaudit` gains an opt-in `pathaudit --path` mode that reads the process
 `PATH` once, splits on ASCII `:`, and classifies each component with the same
 closed hazard taxonomy as explicit roots. Explicit-root mode

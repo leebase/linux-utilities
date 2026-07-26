@@ -1,5 +1,27 @@
 # Where Am I
 
+## Detect executables with unsafe ownership
+
+Governed run `1d5eedc01202` delivered Detect executables with unsafe
+ownership for `pathaudit --path` and `pathaudit --command`: final
+followed-target `st_uid` trusts only UID 0 and the invoking real UID
+from `getuid()`; every other owner emits `UNSAFE_OWNER` on the
+executable `realpath`; ownership composes with writability via shared
+code-rank sort; candidates are never executed; explicit-root never
+searches executables. Exact evidence: step-4 `make quality` exit 0;
+Clang `-fsyntax-only` exit 0; cppcheck exit 0; full pytest 271 passed,
+14 skipped in 19.02s. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`271 passed, 14 skipped in 19.94s`. Review
+`code-reviews/review-pathaudit-unsafe-executable-ownership.{md,verdict.json}`
+is `pass` (0 Critical/High/Medium/Low formal findings); allowlisted
+full pytest → 271 passed, 14 skipped. This does **not** claim that
+`pathaudit` is released or that the sysdiff smoke oracle covers an
+ownership-specific `--path` / `--command` user flow. Next: keep
+informational ownership notes visible; prefer repairing Medium
+pathaudit-shadow-1 or resume prior Medium backlog.
+
 ## Detect writable resolved-executables through PATH
 
 Governed run `574d06adfc2a` delivered Detect writable
@@ -287,19 +309,26 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `574d06adfc2a` is
-Detect writable resolved-executables through PATH for `pathaudit
---path` / `--command` (shared trust-model writability on final
-executable realpaths), with independent review
-`code-reviews/review-pathaudit-writable-executables.verdict.json` =
-`pass` (0 Critical/High/Medium, 2 Low PA-W1/PA-W2). This is **not** a
+The current milestone after recording run `1d5eedc01202` is
+Detect executables with unsafe ownership for `pathaudit --path` /
+`--command` (`UNSAFE_OWNER` on final followed-target realpaths when
+owner is neither UID 0 nor `getuid()`), with independent review
+`code-reviews/review-pathaudit-unsafe-executable-ownership.verdict.json`
+= `pass` (0 Critical/High/Medium/Low formal findings). This is **not** a
 pathaudit release and does not change the separately prepared
 unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
-Writable-executable behavior is covered by `tests/test_pathaudit.py`,
-not by the existing sysdiff smoke oracle.
+Ownership behavior is covered by `tests/test_pathaudit.py`, not by the
+existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `1d5eedc01202` delivered and reviewed Detect executables with
+  unsafe ownership: step-4 `make quality` exit 0; Clang `-fsyntax-only`
+  exit 0; cppcheck exit 0; full pytest 271/14 in 19.02s; smoke
+  start/check 0; review `pass` with empty formal findings; allowlisted
+  full pytest 271 passed, 14 skipped. Not a pathaudit release; smoke
+  oracle does not directly exercise an ownership-specific `--path` /
+  `--command` user flow.
 - Run `574d06adfc2a` delivered and reviewed Detect writable
   resolved-executables through PATH: step-3 Clang `-fsyntax-only`
   exit 0; full pytest 269/1; smoke start/check 0; review `pass` with
@@ -518,14 +547,14 @@ not by the existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep Low PA-W1/PA-W2 from run `574d06adfc2a` visible for optional
-polish. Prefer repairing Medium pathaudit-shadow-1 (right-size retained
-realpath buffers) or resume prior Medium backlog repair (pathaudit
-PA-M2 hostile-byte stderr fixture / PA-M1 architecture leftovers, plus
-sysdiff packaging Mediums) without claiming those were closed by the
-writable-executable review. Keep prior Low pathaudit-shadow-2/3,
-nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4
-visible for optional polish. Do not claim that `pathaudit` is released,
-and do not treat `tests/smoke_manifest.json` as writable-executable
-`--path` / `--command` coverage. Separately preserve the unpublished
-`sysdiff` 0.1.0 candidate from `580b0f6ff811`.
+Keep informational ownership review notes from run `1d5eedc01202`
+visible. Prefer repairing Medium pathaudit-shadow-1 (right-size
+retained realpath buffers) or resume prior Medium backlog repair
+(pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
+leftovers, plus sysdiff packaging Mediums) without claiming those were
+closed by the ownership review. Keep prior Low PA-W1/PA-W2,
+pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2,
+and PA-WP-1–PA-WP-4 visible for optional polish. Do not claim that
+`pathaudit` is released, and do not treat `tests/smoke_manifest.json`
+as ownership-specific `--path` / `--command` coverage. Separately
+preserve the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`.

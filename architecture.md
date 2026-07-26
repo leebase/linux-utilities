@@ -189,3 +189,34 @@ before lookup (would hide cwd-dependent plant risk already classified by
 duplicates `--path` root classification with applicability gating
 (Low pathaudit-cmd-1). This slice does not add an install target or claim a
 `pathaudit` release.
+
+## 2026-07-26 — pathaudit executable ownership trust (`UNSAFE_OWNER`)
+
+**Decision:** Opt-in `pathaudit --path` and `pathaudit --command` apply a
+narrow ownership-trust rule to each resolved regular executable target: emit
+`UNSAFE_OWNER` naming the executable `realpath` when the final followed-target
+`st_uid` is neither UID 0 nor the invoking real UID from `getuid()`. Root and
+invoking-user ownership are trusted; every other final-target owner is unsafe.
+Symlink candidates follow the final target for ownership metadata.
+`UNSAFE_OWNER` ranks after `GROUP_WRITABLE` / `WORLD_WRITABLE` for the same
+root and sorts with other shared-taxonomy findings ahead of `SHADOWED` under
+`--path`. Explicit-root mode remains ownership-blind and never searches
+executables. Directory ownership is not classified. Emitting `UNSAFE_OWNER`
+exits status `1` with empty stderr on the successful hazard path.
+
+**Rationale:** PATH audits that only inspect directory writability miss
+planted or residual executables owned by another unprivileged UID. Trusting
+only root and the invoking real user keeps the rule auditable and aligned with
+how operators reason about “my PATH should not run someone else’s binary,”
+without inventing a broad ownership policy for directories or explicit roots.
+
+**Alternatives rejected:** Checking directory ownership (noisy and outside
+PATH executable trust); trusting additional system UIDs by name (host-
+dependent and hard to pin); applying ownership under explicit-root mode
+(would invent executable search there); folding ownership into `SHADOWED`
+(collapses distinct hazard classes).
+
+**Consequences:** User-facing docs must name `UNSAFE_OWNER` exactly and must
+not claim that pathaudit ignores ownership policy wholesale. Foreign-owner
+fixtures may be host-limited. This decision does not add an install target or
+claim a `pathaudit` release.

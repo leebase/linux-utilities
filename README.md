@@ -273,43 +273,52 @@ roots. It has three exclusive modes. Explicit-root mode is
 the process `PATH` environment variable is ignored. Opt-in `pathaudit --path`
 reads `PATH` once, splits on ASCII `:`, classifies each component with the
 same hazard rules, and additionally detects executable shadowing across those
-directories (see Executable Shadowing below). Opt-in `pathaudit --command NAME`
-reads `PATH` the same way but walks components in resolution order for one
-basename only (see Command-specific PATH risk inspection below). Explicit-root
-mode does not search for executables. None of the modes examine ancestors or
-remediate anything. Lookup follows symbolic links like `stat(2)`.
+directories (see Executable Shadowing below) while applying the shared
+executable trust model (writability plus `UNSAFE_OWNER`). Opt-in
+`pathaudit --command NAME` reads `PATH` the same way but walks components in
+resolution order for one basename only (see Command-specific PATH risk
+inspection below), including that same trust model on each `MATCH` target.
+Explicit-root mode does not search for executables and remains ownership-blind.
+None of the modes examine ancestors or remediate anything. Lookup follows
+symbolic links like `stat(2)`.
 
 Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
-`NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`) with deterministic
-bytewise ordering. Empty PATH components (leading, trailing, or consecutive
-colons, or an explicitly empty `PATH`) are retained and report `EMPTY_ROOT`;
-they are not translated to the current directory. Relative components (not
-starting with `/`, including `.` and `..`) report `RELATIVE_ROOT` and are still
-looked up against the process working directory. An existing component that is
-not a directory (regular file, symlink-to-file, or `ENOTDIR` through a
-non-directory component) reports `NON_DIRECTORY_ROOT` and is distinct from both
-a usable directory and a missing entry. Writable-directory findings use only
-the final directory target's `S_IWGRP` / `S_IWOTH` bits.
+`NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`, `UNSAFE_OWNER`) with
+deterministic bytewise ordering. Empty PATH components (leading, trailing, or
+consecutive colons, or an explicitly empty `PATH`) are retained and report
+`EMPTY_ROOT`; they are not translated to the current directory. Relative
+components (not starting with `/`, including `.` and `..`) report
+`RELATIVE_ROOT` and are still looked up against the process working directory.
+An existing component that is not a directory (regular file, symlink-to-file,
+or `ENOTDIR` through a non-directory component) reports `NON_DIRECTORY_ROOT`
+and is distinct from both a usable directory and a missing entry.
+Writable-directory findings use only the final directory target's `S_IWGRP` /
+`S_IWOTH` bits. Under `--path` / `--command`, resolved regular executables
+reuse those writability codes on the executable `realpath`, and emit
+`UNSAFE_OWNER` when the final-target owner is neither UID 0 nor the invoking
+real UID (see Unsafe executable ownership below).
 
 Exit status `0` means every root or PATH component was inspected with no
 hazard. Status `1` means inspection completed and at least one hazard was
 emitted (including empty `PATH` → one `EMPTY_ROOT`, an existing non-directory
-component → `NON_DIRECTORY_ROOT`, or a `SHADOWED` executable under `--path`).
-Status `2` means usage error, unset `PATH` in `--path` or `--command` mode
-(`PATH_UNSET` on stderr, empty stdout), invalid `--command` name
-(`INVALID_COMMAND`), limit violation, operational metadata error, allocation
-failure, or stdout write/flush failure (reject-closed). `--path` and
-`--command` accept no root operands and no other options; mixing them with
+component → `NON_DIRECTORY_ROOT`, a `SHADOWED` executable under `--path`, or
+`UNSAFE_OWNER`). Status `2` means usage error, unset `PATH` in `--path` or
+`--command` mode (`PATH_UNSET` on stderr, empty stdout), invalid `--command`
+name (`INVALID_COMMAND`), limit violation, operational metadata error,
+allocation failure, or stdout write/flush failure (reject-closed). `--path`
+and `--command` accept no root operands and no other options; mixing them with
 roots or with each other is a usage error.
 
 Limitations: this is a metadata snapshot, not a security lock; filesystem
 state can change concurrently. The taxonomy does not cover packages, processes,
-services, capabilities, ACLs, mount options, or ownership policy. Explicit-root
-mode does not search for executables. `--path` scans only top-level regular
-executables in each PATH directory for shadowing (no nested recursion);
-`--command` searches only the queried basename. Symlink loops and permission
-denials are status `2`, not new hazard codes. There is no install target for
-`pathaudit` yet.
+services, capabilities, ACLs, or mount options. The only ownership rule is the
+narrow `UNSAFE_OWNER` check on `--path` / `--command` executable targets;
+directory ownership and explicit-root mode stay ownership-blind. `--path`
+scans only top-level regular executables in each PATH directory (no nested
+recursion); `--command` searches only the queried basename. Symlink loops and
+permission denials are status `2`, not new hazard codes. There is no install
+target for `pathaudit` yet, and this README does not claim that `pathaudit` is
+released.
 
 The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
 manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
@@ -378,6 +387,31 @@ directory modes (for example `0700`) for trusted PATH entries, and treat
 writable PATH directories as a prompt to harden permissions rather than as a
 remediation performed by `pathaudit` itself.
 
+### Unsafe executable ownership
+
+Under `pathaudit --path` and `pathaudit --command`, each resolved regular
+executable target is checked for a narrow ownership rule. Trusted final-target
+owners are root UID 0 and the invoking real UID from `getuid()`; any other
+final-target `st_uid` emits one stdout finding:
+
+```text
+UNSAFE_OWNER<TAB>"ESCAPED_REALPATH"
+```
+
+Symlink candidates follow the final target: ownership uses followed-target
+metadata, and the finding names the executable `realpath`, not the symlink
+path and not the PATH directory component. `UNSAFE_OWNER` ranks after
+`GROUP_WRITABLE` / `WORLD_WRITABLE` for the same realpath; under `--path`,
+those shared-taxonomy lines (directory and executable) precede all `SHADOWED`
+lines. Emitting `UNSAFE_OWNER` exits status `1` with empty stderr on the
+successful hazard path. Explicit-root mode never searches executables and
+never emits `UNSAFE_OWNER`. Non-executable same-basename decoys are not
+candidates. Directory ownership is not classified.
+
+To remediate, replace foreign-owned PATH executables with root-owned or
+self-owned trusted binaries, or remove the untrusted PATH entry. `pathaudit`
+does not `chown` files or edit `PATH`.
+
 ### Executable Shadowing
 
 When `pathaudit --path` walks the process `PATH` in left-to-right resolution
@@ -430,9 +464,13 @@ lookups fail). Absolute `MISSING_ROOT` / `NON_DIRECTORY_ROOT` noise before a
 winner is omitted. `GROUP_WRITABLE` / `WORLD_WRITABLE` apply to directories
 that produced a `MATCH` and to writable absolute directories that still precede
 the first match (plant risk); a writable directory after the winner with no
-match for `NAME` is not reported. Exit `0` means the query finished with no
-hazard lines (matches alone do not force status `1`); exit `1` means at least
-one hazard was emitted; exit `2` covers usage, `INVALID_COMMAND`, `PATH_UNSET`,
+match for `NAME` is not reported. Each `MATCH` target also receives the shared
+executable trust model, so group/other-writable images reuse
+`GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable realpath and foreign
+final-target owners emit `UNSAFE_OWNER` after those permission codes. Exit `0`
+means the query finished with no hazard lines (matches alone do not force
+status `1`); exit `1` means at least one hazard was emitted (including
+`UNSAFE_OWNER`); exit `2` covers usage, `INVALID_COMMAND`, `PATH_UNSET`,
 limits, inspection errors, allocation failure, and stdout write/flush failure.
 
 This is targeted risk inspection for one basename: other executables that

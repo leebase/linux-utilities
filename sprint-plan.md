@@ -1,5 +1,28 @@
 # Sprint Plan
 
+## Detect executables with unsafe ownership
+
+Governed run `1d5eedc01202` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect
+executables with unsafe ownership for `pathaudit --path` and
+`pathaudit --command` (`UNSAFE_OWNER` on final followed-target realpath
+when `st_uid` is neither UID 0 nor `getuid()`; composes with
+writability via code rank; explicit-root never emits `UNSAFE_OWNER`;
+candidates never executed). Exact verification (step-4): `make quality`
+exit 0; Clang `-fsyntax-only` exit 0; cppcheck exit 0; full pytest →
+271 passed, 14 skipped in 19.02s. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `271 passed, 14 skipped in
+19.94s`). Review
+`code-reviews/review-pathaudit-unsafe-executable-ownership.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium/Low formal findings). Allowlisted
+review check: full pytest → 271 passed, 14 skipped. Do **not** claim that
+`pathaudit` is released. Next: keep informational ownership notes
+visible; prefer repairing Medium pathaudit-shadow-1 or resume prior
+Medium backlog; do not treat sysdiff smoke as ownership-specific
+`--path` / `--command` coverage.
+
 ## Detect writable resolved-executables through PATH
 
 Governed run `574d06adfc2a` (playbook
@@ -301,6 +324,28 @@ or release closure from this slice.
 ## Current sprint
 
 - [x] Deliver, smoke-test, independently review, and close out
+  Detect executables with unsafe ownership for `pathaudit --path` /
+  `--command` in run `1d5eedc01202`,
+  `template_repair_before_review_feature_delivery`. Exact evidence:
+  step-4 `make quality` exit 0; Clang `-fsyntax-only` exit 0;
+  cppcheck exit 0; full pytest 271 passed / 14 skipped in 19.02s;
+  smoke start/check 0 with empty `blocking_errors` (check.log pytest
+  `271 passed, 14 skipped in 19.94s`); review verdict `pass` with 0
+  Critical/High/Medium/Low formal findings; allowlisted full pytest →
+  271 passed, 14 skipped. Not a pathaudit release; sysdiff smoke
+  oracle does not directly exercise an ownership-specific `--path` /
+  `--command` user flow.
+- [ ] Next after `1d5eedc01202`: keep informational ownership review
+  notes visible; prefer repairing Medium pathaudit-shadow-1
+  (right-size retained realpath buffers) or resume prior Medium
+  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
+  Mediums) without claiming those were closed by this review; keep
+  prior Low PA-W1/PA-W2, pathaudit-shadow-2/3, nondir-1/2,
+  pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible
+  for optional polish; do not claim that `pathaudit` is released or
+  that `tests/smoke_manifest.json` covers ownership-specific `--path`
+  / `--command` behavior.
+- [x] Deliver, smoke-test, independently review, and close out
   Detect writable resolved-executables through PATH for `pathaudit
   --path` / `--command` in run `574d06adfc2a`,
   `template_repair_before_review_feature_delivery`. Exact evidence:
@@ -311,16 +356,10 @@ or release closure from this slice.
   full pytest → 269 passed, 1 skipped. Not a pathaudit release;
   sysdiff smoke oracle does not directly exercise writable-executable
   `--path` / `--command` detection.
-- [ ] Next after `574d06adfc2a`: keep Low PA-W1/PA-W2 visible for
-  optional polish; prefer repairing Medium pathaudit-shadow-1
-  (right-size retained realpath buffers) or resume prior Medium
-  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
-  Mediums) without claiming those were closed by this review; keep
-  prior Low pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2,
-  pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for optional polish;
-  do not claim that `pathaudit` is released or that
-  `tests/smoke_manifest.json` covers writable-executable `--path` /
-  `--command` behavior.
+- [ ] Keep Low PA-W1/PA-W2 from `574d06adfc2a` visible for optional
+  polish unless a later review explicitly closes them; do not claim
+  that `pathaudit` is released or that `tests/smoke_manifest.json`
+  covers writable-executable `--path` / `--command` behavior.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect executable shadowing across PATH entries for `pathaudit
   --path` in run `f94509b47fd3`,
