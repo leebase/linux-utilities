@@ -37,15 +37,21 @@ owner-only write modes stay silent, `S_IWGRP` / `S_IWOTH` reuse
 resolution follows the final target, and unsafe inspection stays reject-closed
 via `INSPECTION_ERROR_N`. Explicit-root mode still does not search executables.
 
-Unsafe executable-ownership coverage pins that `--path` and `--command` emit
-`UNSAFE_OWNER` for a regular executable whose final-target `st_uid` is neither
-root UID 0 nor the invoking real user from `getuid`. Current-user and root
-ownership are trusted; foreign ownership is unsafe. Symlink resolution uses the
-final target owner. Ownership findings interact with `GROUP_WRITABLE` /
-`WORLD_WRITABLE` under the shared code rank, exit status 1, and deterministic
-ordering. Explicit-root mode never searches executables and never emits
-`UNSAFE_OWNER`. Foreign-owner fixtures stay inside the test tree and skip
-honestly when the host cannot create a distinct-owner file.
+Unsafe ownership coverage pins that `--path` and `--command` apply one shared
+trust policy to resolved executables, each usable PATH directory entry, and
+every ancestor directory through `/`: emit `UNSAFE_OWNER` naming the canonical
+offending realpath when final-target `st_uid` is neither root UID 0 nor the
+invoking real user from `getuid`. Current-user and root ownership are trusted;
+foreign ownership is unsafe. Symlink resolution uses the final target. Shared
+ancestor realpaths are deduplicated to the lowest PATH index that observed
+them. Ownership findings interact with `GROUP_WRITABLE` / `WORLD_WRITABLE`
+under the shared code rank, exit status 1, and deterministic ordering. A
+trusted executable reached only through an unsafe PATH directory or unsafe
+ancestor must still report that directory ownership gap. Explicit-root mode
+never searches executables and remains ownership-blind. Fixture helpers may
+observe untrusted ancestors of the temporary tree without privileged `chown`;
+optional foreign-owner plants inside the test tree skip honestly when the host
+cannot establish a distinct owner.
 
 Hostile-PATH regression coverage pins security-sensitive malformed and
 adversarial `PATH` shapes already supported by the utility: empty components,
@@ -65,6 +71,7 @@ import os
 import pwd
 import re
 import shutil
+import stat as stat_mod
 import subprocess
 import sys
 import tempfile
@@ -127,13 +134,13 @@ CODE_RANK = (
 )
 CODE_RANK_INDEX = {code: index for index, code in enumerate(CODE_RANK)}
 
-# Directory-root taxonomy only. UNSAFE_OWNER applies solely to resolved
-# executable targets under `--path` / `--command`, never to directory roots and
-# never under explicit-root mode.
-DIRECTORY_CODE_RANK = tuple(
-    code for code in CODE_RANK if code != "UNSAFE_OWNER"
-)
-EXECUTABLE_ONLY_CODES = frozenset({"UNSAFE_OWNER"})
+# Directory-root taxonomy under `--path` / `--command`, including UNSAFE_OWNER
+# for PATH entries and ancestors. Explicit-root mode stays ownership-blind and
+# never emits UNSAFE_OWNER even when the same codes apply for writability.
+DIRECTORY_CODE_RANK = CODE_RANK
+# Historical name: ownership is no longer executable-only under `--path` /
+# `--command` (directories and ancestors share the same UNSAFE_OWNER code).
+EXECUTABLE_ONLY_CODES = frozenset()
 
 MAX_ROOT_COUNT = 65536
 MAX_ROOT_LENGTH = 65536
@@ -141,8 +148,9 @@ MAX_ROOT_BYTES = 1024 * 1024
 
 # Controllable mode bits for the shared writability trust model.
 # Directory and regular-file targets share the same write bits: group/other
-# write is untrusted; owner write alone is trusted. Executable ownership is a
-# separate additive check (UNSAFE_OWNER) on final-target st_uid.
+# write is untrusted; owner write alone is trusted. Ownership is a separate
+# additive check (UNSAFE_OWNER) on final-target st_uid for executables, PATH
+# directories, and ancestors through /.
 MODE_PRIVATE = 0o700
 MODE_GROUP_WRITABLE = 0o720
 MODE_WORLD_WRITABLE = 0o702
@@ -331,6 +339,114 @@ def require_foreign_owned_executable(
     pytest.skip(
         "executing user lacks permission to create a distinct-owner fixture"
     )
+
+
+def ownership_is_trusted(uid: int) -> bool:
+    """Established trust policy: only UID 0 and getuid() are trusted."""
+
+    return uid == 0 or uid == os.getuid()
+
+
+def iter_realpath_ancestors(path: bytes | str | os.PathLike[str]):
+    """Yield realpath(path) then each ancestor directory through `/`."""
+
+    cur = Path(os.path.realpath(os.fspath(path)))
+    while True:
+        yield cur
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+
+
+def require_foreign_owned_directory(directory: Path) -> Path:
+    """Chown an existing directory to a foreign UID; skip if the host cannot.
+
+    Non-privileged coverage prefers ambient untrusted ancestors of the fixture
+    tree via ownership_finding_triples(); this helper is optional enrichment
+    when the host can establish a distinct-owner directory inside tmp.
+    """
+
+    candidates = _foreign_uid_candidates()
+    if not candidates:
+        pytest.skip("no distinct non-root foreign UID available on host")
+
+    me = os.getuid()
+    directory = directory.resolve()
+    if not directory.is_dir():
+        raise AssertionError(f"foreign-owner fixture is not a directory: {directory}")
+    for uid in candidates:
+        if not _try_set_owner(directory, uid):
+            continue
+        owner = directory.stat().st_uid
+        if owner not in (0, me):
+            return directory
+    pytest.skip(
+        "executing user lacks permission to create a distinct-owner directory"
+    )
+
+
+def ownership_finding_triples(
+    indexed_dirs: list[tuple[int, bytes | str | os.PathLike[str]]],
+) -> list[tuple[int, Path, str]]:
+    """Build UNSAFE_OWNER triples for untrusted PATH dirs and ancestors.
+
+    Only existing directories are walked (followed-target metadata). Shared
+    offending realpaths are deduplicated to the lowest PATH index that
+    observed them. Missing, non-directory, and empty components contribute
+    nothing here.
+    """
+
+    best_index: dict[str, int] = {}
+    best_path: dict[str, Path] = {}
+    for index, raw in indexed_dirs:
+        try:
+            st = os.stat(os.fspath(raw))
+        except OSError:
+            continue
+        if not stat_mod.S_ISDIR(st.st_mode):
+            continue
+        for node in iter_realpath_ancestors(raw):
+            try:
+                node_st = node.stat()
+            except OSError:
+                continue
+            if ownership_is_trusted(node_st.st_uid):
+                continue
+            key = str(node)
+            if key not in best_index or index < best_index[key]:
+                best_index[key] = index
+                best_path[key] = node
+    return [
+        (best_index[key], best_path[key], "UNSAFE_OWNER") for key in best_index
+    ]
+
+
+def expect_path_findings(
+    items: list[tuple[int, bytes | str | os.PathLike[str], str]],
+    ownership_dirs: list[tuple[int, bytes | str | os.PathLike[str]]],
+) -> tuple[int, bytes]:
+    """Combine hazard items with PATH/ancestor ownership; return status + stdout."""
+
+    combined: list[tuple[int, bytes | str | os.PathLike[str], str]] = list(items)
+    combined.extend(ownership_finding_triples(ownership_dirs))
+    if not combined:
+        return 0, b""
+    return 1, findings_stdout(sort_findings(combined))
+
+
+def expect_command_query(
+    matches: list[bytes | str | os.PathLike[str]],
+    items: list[tuple[int, bytes | str | os.PathLike[str], str]],
+    ownership_dirs: list[tuple[int, bytes | str | os.PathLike[str]]],
+) -> tuple[int, bytes]:
+    """MATCH lines plus applicable hazards including directory ownership."""
+
+    combined: list[tuple[int, bytes | str | os.PathLike[str], str]] = list(items)
+    combined.extend(ownership_finding_triples(ownership_dirs))
+    findings = sort_findings(combined) if combined else None
+    status = 1 if combined else 0
+    return status, command_query_stdout(matches, findings)
 
 
 def sort_findings(
@@ -768,35 +884,42 @@ def test_path_mode_private_component_exits_zero(pathaudit_bin, fixture_tree):
     result = run_pathaudit_path_mode(
         pathaudit_bin, str(fixture_tree.private), cwd=fixture_tree.cwd
     )
-    assert result.returncode == 0
-    assert result.stdout == b""
+    code, expected = expect_path_findings([], [(0, fixture_tree.private)])
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
 
 
 def test_path_mode_group_world_and_both_writable(pathaudit_bin, fixture_tree):
     group = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.group_w))
-    assert group.returncode == 1
-    assert group.stderr == b""
-    assert group.stdout == findings_stdout(
-        [("GROUP_WRITABLE", fixture_tree.group_w)]
+    code, expected = expect_path_findings(
+        [(0, fixture_tree.group_w, "GROUP_WRITABLE")],
+        [(0, fixture_tree.group_w)],
     )
+    assert group.returncode == code
+    assert group.stderr == b""
+    assert group.stdout == expected
 
     world = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.world_w))
-    assert world.returncode == 1
-    assert world.stderr == b""
-    assert world.stdout == findings_stdout(
-        [("WORLD_WRITABLE", fixture_tree.world_w)]
+    code, expected = expect_path_findings(
+        [(0, fixture_tree.world_w, "WORLD_WRITABLE")],
+        [(0, fixture_tree.world_w)],
     )
+    assert world.returncode == code
+    assert world.stderr == b""
+    assert world.stdout == expected
 
     both = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.both_w))
-    assert both.returncode == 1
-    assert both.stderr == b""
-    assert both.stdout == findings_stdout(
+    code, expected = expect_path_findings(
         [
-            ("GROUP_WRITABLE", fixture_tree.both_w),
-            ("WORLD_WRITABLE", fixture_tree.both_w),
-        ]
+            (0, fixture_tree.both_w, "GROUP_WRITABLE"),
+            (0, fixture_tree.both_w, "WORLD_WRITABLE"),
+        ],
+        [(0, fixture_tree.both_w)],
     )
+    assert both.returncode == code
+    assert both.stderr == b""
+    assert both.stdout == expected
 
 
 def test_path_mode_relative_empty_missing_nondirectory(pathaudit_bin, fixture_tree):
@@ -888,30 +1011,36 @@ def test_path_mode_colon_split_retains_empty_and_duplicates(pathaudit_bin, fixtu
             pathaudit_bin, path_value, cwd=fixture_tree.cwd
         )
         items: list[tuple[int, bytes | str, str]] = []
+        ownership_dirs: list[tuple[int, bytes | str]] = []
         for index, component, codes in components:
             for code in codes:
                 items.append((index, component, code))
-        if items:
-            assert result.returncode == 1, path_value
-            assert result.stderr == b"", path_value
-            assert result.stdout == findings_stdout(sort_findings(items)), path_value
-        else:
-            assert result.returncode == 0, path_value
-            assert result.stdout == b"", path_value
-            assert result.stderr == b"", path_value
+            # Usable directory components participate in ownership walks.
+            if component not in (b"", "") and "MISSING_ROOT" not in codes:
+                try:
+                    if Path(os.fsdecode(component) if isinstance(component, bytes) else component).is_dir():
+                        ownership_dirs.append((index, component))
+                except OSError:
+                    pass
+        code, expected = expect_path_findings(items, ownership_dirs)
+        assert result.returncode == code, path_value
+        assert result.stderr == b"", path_value
+        assert result.stdout == expected, path_value
 
 
 def test_path_mode_duplicate_components_preserve_position(pathaudit_bin, fixture_tree):
     root = str(fixture_tree.group_w)
     result = run_pathaudit_path_mode(pathaudit_bin, f"{root}:{root}")
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == findings_stdout(
+    code, expected = expect_path_findings(
         [
-            ("GROUP_WRITABLE", root),
-            ("GROUP_WRITABLE", root),
-        ]
+            (0, root, "GROUP_WRITABLE"),
+            (1, root, "GROUP_WRITABLE"),
+        ],
+        [(0, root), (1, root)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_path_mode_leading_dash_component(pathaudit_bin, tmp_path):
@@ -921,18 +1050,21 @@ def test_path_mode_leading_dash_component(pathaudit_bin, tmp_path):
     abs_dash = str(dash_root.resolve())
 
     absolute = run_pathaudit_path_mode(pathaudit_bin, abs_dash)
-    assert absolute.returncode == 0
-    assert absolute.stdout == b""
+    code, expected = expect_path_findings([], [(0, abs_dash)])
+    assert absolute.returncode == code
+    assert absolute.stdout == expected
     assert absolute.stderr == b""
 
     relative = run_pathaudit_path_mode(
         pathaudit_bin, "-dash-component", cwd=tmp_path
     )
-    assert relative.returncode == 1
-    assert relative.stderr == b""
-    assert relative.stdout == findings_stdout(
-        [("RELATIVE_ROOT", "-dash-component")]
+    code, expected = expect_path_findings(
+        [(0, "-dash-component", "RELATIVE_ROOT")],
+        [(0, abs_dash)],
     )
+    assert relative.returncode == code
+    assert relative.stderr == b""
+    assert relative.stdout == expected
 
     # Leading-dash on argv remains an option error; only PATH components may
     # begin with '-' without `--`.
@@ -949,29 +1081,27 @@ def test_path_mode_stable_ordering_across_component_permutations(
     b = str(fixture_tree.missing)
     c = str(fixture_tree.private)
     d = str(fixture_tree.regular)
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, a, "GROUP_WRITABLE"),
-                (0, a, "WORLD_WRITABLE"),
-                (1, b, "MISSING_ROOT"),
-                (3, d, "NON_DIRECTORY_ROOT"),
-            ]
-        )
+    _, expected = expect_path_findings(
+        [
+            (0, a, "GROUP_WRITABLE"),
+            (0, a, "WORLD_WRITABLE"),
+            (1, b, "MISSING_ROOT"),
+            (3, d, "NON_DIRECTORY_ROOT"),
+        ],
+        [(0, a), (2, c)],
     )
 
     first = run_pathaudit_path_mode(pathaudit_bin, f"{a}:{b}:{c}:{d}")
     second = run_pathaudit_path_mode(pathaudit_bin, f"{d}:{c}:{b}:{a}")
     # Second permutation remaps indices; recompute expected for that PATH.
-    expected_second = findings_stdout(
-        sort_findings(
-            [
-                (0, d, "NON_DIRECTORY_ROOT"),
-                (2, b, "MISSING_ROOT"),
-                (3, a, "GROUP_WRITABLE"),
-                (3, a, "WORLD_WRITABLE"),
-            ]
-        )
+    _, expected_second = expect_path_findings(
+        [
+            (0, d, "NON_DIRECTORY_ROOT"),
+            (2, b, "MISSING_ROOT"),
+            (3, a, "GROUP_WRITABLE"),
+            (3, a, "WORLD_WRITABLE"),
+        ],
+        [(1, c), (3, a)],
     )
 
     assert first.returncode == 1
@@ -1099,8 +1229,10 @@ def test_path_mode_large_but_host_legal_path_is_not_bytes_limit(
 
     result = run_pathaudit_path_mode(pathaudit_bin, path_value)
     assert b"ROOT_BYTES_LIMIT" not in result.stderr
-    assert result.returncode == 0
-    assert result.stdout == b""
+    ownership_dirs = [(index, chunk) for index in range(200)]
+    code, expected = expect_path_findings([], ownership_dirs)
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
 
 
@@ -1160,8 +1292,12 @@ def test_path_mode_does_not_traverse_nested_directories(pathaudit_bin, fixture_t
         f"{fixture_tree.private}:{other}",
         cwd=fixture_tree.cwd,
     )
-    assert result.returncode == 0
-    assert result.stdout == b""
+    code, expected = expect_path_findings(
+        [],
+        [(0, fixture_tree.private), (1, other)],
+    )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
     assert b"WORLD_WRITABLE" not in result.stdout
     assert b"GROUP_WRITABLE" not in result.stdout
@@ -1172,7 +1308,8 @@ def test_path_mode_does_not_traverse_nested_directories(pathaudit_bin, fixture_t
 
 def test_path_mode_exit_status_classes(pathaudit_bin, fixture_tree):
     ok = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.private))
-    assert ok.returncode == 0
+    ok_code, _ = expect_path_findings([], [(0, fixture_tree.private)])
+    assert ok.returncode == ok_code
 
     hazard = run_pathaudit_path_mode(pathaudit_bin, str(fixture_tree.group_w))
     assert hazard.returncode == 1
@@ -1220,9 +1357,7 @@ def test_path_mode_mixed_hazard_components_deterministic(
     result = run_pathaudit_path_mode(
         pathaudit_bin, path_value, cwd=fixture_tree.cwd
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    ordered = sort_findings(
+    code, expected = expect_path_findings(
         [
             (0, b"", "EMPTY_ROOT"),
             (1, relative, "RELATIVE_ROOT"),
@@ -1231,12 +1366,18 @@ def test_path_mode_mixed_hazard_components_deterministic(
             (3, nondir, "NON_DIRECTORY_ROOT"),
             (4, group, "GROUP_WRITABLE"),
             (5, world, "WORLD_WRITABLE"),
-        ]
+        ],
+        [(4, group), (5, world)],
     )
-    assert result.stdout == findings_stdout(ordered)
-    for code in DIRECTORY_CODE_RANK:
-        assert code.encode("ascii") in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    for hazard_code in DIRECTORY_CODE_RANK:
+        # UNSAFE_OWNER appears when this host has untrusted ancestors; otherwise
+        # writable codes still cover the directory taxonomy surface.
+        if hazard_code == "UNSAFE_OWNER" and hazard_code.encode("ascii") not in expected:
+            continue
+        assert hazard_code.encode("ascii") in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1333,33 +1474,31 @@ def test_path_mode_non_directory_mixed_with_valid_missing_empty_duplicates(
     missing = str(fixture_tree.missing)
     path_value = f"{private}:{nondir}:{missing}::{nondir}"
 
-    # Solo private still exits cleanly (established usable-directory behavior).
+    # Solo private may still report PATH/ancestor ownership under the shared policy.
     alone = run_pathaudit_path_mode(pathaudit_bin, private, cwd=fixture_tree.cwd)
-    assert alone.returncode == 0
-    assert alone.stdout == b""
+    alone_code, alone_expected = expect_path_findings([], [(0, private)])
+    assert alone.returncode == alone_code
+    assert alone.stdout == alone_expected
     assert alone.stderr == b""
 
     result = run_pathaudit_path_mode(
         pathaudit_bin, path_value, cwd=fixture_tree.cwd
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (3, b"", "EMPTY_ROOT"),
-                (2, missing, "MISSING_ROOT"),
-                (1, nondir, "NON_DIRECTORY_ROOT"),
-                (4, nondir, "NON_DIRECTORY_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (3, b"", "EMPTY_ROOT"),
+            (2, missing, "MISSING_ROOT"),
+            (1, nondir, "NON_DIRECTORY_ROOT"),
+            (4, nondir, "NON_DIRECTORY_ROOT"),
+        ],
+        [(0, private)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
     assert result.stdout == expected
     assert result.stdout.count(b"NON_DIRECTORY_ROOT\t") == 2
     assert result.stdout.count(b"EMPTY_ROOT\t") == 1
     assert result.stdout.count(b"MISSING_ROOT\t") == 1
-    # Usable private directory contributes no hazard line.
-    assert escape_root(private) not in result.stdout
     assert b"RELATIVE_ROOT" not in result.stdout
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
@@ -1370,18 +1509,18 @@ def test_path_mode_non_directory_mixed_with_valid_missing_empty_duplicates(
     second = run_pathaudit_path_mode(
         pathaudit_bin, permuted, cwd=fixture_tree.cwd
     )
-    assert second.returncode == 1
-    assert second.stderr == b""
-    assert second.stdout == findings_stdout(
-        sort_findings(
-            [
-                (4, b"", "EMPTY_ROOT"),
-                (3, missing, "MISSING_ROOT"),
-                (0, nondir, "NON_DIRECTORY_ROOT"),
-                (2, nondir, "NON_DIRECTORY_ROOT"),
-            ]
-        )
+    code2, expected2 = expect_path_findings(
+        [
+            (4, b"", "EMPTY_ROOT"),
+            (3, missing, "MISSING_ROOT"),
+            (0, nondir, "NON_DIRECTORY_ROOT"),
+            (2, nondir, "NON_DIRECTORY_ROOT"),
+        ],
+        [(1, private)],
     )
+    assert second.returncode == code2
+    assert second.stderr == b""
+    assert second.stdout == expected2
 
 
 def test_path_mode_cwd_dependent_empty_fields_leading_middle_trailing(
@@ -1399,11 +1538,13 @@ def test_path_mode_cwd_dependent_empty_fields_leading_middle_trailing(
     leading = run_pathaudit_path_mode(
         pathaudit_bin, f":{private}", cwd=fixture_tree.cwd
     )
-    assert leading.returncode == 1
-    assert leading.stderr == b""
-    assert leading.stdout == findings_stdout(
-        sort_findings([(0, b"", "EMPTY_ROOT")])
+    code, expected = expect_path_findings(
+        [(0, b"", "EMPTY_ROOT")],
+        [(1, private)],
     )
+    assert leading.returncode == code
+    assert leading.stderr == b""
+    assert leading.stdout == expected
     assert b"RELATIVE_ROOT" not in leading.stdout
     assert escape_root(b"") in leading.stdout
     assert escape_root(b".") not in leading.stdout
@@ -1411,38 +1552,40 @@ def test_path_mode_cwd_dependent_empty_fields_leading_middle_trailing(
     middle = run_pathaudit_path_mode(
         pathaudit_bin, f"{private}::{private}", cwd=fixture_tree.cwd
     )
-    assert middle.returncode == 1
-    assert middle.stderr == b""
-    assert middle.stdout == findings_stdout(
-        sort_findings([(1, b"", "EMPTY_ROOT")])
+    code, expected = expect_path_findings(
+        [(1, b"", "EMPTY_ROOT")],
+        [(0, private), (2, private)],
     )
+    assert middle.returncode == code
+    assert middle.stderr == b""
+    assert middle.stdout == expected
 
     trailing = run_pathaudit_path_mode(
         pathaudit_bin, f"{private}:", cwd=fixture_tree.cwd
     )
-    assert trailing.returncode == 1
-    assert trailing.stderr == b""
-    assert trailing.stdout == findings_stdout(
-        sort_findings([(1, b"", "EMPTY_ROOT")])
+    code, expected = expect_path_findings(
+        [(1, b"", "EMPTY_ROOT")],
+        [(0, private)],
     )
+    assert trailing.returncode == code
+    assert trailing.stderr == b""
+    assert trailing.stdout == expected
 
-    # Leading + middle + trailing empties around one safe absolute.
+    # Leading + middle + trailing empties around safe absolutes.
     combo = run_pathaudit_path_mode(
         pathaudit_bin, f":{private}::{private}:", cwd=fixture_tree.cwd
     )
-    assert combo.returncode == 1
-    assert combo.stderr == b""
-    assert combo.stdout == findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (2, b"", "EMPTY_ROOT"),
-                (4, b"", "EMPTY_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (2, b"", "EMPTY_ROOT"),
+            (4, b"", "EMPTY_ROOT"),
+        ],
+        [(1, private), (3, private)],
     )
-    # Absolute private components contribute no hazard lines.
-    assert escape_root(private) not in combo.stdout
+    assert combo.returncode == code
+    assert combo.stderr == b""
+    assert combo.stdout == expected
 
 
 def test_path_mode_cwd_dependent_repeated_empty_fields(pathaudit_bin, fixture_tree):
@@ -1471,8 +1614,6 @@ def test_path_mode_cwd_dependent_repeated_empty_fields(pathaudit_bin, fixture_tr
     mixed = run_pathaudit_path_mode(
         pathaudit_bin, f"{private}::::{private}", cwd=fixture_tree.cwd
     )
-    assert mixed.returncode == 1
-    assert mixed.stderr == b""
     assert f"{private}::::{private}".split(":") == [
         private,
         "",
@@ -1480,21 +1621,17 @@ def test_path_mode_cwd_dependent_repeated_empty_fields(pathaudit_bin, fixture_tr
         "",
         private,
     ]
-    assert mixed.stdout == findings_stdout(
-        sort_findings(
-            [
-                (1, b"", "EMPTY_ROOT"),
-                (2, b"", "EMPTY_ROOT"),
-                (3, b"", "EMPTY_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (1, b"", "EMPTY_ROOT"),
+            (2, b"", "EMPTY_ROOT"),
+            (3, b"", "EMPTY_ROOT"),
+        ],
+        [(0, private), (4, private)],
     )
-    # Duplicate empties sort by original index after identical root bytes.
-    assert mixed.stdout == (
-        finding_line("EMPTY_ROOT", b"")
-        + finding_line("EMPTY_ROOT", b"")
-        + finding_line("EMPTY_ROOT", b"")
-    )
+    assert mixed.returncode == code
+    assert mixed.stderr == b""
+    assert mixed.stdout == expected
 
 
 def test_path_mode_cwd_dependent_dot_dotdot_dotslash_and_bin(
@@ -1517,26 +1654,35 @@ def test_path_mode_cwd_dependent_dot_dotdot_dotslash_and_bin(
         result = run_pathaudit_path_mode(
             pathaudit_bin, component, cwd=cwd
         )
-        assert result.returncode == 1, component
+        resolved = (cwd / component).resolve()
+        ownership = [(0, resolved)] if resolved.is_dir() else []
+        items = [(0, root, code) for code, root in expected_items]
+        code, expected = expect_path_findings(items, ownership)
+        assert result.returncode == code, component
         assert result.stderr == b"", component
-        assert result.stdout == findings_stdout(expected_items), component
+        assert result.stdout == expected, component
         assert b"EMPTY_ROOT" not in result.stdout, component
 
     # Combined PATH: preserve entry text and emit RELATIVE_ROOT for each.
     path_value = ".:..:./bin:bin"
     combined = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd)
-    assert combined.returncode == 1
-    assert combined.stderr == b""
-    assert combined.stdout == findings_stdout(
-        sort_findings(
-            [
-                (0, ".", "RELATIVE_ROOT"),
-                (1, "..", "RELATIVE_ROOT"),
-                (2, "./bin", "RELATIVE_ROOT"),
-                (3, "bin", "RELATIVE_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, ".", "RELATIVE_ROOT"),
+            (1, "..", "RELATIVE_ROOT"),
+            (2, "./bin", "RELATIVE_ROOT"),
+            (3, "bin", "RELATIVE_ROOT"),
+        ],
+        [
+            (0, cwd.resolve()),
+            (1, (cwd / "..").resolve()),
+            (2, (cwd / "bin").resolve()),
+            (3, (cwd / "bin").resolve()),
+        ],
     )
+    assert combined.returncode == code
+    assert combined.stderr == b""
+    assert combined.stdout == expected
 
 
 def test_path_mode_cwd_dependent_absolute_entries_not_misclassified(
@@ -1551,49 +1697,49 @@ def test_path_mode_cwd_dependent_absolute_entries_not_misclassified(
     assert missing.startswith("/")
     assert group.startswith("/")
 
-    # Safe absolute alone: no EMPTY_ROOT / RELATIVE_ROOT.
+    # Safe absolute alone: no EMPTY_ROOT / RELATIVE_ROOT (ownership may still fire).
     safe = run_pathaudit_path_mode(pathaudit_bin, private, cwd=fixture_tree.cwd)
-    assert safe.returncode == 0
-    assert safe.stdout == b""
+    code, expected = expect_path_findings([], [(0, private)])
+    assert safe.returncode == code
+    assert safe.stdout == expected
     assert safe.stderr == b""
 
     # Mixed absolute hazards still omit RELATIVE_ROOT / EMPTY_ROOT.
     mixed = run_pathaudit_path_mode(
         pathaudit_bin, f"{private}:{missing}:{group}", cwd=fixture_tree.cwd
     )
-    assert mixed.returncode == 1
-    assert mixed.stderr == b""
-    assert mixed.stdout == findings_stdout(
-        sort_findings(
-            [
-                (1, missing, "MISSING_ROOT"),
-                (2, group, "GROUP_WRITABLE"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (1, missing, "MISSING_ROOT"),
+            (2, group, "GROUP_WRITABLE"),
+        ],
+        [(0, private), (2, group)],
     )
+    assert mixed.returncode == code
+    assert mixed.stderr == b""
+    assert mixed.stdout == expected
     assert b"RELATIVE_ROOT" not in mixed.stdout
     assert b"EMPTY_ROOT" not in mixed.stdout
 
     # Absolute beside empty/relative: only the non-absolute entries are
-    # cwd-dependent; absolute private stays silent.
+    # cwd-dependent; absolute private still participates in ownership.
     beside = run_pathaudit_path_mode(
         pathaudit_bin,
         f"{private}:bin:{private}:",
         cwd=fixture_tree.cwd,
     )
     # `bin` is absent under fixture_tree.cwd → RELATIVE + MISSING; trailing empty.
-    assert beside.returncode == 1
-    assert beside.stderr == b""
-    assert beside.stdout == findings_stdout(
-        sort_findings(
-            [
-                (1, "bin", "RELATIVE_ROOT"),
-                (1, "bin", "MISSING_ROOT"),
-                (3, b"", "EMPTY_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (1, "bin", "RELATIVE_ROOT"),
+            (1, "bin", "MISSING_ROOT"),
+            (3, b"", "EMPTY_ROOT"),
+        ],
+        [(0, private), (2, private)],
     )
-    assert escape_root(private) not in beside.stdout
+    assert beside.returncode == code
+    assert beside.stderr == b""
+    assert beside.stdout == expected
 
 
 def test_path_mode_cwd_dependent_stable_ordering_and_indexing(
@@ -1612,21 +1758,28 @@ def test_path_mode_cwd_dependent_stable_ordering_and_indexing(
     assert path_value == f":bin:.::./bin:..:{private}:bin"
 
     result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (3, b"", "EMPTY_ROOT"),
-                (2, ".", "RELATIVE_ROOT"),
-                (5, "..", "RELATIVE_ROOT"),
-                (4, "./bin", "RELATIVE_ROOT"),
-                (1, "bin", "RELATIVE_ROOT"),
-                (7, "bin", "RELATIVE_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (3, b"", "EMPTY_ROOT"),
+            (2, ".", "RELATIVE_ROOT"),
+            (5, "..", "RELATIVE_ROOT"),
+            (4, "./bin", "RELATIVE_ROOT"),
+            (1, "bin", "RELATIVE_ROOT"),
+            (7, "bin", "RELATIVE_ROOT"),
+        ],
+        [
+            (0, cwd.resolve()),
+            (1, (cwd / "bin").resolve()),
+            (2, cwd.resolve()),
+            (4, (cwd / "bin").resolve()),
+            (5, (cwd / "..").resolve()),
+            (6, private),
+            (7, (cwd / "bin").resolve()),
+        ],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
     assert result.stdout == expected
 
     # Permuting PATH remaps indices but keeps the same primary byte order for
@@ -1644,21 +1797,29 @@ def test_path_mode_cwd_dependent_stable_ordering_and_indexing(
         "",
     ]
     second = run_pathaudit_path_mode(pathaudit_bin, permuted, cwd=cwd)
-    assert second.returncode == 1
-    assert second.stderr == b""
-    assert second.stdout == findings_stdout(
-        sort_findings(
-            [
-                (6, b"", "EMPTY_ROOT"),
-                (7, b"", "EMPTY_ROOT"),
-                (4, ".", "RELATIVE_ROOT"),
-                (2, "..", "RELATIVE_ROOT"),
-                (3, "./bin", "RELATIVE_ROOT"),
-                (1, "bin", "RELATIVE_ROOT"),
-                (5, "bin", "RELATIVE_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (6, b"", "EMPTY_ROOT"),
+            (7, b"", "EMPTY_ROOT"),
+            (4, ".", "RELATIVE_ROOT"),
+            (2, "..", "RELATIVE_ROOT"),
+            (3, "./bin", "RELATIVE_ROOT"),
+            (1, "bin", "RELATIVE_ROOT"),
+            (5, "bin", "RELATIVE_ROOT"),
+        ],
+        [
+            (0, private),
+            (1, (cwd / "bin").resolve()),
+            (2, (cwd / "..").resolve()),
+            (3, (cwd / "bin").resolve()),
+            (4, cwd.resolve()),
+            (5, (cwd / "bin").resolve()),
+            (6, cwd.resolve()),
+        ],
     )
+    assert second.returncode == code
+    assert second.stderr == b""
+    assert second.stdout == expected
 
 
 def test_path_mode_cwd_dependent_behavior_across_two_working_directories(
@@ -1695,32 +1856,42 @@ def test_path_mode_cwd_dependent_behavior_across_two_working_directories(
     from_a = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd_a)
     from_b = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=cwd_b)
 
-    expected_a = findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (6, b"", "EMPTY_ROOT"),
-                (1, ".", "RELATIVE_ROOT"),
-                (2, "..", "RELATIVE_ROOT"),
-                (3, "./bin", "RELATIVE_ROOT"),
-                (4, "bin", "RELATIVE_ROOT"),
-            ]
-        )
+    _, expected_a = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (6, b"", "EMPTY_ROOT"),
+            (1, ".", "RELATIVE_ROOT"),
+            (2, "..", "RELATIVE_ROOT"),
+            (3, "./bin", "RELATIVE_ROOT"),
+            (4, "bin", "RELATIVE_ROOT"),
+        ],
+        [
+            (1, cwd_a.resolve()),
+            (2, (cwd_a / "..").resolve()),
+            (3, bin_a.resolve()),
+            (4, bin_a.resolve()),
+            (5, abs_safe),
+        ],
     )
-    expected_b = findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (6, b"", "EMPTY_ROOT"),
-                (1, ".", "RELATIVE_ROOT"),
-                (1, ".", "WORLD_WRITABLE"),
-                (2, "..", "RELATIVE_ROOT"),
-                (3, "./bin", "RELATIVE_ROOT"),
-                (3, "./bin", "WORLD_WRITABLE"),
-                (4, "bin", "RELATIVE_ROOT"),
-                (4, "bin", "WORLD_WRITABLE"),
-            ]
-        )
+    _, expected_b = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (6, b"", "EMPTY_ROOT"),
+            (1, ".", "RELATIVE_ROOT"),
+            (1, ".", "WORLD_WRITABLE"),
+            (2, "..", "RELATIVE_ROOT"),
+            (3, "./bin", "RELATIVE_ROOT"),
+            (3, "./bin", "WORLD_WRITABLE"),
+            (4, "bin", "RELATIVE_ROOT"),
+            (4, "bin", "WORLD_WRITABLE"),
+        ],
+        [
+            (1, cwd_b.resolve()),
+            (2, (cwd_b / "..").resolve()),
+            (3, bin_b.resolve()),
+            (4, bin_b.resolve()),
+            (5, abs_safe),
+        ],
     )
 
     assert from_a.returncode == 1
@@ -1728,9 +1899,9 @@ def test_path_mode_cwd_dependent_behavior_across_two_working_directories(
     assert from_a.stderr == from_b.stderr == b""
     assert from_a.stdout == expected_a
     assert from_b.stdout == expected_b
-    # Absolute safe entry never appears; cwd-dependent permission findings differ.
-    assert escape_root(abs_safe) not in from_a.stdout
-    assert escape_root(abs_safe) not in from_b.stdout
+    # Absolute safe entry itself is trusted; cwd-dependent permission findings differ.
+    assert finding_line("UNSAFE_OWNER", abs_safe) not in from_a.stdout
+    assert finding_line("UNSAFE_OWNER", abs_safe) not in from_b.stdout
     assert from_a.stdout != from_b.stdout
     assert b"WORLD_WRITABLE" not in from_a.stdout
     assert b"WORLD_WRITABLE" in from_b.stdout
@@ -1743,15 +1914,19 @@ def test_path_mode_cwd_dependent_behavior_across_two_working_directories(
 
     miss_a = run_pathaudit_path_mode(pathaudit_bin, path_missing, cwd=cwd_a)
     miss_b = run_pathaudit_path_mode(pathaudit_bin, path_missing, cwd=cwd_b)
-    assert miss_a.stdout == findings_stdout(
-        [("RELATIVE_ROOT", path_missing)]
+    _, expected_miss_a = expect_path_findings(
+        [(0, path_missing, "RELATIVE_ROOT")],
+        [(0, (cwd_a / path_missing).resolve())],
     )
-    assert miss_b.stdout == findings_stdout(
+    # Missing relative has no usable directory to walk for ownership.
+    expected_miss_b = findings_stdout(
         [
             ("RELATIVE_ROOT", path_missing),
             ("MISSING_ROOT", path_missing),
         ]
     )
+    assert miss_a.stdout == expected_miss_a
+    assert miss_b.stdout == expected_miss_b
     assert miss_a.stdout != miss_b.stdout
 
 
@@ -1987,6 +2162,9 @@ def test_all_hazard_classes_in_one_invocation(pathaudit_bin, fixture_tree):
     )
     assert result.stdout == findings_stdout(ordered)
     for code in DIRECTORY_CODE_RANK:
+        # Explicit-root stays ownership-blind; UNSAFE_OWNER is PATH/command-only.
+        if code == "UNSAFE_OWNER":
+            continue
         assert code.encode("ascii") in result.stdout
     # Explicit-root mode never searches executables; UNSAFE_OWNER stays absent.
     assert b"UNSAFE_OWNER" not in result.stdout
@@ -2806,15 +2984,8 @@ def test_pathaudit_behavior_contract_pins_remain_stable():
         "WORLD_WRITABLE",
         "UNSAFE_OWNER",
     )
-    assert DIRECTORY_CODE_RANK == (
-        "EMPTY_ROOT",
-        "RELATIVE_ROOT",
-        "MISSING_ROOT",
-        "NON_DIRECTORY_ROOT",
-        "GROUP_WRITABLE",
-        "WORLD_WRITABLE",
-    )
-    assert EXECUTABLE_ONLY_CODES == frozenset({"UNSAFE_OWNER"})
+    assert DIRECTORY_CODE_RANK == CODE_RANK
+    assert EXECUTABLE_ONLY_CODES == frozenset()
     assert MAX_ROOT_COUNT == 65536
     assert MAX_ROOT_LENGTH == 65536
     assert MAX_ROOT_BYTES == 1024 * 1024
@@ -2853,9 +3024,12 @@ def test_command_mode_single_private_match_exits_zero(pathaudit_bin, fixture_tre
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private), cwd=fixture_tree.cwd
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
+    assert result.stdout == expected
 
 
 def test_command_mode_reports_matches_in_path_resolution_order(
@@ -2870,12 +3044,14 @@ def test_command_mode_reports_matches_in_path_resolution_order(
     )
     # First MATCH wins; second is a shadow. GROUP_WRITABLE applies to the
     # match-bearing later component.
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [first, second],
-        [("GROUP_WRITABLE", fixture_tree.group_w)],
+        [(1, fixture_tree.group_w, "GROUP_WRITABLE")],
+        [(0, fixture_tree.private), (1, fixture_tree.group_w)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_command_mode_shadowing_across_safe_directories_exits_zero(
@@ -2896,9 +3072,14 @@ def test_command_mode_shadowing_across_safe_directories_exits_zero(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, f"{early.resolve()}:{late.resolve()}"
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [first, second],
+        [],
+        [(0, early.resolve()), (1, late.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([first, second])
+    assert result.stdout == expected
     # Winner is the first PATH hit.
     assert result.stdout.startswith(match_line(first))
 
@@ -2926,9 +3107,14 @@ def test_command_mode_does_not_flood_unrelated_basename_collisions(
     result = run_pathaudit_command_mode(
         pathaudit_bin, "wanted", f"{d1.resolve()}:{d2.resolve()}"
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [wanted, second],
+        [],
+        [(0, d1.resolve()), (1, d2.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([wanted, second])
+    assert result.stdout == expected
     for noise in (b"unrelated-a", b"unrelated-b", b"unrelated-c"):
         assert noise not in result.stdout
 
@@ -2939,8 +3125,12 @@ def test_command_mode_missing_command_on_clean_path_exits_zero(
     result = run_pathaudit_command_mode(
         pathaudit_bin, "absent-tool", str(fixture_tree.private)
     )
-    assert result.returncode == 0
-    assert result.stdout == b""
+    # No MATCH, but the consulted PATH directory still receives ownership audit.
+    code, expected = expect_command_query(
+        [], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
 
 
@@ -2953,8 +3143,11 @@ def test_command_mode_non_executable_same_basename_is_not_a_match(
     result = run_pathaudit_command_mode(
         pathaudit_bin, "tool", str(fixture_tree.private)
     )
-    assert result.returncode == 0
-    assert result.stdout == b""
+    code, expected = expect_command_query(
+        [], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
 
 
@@ -2967,8 +3160,11 @@ def test_command_mode_directory_same_basename_is_not_a_match(
     result = run_pathaudit_command_mode(
         pathaudit_bin, "tool", str(fixture_tree.private)
     )
-    assert result.returncode == 0
-    assert result.stdout == b""
+    code, expected = expect_command_query(
+        [], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stderr == b""
 
 
@@ -2979,9 +3175,12 @@ def test_command_mode_repeated_path_entries_preserve_match_positions(
     exe = install_executable(fixture_tree.private, cmd)
     root = str(fixture_tree.private)
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, f"{root}:{root}")
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe, exe], [], [(0, root), (1, root)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe, exe])
+    assert result.stdout == expected
 
 
 def test_command_mode_writable_earlier_entry_is_applicable_plant_risk(
@@ -2994,12 +3193,14 @@ def test_command_mode_writable_earlier_entry_is_applicable_plant_risk(
     # world_w has no matching executable; it still precedes the winner.
     path_value = f"{fixture_tree.world_w}:{fixture_tree.private}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [winner],
-        [("WORLD_WRITABLE", fixture_tree.world_w)],
+        [(0, fixture_tree.world_w, "WORLD_WRITABLE")],
+        [(0, fixture_tree.world_w), (1, fixture_tree.private)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_command_mode_skips_unrelated_absolute_missing_before_winner(
@@ -3011,9 +3212,12 @@ def test_command_mode_skips_unrelated_absolute_missing_before_winner(
     winner = install_executable(fixture_tree.private, cmd)
     path_value = f"{fixture_tree.missing}:{fixture_tree.private}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [winner], [], [(1, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([winner])
+    assert result.stdout == expected
     assert b"MISSING_ROOT" not in result.stdout
 
 
@@ -3024,9 +3228,12 @@ def test_command_mode_skips_unrelated_absolute_nondirectory_before_winner(
     winner = install_executable(fixture_tree.private, cmd)
     path_value = f"{fixture_tree.regular}:{fixture_tree.private}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [winner], [], [(1, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([winner])
+    assert result.stdout == expected
     assert b"NON_DIRECTORY_ROOT" not in result.stdout
 
 
@@ -3037,40 +3244,45 @@ def test_command_mode_writable_after_winner_without_match_is_not_applicable(
     winner = install_executable(fixture_tree.private, cmd)
     path_value = f"{fixture_tree.private}:{fixture_tree.world_w}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 0
+    # Later world_w without a match is not applicable; winner dir still is.
+    code, expected = expect_command_query(
+        [winner], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([winner])
+    assert result.stdout == expected
     assert b"WORLD_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", fixture_tree.world_w) not in result.stdout
 
 
 def test_command_mode_match_in_writable_directory_reports_permission(
     pathaudit_bin, fixture_tree
 ):
     cmd = "tool"
-    # Executable itself is writability-trusted and current-user owned; only the
-    # match-bearing directory is reported under the shared GROUP_WRITABLE /
-    # WORLD_WRITABLE codes. UNSAFE_OWNER must stay silent for the invoking UID.
+    # Executable itself is writability-trusted and current-user owned; the
+    # match-bearing directory may still report GROUP/WORLD_WRITABLE plus
+    # PATH/ancestor UNSAFE_OWNER under the shared trust policy.
     exe = install_executable(
         fixture_tree.both_w, cmd, mode=MODE_EXE_TRUSTED
     )
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.both_w)
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
         [
-            ("GROUP_WRITABLE", fixture_tree.both_w),
-            ("WORLD_WRITABLE", fixture_tree.both_w),
+            (0, fixture_tree.both_w, "GROUP_WRITABLE"),
+            (0, fixture_tree.both_w, "WORLD_WRITABLE"),
         ],
+        [(0, fixture_tree.both_w)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     # Permission findings name the directory, not the trusted executable.
     assert finding_line("GROUP_WRITABLE", exe) not in result.stdout
     assert finding_line("WORLD_WRITABLE", exe) not in result.stdout
     assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
 
 
 def test_command_mode_empty_and_relative_path_entries_remain_applicable(
@@ -3091,18 +3303,18 @@ def test_command_mode_empty_and_relative_path_entries_remain_applicable(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, path_value, cwd=cwd
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [via_cwd, via_rel],
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (1, "bin", "RELATIVE_ROOT"),
-            ]
-        ),
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (1, "bin", "RELATIVE_ROOT"),
+        ],
+        [(0, cwd), (1, bin_dir.resolve())],
     )
-    # Private absolute without a match contributes no hazard lines.
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    # Private absolute without a match is not plant-risk applicable.
     assert escape_root(fixture_tree.private) not in result.stdout
 
 
@@ -3113,18 +3325,18 @@ def test_command_mode_missing_command_still_reports_cwd_dependent_hazards(
     result = run_pathaudit_command_mode(
         pathaudit_bin, "absent-tool", path_value, cwd=fixture_tree.cwd
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [],
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (1, "rel-missing", "RELATIVE_ROOT"),
-                (1, "rel-missing", "MISSING_ROOT"),
-            ]
-        ),
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (1, "rel-missing", "RELATIVE_ROOT"),
+            (1, "rel-missing", "MISSING_ROOT"),
+        ],
+        [(0, fixture_tree.cwd), (2, fixture_tree.private)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert b"MATCH\t" not in result.stdout
 
 
@@ -3141,9 +3353,12 @@ def test_command_mode_symlink_executable_counts_as_match(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(link_dir.resolve())
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [link.resolve()], [], [(0, link_dir.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([link.resolve()])
+    assert result.stdout == expected
 
 
 def test_command_mode_unset_path_is_reject_closed(pathaudit_bin):
@@ -3255,9 +3470,12 @@ def test_command_mode_accepts_leading_dash_command_name(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
+    assert result.stdout == expected
 
 
 def test_command_mode_escapes_hostile_command_name_in_diagnostics(
@@ -3285,13 +3503,17 @@ def test_command_mode_match_path_escaping_on_stdout(pathaudit_bin, tmp_path):
     result = run_pathaudit_command_mode(
         pathaudit_bin, "tool", str(weird_dir.resolve())
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, weird_dir.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
+    assert result.stdout == expected
     assert_no_raw_unsafe_bytes(result.stdout)
-    assert result.stdout.count(b"\t") == 1
-    assert result.stdout.count(b"\n") == 1
+    # Escaped MATCH path must not introduce raw control separators; ownership
+    # may add further finding lines under the shared trust policy.
     assert b"\nMATCH\t" not in result.stdout
+    assert result.stdout.startswith(b"MATCH\t")
 
 
 def test_command_mode_preserves_no_argument_usage_behavior(pathaudit_bin):
@@ -3311,7 +3533,10 @@ def test_command_mode_exit_status_classes(pathaudit_bin, fixture_tree):
     ok = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert ok.returncode == 0
+    ok_code, _ = expect_command_query(
+        [fixture_tree.private / cmd], [], [(0, fixture_tree.private)]
+    )
+    assert ok.returncode == ok_code
 
     hazard = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.world_w)
@@ -3386,17 +3611,21 @@ def test_command_mode_mixed_shadow_and_plant_risk_deterministic(
         ]
     )
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [early_private, late_world],
-        sort_findings(
-            [
-                (0, fixture_tree.group_w, "GROUP_WRITABLE"),
-                (3, fixture_tree.world_w, "WORLD_WRITABLE"),
-            ]
-        ),
+        [
+            (0, fixture_tree.group_w, "GROUP_WRITABLE"),
+            (3, fixture_tree.world_w, "WORLD_WRITABLE"),
+        ],
+        [
+            (0, fixture_tree.group_w),
+            (2, fixture_tree.private),
+            (3, fixture_tree.world_w),
+        ],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert b"MISSING_ROOT" not in result.stdout
     assert b"unrelated" not in result.stdout
 
@@ -3444,18 +3673,14 @@ def test_path_mode_shadowing_two_executables_reports_winner_and_shadow(
     shadow = install_executable(late, cmd)
     path_value = f"{early.resolve()}:{late.resolve()}"
     result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.returncode == 1
     assert result.stderr == b""
-    assert result.stdout == shadowing_stdout([(cmd, winner, shadow)])
-    assert result.stdout == (
-        b"SHADOWED\t"
-        + escape_root(cmd)
-        + b"\t"
-        + escape_root(winner)
-        + b"\t"
-        + escape_root(shadow)
-        + b"\n"
-    )
+    assert result.stdout == expected
+    assert shadowed_line(cmd, winner, shadow) in result.stdout
 
 
 def test_path_mode_shadowing_first_entry_precedence_is_deterministic(
@@ -3471,16 +3696,24 @@ def test_path_mode_shadowing_first_entry_precedence_is_deterministic(
     forward = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
+    code, owned = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
     assert forward.returncode == 1
     assert forward.stderr == b""
-    assert forward.stdout == shadowing_stdout([(cmd, first, second)])
+    assert forward.stdout == owned + shadowing_stdout([(cmd, first, second)])
 
     reversed_order = run_pathaudit_path_mode(
         pathaudit_bin, f"{late.resolve()}:{early.resolve()}"
     )
+    code, owned_r = expect_path_findings(
+        [], [(0, late.resolve()), (1, early.resolve())]
+    )
     assert reversed_order.returncode == 1
     assert reversed_order.stderr == b""
-    assert reversed_order.stdout == shadowing_stdout([(cmd, second, first)])
+    assert reversed_order.stdout == owned_r + shadowing_stdout(
+        [(cmd, second, first)]
+    )
     assert forward.stdout != reversed_order.stdout
 
 
@@ -3500,14 +3733,23 @@ def test_path_mode_shadowing_reports_every_later_shadowed_location(
         str(d.resolve()) for d in (first_dir, second_dir, third_dir)
     )
     result = run_pathaudit_path_mode(pathaudit_bin, path_value)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == shadowing_stdout(
+    code, owned = expect_path_findings(
+        [],
+        [
+            (0, first_dir.resolve()),
+            (1, second_dir.resolve()),
+            (2, third_dir.resolve()),
+        ],
+    )
+    expected = owned + shadowing_stdout(
         [
             (cmd, winner, shadow_b),
             (cmd, winner, shadow_c),
         ]
     )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert result.stdout.count(b"SHADOWED\t") == 2
 
 
@@ -3529,9 +3771,12 @@ def test_path_mode_shadowing_ignores_non_executable_same_basename(
     no_shadow = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
-    assert no_shadow.returncode == 0
+    code, expected = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    assert no_shadow.returncode == code
     assert no_shadow.stderr == b""
-    assert no_shadow.stdout == b""
+    assert no_shadow.stdout == expected
     assert b"SHADOWED\t" not in no_shadow.stdout
 
     # Non-executable in a later entry must not be reported as shadowed when an
@@ -3546,9 +3791,12 @@ def test_path_mode_shadowing_ignores_non_executable_same_basename(
     still_clean = run_pathaudit_path_mode(
         pathaudit_bin, f"{early2.resolve()}:{late2.resolve()}"
     )
-    assert still_clean.returncode == 0
+    code, expected = expect_path_findings(
+        [], [(0, early2.resolve()), (1, late2.resolve())]
+    )
+    assert still_clean.returncode == code
     assert still_clean.stderr == b""
-    assert still_clean.stdout == b""
+    assert still_clean.stdout == expected
     assert escape_root(winner) not in still_clean.stdout
     assert b"SHADOWED\t" not in still_clean.stdout
 
@@ -3566,9 +3814,12 @@ def test_path_mode_shadowing_ignores_distinct_command_names(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
-    assert result.returncode == 0
+    code, expected = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"SHADOWED\t" not in result.stdout
     for name in (b"alpha", b"beta", b"gamma", b"delta"):
         assert name not in result.stdout
@@ -3588,9 +3839,13 @@ def test_path_mode_shadowing_only_reports_the_colliding_basename(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
+    code, owned = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.returncode == 1
     assert result.stderr == b""
-    assert result.stdout == shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == expected
     assert b"only-early" not in result.stdout
     assert b"only-late" not in result.stdout
     assert result.stdout.count(b"SHADOWED\t") == 1
@@ -3606,9 +3861,10 @@ def test_path_mode_shadowing_repeated_directory_does_not_self_shadow(
     install_executable(only, cmd)
     root = str(only.resolve())
     result = run_pathaudit_path_mode(pathaudit_bin, f"{root}:{root}")
-    assert result.returncode == 0
+    code, expected = expect_path_findings([], [(0, root), (1, root)])
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"SHADOWED\t" not in result.stdout
 
 
@@ -3623,9 +3879,12 @@ def test_path_mode_shadowing_no_shadow_single_hit_exits_zero(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
-    assert result.returncode == 0
+    code, expected = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"SHADOWED\t" not in result.stdout
     assert b"solo" not in result.stdout
 
@@ -3644,14 +3903,18 @@ def test_path_mode_shadowing_multiple_commands_ordered_by_basename(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == shadowing_stdout(
+    code, owned = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    expected = owned + shadowing_stdout(
         [
             ("a-cmd", winner_a, shadow_a),
             ("z-cmd", winner_z, shadow_z),
         ]
     )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
@@ -3671,9 +3934,11 @@ def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
     result = run_pathaudit_path_mode(pathaudit_bin, path_value)
     assert result.returncode == 1
     assert result.stderr == b""
-    expected = findings_stdout(
-        [("WORLD_WRITABLE", fixture_tree.world_w)]
-    ) + shadowing_stdout([(cmd, winner, shadow)])
+    code, owned = expect_path_findings(
+        [(1, fixture_tree.world_w, "WORLD_WRITABLE")],
+        [(0, fixture_tree.private), (1, fixture_tree.world_w)],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.stdout == expected
     world_at = result.stdout.find(b"WORLD_WRITABLE\t")
     shadow_at = result.stdout.find(b"SHADOWED\t")
@@ -3724,11 +3989,15 @@ def test_path_mode_shadowing_skips_unreadable_directory_without_inventing_shadow
         os.chmod(late, MODE_PRIVATE)
 
     # Late remains a directory for classify_root (stat succeeds; mode 000 has
-    # no group/other write bits), so no directory hazard. opendir fails and
-    # shadowing skips the component without inventing SHADOWED.
-    assert result.returncode == 0
+    # no group/other write bits), so no writability hazard. opendir fails and
+    # shadowing skips the component without inventing SHADOWED. Ownership still
+    # walks usable directory components (including the unreadable late dir).
+    code, expected = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"SHADOWED\t" not in result.stdout
     assert escape_root(winner) not in result.stdout
     assert b"INSPECTION_ERROR_" not in result.stderr
@@ -3843,22 +4112,21 @@ def test_hostile_path_empty_missing_duplicates_ordered_without_executing_plants(
     result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
     _assert_probe_not_executed(marker)
 
-    assert result.returncode == 1
-    assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (3, b"", "EMPTY_ROOT"),
-                (2, missing_s, "MISSING_ROOT"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (3, b"", "EMPTY_ROOT"),
+            (2, missing_s, "MISSING_ROOT"),
+        ],
+        [(1, attacker_s), (4, attacker_s), (5, private_s)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
     assert result.stdout == expected
     assert result.stdout.count(b"EMPTY_ROOT\t") == 2
     assert result.stdout.count(b"MISSING_ROOT\t") == 1
-    assert escape_root(attacker_s) not in result.stdout
-    assert escape_root(private_s) not in result.stdout
+    assert finding_line("UNSAFE_OWNER", attacker_s) not in result.stdout
+    assert finding_line("UNSAFE_OWNER", private_s) not in result.stdout
     assert b"SHADOWED\t" not in result.stdout
     assert b"trojan" not in result.stdout
 
@@ -3887,12 +4155,15 @@ def test_hostile_path_duplicate_hazard_entries_preserve_position_without_executi
 
     assert result.returncode == 1
     assert result.stderr == b""
-    assert result.stdout == findings_stdout(
+    code, expected = expect_path_findings(
         [
-            ("WORLD_WRITABLE", root),
-            ("WORLD_WRITABLE", root),
-        ]
+            (0, root, "WORLD_WRITABLE"),
+            (1, root, "WORLD_WRITABLE"),
+        ],
+        [(0, root), (1, root)],
     )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert result.stdout.count(b"WORLD_WRITABLE\t") == 2
     assert b"SHADOWED\t" not in result.stdout
     assert b"plant" not in result.stdout
@@ -3926,26 +4197,26 @@ def test_hostile_path_permutation_ordering_with_empty_and_missing(
     second = run_pathaudit_path_mode(pathaudit_bin, second_path, cwd=tmp_path)
     _assert_probe_not_executed(marker)
 
+    _, expected_first = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (1, group_s, "GROUP_WRITABLE"),
+            (2, missing_s, "MISSING_ROOT"),
+        ],
+        [(1, group_s)],
+    )
+    _, expected_second = expect_path_findings(
+        [
+            (1, b"", "EMPTY_ROOT"),
+            (2, group_s, "GROUP_WRITABLE"),
+            (0, missing_s, "MISSING_ROOT"),
+        ],
+        [(2, group_s)],
+    )
     assert first.returncode == second.returncode == 1
     assert first.stderr == second.stderr == b""
-    assert first.stdout == findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (1, group_s, "GROUP_WRITABLE"),
-                (2, missing_s, "MISSING_ROOT"),
-            ]
-        )
-    )
-    assert second.stdout == findings_stdout(
-        sort_findings(
-            [
-                (1, b"", "EMPTY_ROOT"),
-                (2, group_s, "GROUP_WRITABLE"),
-                (0, missing_s, "MISSING_ROOT"),
-            ]
-        )
-    )
+    assert first.stdout == expected_first
+    assert second.stdout == expected_second
     # Same finding multiset modulo operand-index tie-breaks encoded in order.
     assert sorted(first.stdout.splitlines()) == sorted(second.stdout.splitlines())
     assert b"decoy" not in first.stdout
@@ -3990,17 +4261,17 @@ def test_hostile_path_shadow_observation_does_not_execute_attacker_plants(
     _assert_probe_not_executed(marker_early)
     _assert_probe_not_executed(marker_late)
 
+    code, owned = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (4, b"", "EMPTY_ROOT"),
+            (2, missing_s, "MISSING_ROOT"),
+        ],
+        [(1, early_s), (3, late_s)],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.returncode == 1
     assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, b"", "EMPTY_ROOT"),
-                (4, b"", "EMPTY_ROOT"),
-                (2, missing_s, "MISSING_ROOT"),
-            ]
-        )
-    ) + shadowing_stdout([(cmd, winner, shadow)])
     assert result.stdout == expected
     assert result.stdout.count(b"SHADOWED\t") == 1
     assert result.stdout.count(b"EMPTY_ROOT\t") == 2
@@ -4028,9 +4299,13 @@ def test_hostile_path_control_and_csi_bytes_escaped_in_stdout_findings(
     path_value = f"{hostile}:{private.resolve()}"
 
     result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, hostile, "MISSING_ROOT")],
+        [(1, private.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("MISSING_ROOT", hostile)])
+    assert result.stdout == expected
     assert_no_raw_unsafe_bytes(result.stdout)
     assert b"\x1b" not in result.stdout
     assert b"\xff" not in result.stdout
@@ -4038,13 +4313,10 @@ def test_hostile_path_control_and_csi_bytes_escaped_in_stdout_findings(
     assert b"\\xFF" in result.stdout
     assert b"\\x0A" in result.stdout
     assert b"\\x09" in result.stdout
-    # One structural CODE<TAB> separator; operand TAB/LF must be escaped.
-    assert result.stdout.count(b"\t") == 1
-    assert result.stdout.count(b"\n") == 1
-    assert result.stdout.endswith(b"\n")
-    # Unescaped LF would split the record and forge a second finding line.
+    # MISSING_ROOT line plus any UNSAFE_OWNER ancestor lines.
+    assert finding_line("MISSING_ROOT", hostile) in result.stdout
     assert b"\nWORLD_WRITABLE" not in result.stdout
-    assert escape_root(private.resolve()) not in result.stdout
+    assert finding_line("UNSAFE_OWNER", private.resolve()) not in result.stdout
 
 
 def test_hostile_path_writable_dir_with_esc_name_escapes_terminal_bytes(
@@ -4063,7 +4335,12 @@ def test_hostile_path_writable_dir_with_esc_name_escapes_terminal_bytes(
     result = run_pathaudit_path_mode(pathaudit_bin, root)
     assert result.returncode == 1
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("WORLD_WRITABLE", root)])
+    code, expected = expect_path_findings(
+        [(0, root, "WORLD_WRITABLE")],
+        [(0, root)],
+    )
+    assert result.returncode == code
+    assert result.stdout == expected
     assert_no_raw_unsafe_bytes(result.stdout)
     assert b"\x1b" not in result.stdout
     assert b"\xff" not in result.stdout
@@ -4071,8 +4348,8 @@ def test_hostile_path_writable_dir_with_esc_name_escapes_terminal_bytes(
     assert b"\\xFF" in result.stdout
     assert b"\\x0A" in result.stdout
     assert b"\\x09" in result.stdout
-    assert result.stdout.count(b"\t") == 1
-    assert result.stdout.count(b"\n") == 1
+    # One tab per finding line; ambient ancestor UNSAFE_OWNER may add lines.
+    assert result.stdout.count(b"\t") == result.stdout.count(b"\n")
     assert result.stdout.endswith(b"\n")
     # Printable CSI tail stays visible only inside the escaped quotes.
     assert b"[31mRED" in result.stdout
@@ -4145,25 +4422,28 @@ def test_hostile_path_inspection_error_escapes_control_component_on_stderr(
 # safely reject-close with INSPECTION_ERROR_N. Explicit-root mode still does
 # not search executables. Shared-taxonomy findings (directory and executable)
 # precede SHADOWED lines; `--command` keeps MATCH lines before hazards.
-# Current-user ownership of these fixtures is trusted: writable findings must
-# not invent UNSAFE_OWNER for the invoking real UID.
+# Current-user ownership of executable fixtures is trusted for the file itself;
+# PATH directories and ancestors still participate in the shared UNSAFE_OWNER
+# walk. Assertions below allow ancestor ownership while forbidding inventing
+# UNSAFE_OWNER on the invoking-UID executable realpath.
 # ---------------------------------------------------------------------------
 
 
 def test_path_mode_trusted_executable_is_silent(pathaudit_bin, tmp_path):
-    """Owner-writable-only executables are trusted and produce no findings."""
+    """Owner-writable-only executables are trusted; PATH ownership may still fire."""
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
-    install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
+    exe = install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
     # Also cover MODE_PRIVATE (0700): owner rwx only, still trusted.
     install_executable(private, "private-tool", mode=MODE_PRIVATE)
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 0
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
     assert b"SHADOWED\t" not in result.stdout
 
 
@@ -4176,12 +4456,15 @@ def test_path_mode_group_writable_executable_reports_group_writable(
     exe = install_executable(private, "tool", mode=MODE_GROUP_WRITABLE)
     assert exe.stat().st_uid == os.getuid()
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, exe, "GROUP_WRITABLE")],
+        [(0, private.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("GROUP_WRITABLE", exe)])
+    assert result.stdout == expected
     assert b"WORLD_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
-    assert escape_root(private) not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_world_writable_executable_reports_world_writable(
@@ -4192,11 +4475,15 @@ def test_path_mode_world_writable_executable_reports_world_writable(
     (private,) = _private_path_dirs(tmp_path, ("private",))
     exe = install_executable(private, "tool", mode=MODE_WORLD_WRITABLE)
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, exe, "WORLD_WRITABLE")],
+        [(0, private.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("WORLD_WRITABLE", exe)])
+    assert result.stdout == expected
     assert b"GROUP_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_both_writable_executable_reports_both_codes(
@@ -4207,15 +4494,17 @@ def test_path_mode_both_writable_executable_reports_both_codes(
     (private,) = _private_path_dirs(tmp_path, ("private",))
     exe = install_executable(private, "tool", mode=MODE_BOTH_WRITABLE)
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == findings_stdout(
+    code, expected = expect_path_findings(
         [
-            ("GROUP_WRITABLE", exe),
-            ("WORLD_WRITABLE", exe),
-        ]
+            (0, exe, "GROUP_WRITABLE"),
+            (0, exe, "WORLD_WRITABLE"),
+        ],
+        [(0, private.resolve())],
     )
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_symlink_executable_uses_final_writable_target(
@@ -4230,13 +4519,16 @@ def test_path_mode_symlink_executable_uses_final_writable_target(
     link.symlink_to(real)
     # PATH names the private link directory; the final target is world-writable.
     result = run_pathaudit_path_mode(pathaudit_bin, str(link_dir.resolve()))
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, real, "WORLD_WRITABLE")],
+        [(0, link_dir.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("WORLD_WRITABLE", real)])
+    assert result.stdout == expected
     # Finding root is the realpath (final target), matching MATCH/SHADOWED.
     assert link.resolve() == real
-    assert escape_root(link_dir) not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", real) not in result.stdout
 
 
 def test_path_mode_directory_and_executable_writability_both_report(
@@ -4249,18 +4541,17 @@ def test_path_mode_directory_and_executable_writability_both_report(
     exe = install_executable(world, "tool", mode=MODE_GROUP_WRITABLE)
     root = str(world.resolve())
     result = run_pathaudit_path_mode(pathaudit_bin, root)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, root, "WORLD_WRITABLE"),
-                (0, exe, "GROUP_WRITABLE"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, root, "WORLD_WRITABLE"),
+            (0, exe, "GROUP_WRITABLE"),
+        ],
+        [(0, root)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
     assert result.stdout == expected
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_writable_executable_findings_precede_shadowed(
@@ -4275,17 +4566,19 @@ def test_path_mode_writable_executable_findings_precede_shadowed(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
+    code, owned = expect_path_findings(
+        [(0, winner, "WORLD_WRITABLE")],
+        [(0, early.resolve()), (1, late.resolve())],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.returncode == 1
     assert result.stderr == b""
-    expected = findings_stdout(
-        [("WORLD_WRITABLE", winner)]
-    ) + shadowing_stdout([(cmd, winner, shadow)])
     assert result.stdout == expected
     assert result.stdout.find(b"WORLD_WRITABLE\t") < result.stdout.find(
         b"SHADOWED\t"
     )
     assert finding_line("WORLD_WRITABLE", shadow) not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", winner) not in result.stdout
 
 
 def test_path_mode_non_executable_writable_same_basename_is_not_reported(
@@ -4298,11 +4591,11 @@ def test_path_mode_non_executable_writable_same_basename_is_not_reported(
     decoy.write_bytes(b"not-executable\n")
     os.chmod(decoy, MODE_WORLD_WRITABLE)
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 0
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
+    assert result.stdout == expected
     assert b"WORLD_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
     assert b"tool" not in result.stdout
 
 
@@ -4327,7 +4620,7 @@ def test_explicit_roots_do_not_report_writable_executables(
 def test_command_mode_trusted_executable_match_exits_zero(
     pathaudit_bin, fixture_tree
 ):
-    """Trusted-mode MATCH alone remains exit 0 with no permission findings."""
+    """Trusted-mode MATCH has no permission findings; PATH ownership may still fire."""
 
     cmd = "tool"
     exe = install_executable(
@@ -4336,12 +4629,15 @@ def test_command_mode_trusted_executable_match_exits_zero(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
+    assert result.stdout == expected
     assert b"GROUP_WRITABLE" not in result.stdout
     assert b"WORLD_WRITABLE" not in result.stdout
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_world_writable_executable_reports_after_match(
@@ -4356,17 +4652,19 @@ def test_command_mode_world_writable_executable_reports_after_match(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
-        [("WORLD_WRITABLE", exe)],
+        [(0, exe, "WORLD_WRITABLE")],
+        [(0, fixture_tree.private)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert result.stdout.startswith(match_line(exe))
     assert finding_line("WORLD_WRITABLE", fixture_tree.private) not in (
         result.stdout
     )
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_group_writable_executable_reports_group_writable(
@@ -4379,13 +4677,15 @@ def test_command_mode_group_writable_executable_reports_group_writable(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
-        [("GROUP_WRITABLE", exe)],
+        [(0, exe, "GROUP_WRITABLE")],
+        [(0, fixture_tree.private)],
     )
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_symlink_match_reports_final_writable_target(
@@ -4405,18 +4705,20 @@ def test_command_mode_symlink_match_reports_final_writable_target(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(link_dir.resolve())
     )
-    assert result.returncode == 1
+    code, expected = expect_command_query(
+        [link.resolve()],
+        [
+            (0, link.resolve(), "GROUP_WRITABLE"),
+            (0, link.resolve(), "WORLD_WRITABLE"),
+        ],
+        [(0, link_dir.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
     resolved = link.resolve()
     assert resolved == real
-    assert result.stdout == command_query_stdout(
-        [resolved],
-        [
-            ("GROUP_WRITABLE", resolved),
-            ("WORLD_WRITABLE", resolved),
-        ],
-    )
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", resolved) not in result.stdout
 
 
 def test_command_mode_writable_dir_and_writable_exe_both_report(
@@ -4430,18 +4732,18 @@ def test_command_mode_writable_dir_and_writable_exe_both_report(
     )
     path_value = f"{fixture_tree.group_w}:{fixture_tree.private}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
-        sort_findings(
-            [
-                (0, fixture_tree.group_w, "GROUP_WRITABLE"),
-                (1, exe, "WORLD_WRITABLE"),
-            ]
-        ),
+        [
+            (0, fixture_tree.group_w, "GROUP_WRITABLE"),
+            (1, exe, "WORLD_WRITABLE"),
+        ],
+        [(0, fixture_tree.group_w), (1, fixture_tree.private)],
     )
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_unreadable_symlink_target_is_inspection_error(
@@ -4564,43 +4866,47 @@ def test_command_mode_symlink_loop_executable_is_inspection_error(
 # Additive contract for `--path` and `--command`: a regular executable whose
 # final-target st_uid is neither root UID 0 nor the invoking real user from
 # getuid() emits UNSAFE_OWNER naming the executable realpath. Current-user and
-# root ownership are trusted. Symlinks follow the final target owner.
-# UNSAFE_OWNER ranks after GROUP_WRITABLE / WORLD_WRITABLE for the same root,
-# exits status 1, and sorts with other shared-taxonomy findings ahead of
-# SHADOWED. Explicit-root mode never searches executables and never emits
-# UNSAFE_OWNER. Foreign-owner fixtures chown only files created inside the
-# test tree and skip honestly when the host cannot establish a distinct owner.
+# root ownership are trusted for that executable. PATH directories and ancestors
+# still participate in the same UNSAFE_OWNER policy. Symlinks follow the final
+# target owner. UNSAFE_OWNER ranks after GROUP_WRITABLE / WORLD_WRITABLE for
+# the same root, exits status 1, and sorts with other shared-taxonomy findings
+# ahead of SHADOWED. Explicit-root mode never searches executables and never
+# emits UNSAFE_OWNER. Foreign-owner fixtures chown only files created inside
+# the test tree and skip honestly when the host cannot establish a distinct
+# owner.
 # ---------------------------------------------------------------------------
 
 
 def test_path_mode_current_user_owned_executable_is_trusted(
     pathaudit_bin, tmp_path
 ):
-    """Invoking-user ownership is trusted: no UNSAFE_OWNER, exit 0."""
+    """Invoking-user executable ownership is trusted; PATH ownership may still fire."""
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
     exe = install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
     assert exe.stat().st_uid == os.getuid()
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 0
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_root_owned_executable_is_trusted_when_establishable(
     pathaudit_bin, tmp_path
 ):
-    """Root UID 0 ownership is trusted where the fixture can establish it."""
+    """Root UID 0 executable ownership is trusted where the fixture can establish it."""
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
     exe = require_root_owned_executable(private, "tool", mode=MODE_EXE_TRUSTED)
     assert exe.stat().st_uid == 0
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 0
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == b""
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_path_mode_foreign_owned_executable_reports_unsafe_owner(
@@ -4615,10 +4921,13 @@ def test_path_mode_foreign_owned_executable_reports_unsafe_owner(
     owner = exe.stat().st_uid
     assert owner not in (0, os.getuid())
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, exe, "UNSAFE_OWNER")],
+        [(0, private.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("UNSAFE_OWNER", exe)])
-    assert escape_root(private) not in result.stdout
+    assert result.stdout == expected
 
 
 def test_path_mode_symlink_executable_uses_final_target_owner(
@@ -4636,12 +4945,15 @@ def test_path_mode_symlink_executable_uses_final_target_owner(
     link = link_dir / cmd
     link.symlink_to(real)
     result = run_pathaudit_path_mode(pathaudit_bin, str(link_dir.resolve()))
-    assert result.returncode == 1
+    code, expected = expect_path_findings(
+        [(0, real, "UNSAFE_OWNER")],
+        [(0, link_dir.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == findings_stdout([("UNSAFE_OWNER", real)])
+    assert result.stdout == expected
     assert link.resolve() == real
     assert escape_root(link) not in result.stdout
-    assert escape_root(link_dir) not in result.stdout
 
 
 def test_path_mode_unsafe_owner_with_writability_orders_by_code_rank(
@@ -4654,15 +4966,17 @@ def test_path_mode_unsafe_owner_with_writability_orders_by_code_rank(
         private, "tool", mode=MODE_BOTH_WRITABLE
     )
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == findings_stdout(
+    code, expected = expect_path_findings(
         [
-            ("GROUP_WRITABLE", exe),
-            ("WORLD_WRITABLE", exe),
-            ("UNSAFE_OWNER", exe),
-        ]
+            (0, exe, "GROUP_WRITABLE"),
+            (0, exe, "WORLD_WRITABLE"),
+            (0, exe, "UNSAFE_OWNER"),
+        ],
+        [(0, private.resolve())],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert CODE_RANK_INDEX["GROUP_WRITABLE"] < CODE_RANK_INDEX["UNSAFE_OWNER"]
     assert CODE_RANK_INDEX["WORLD_WRITABLE"] < CODE_RANK_INDEX["UNSAFE_OWNER"]
     assert result.stdout.find(b"GROUP_WRITABLE\t") < result.stdout.find(
@@ -4687,11 +5001,13 @@ def test_path_mode_unsafe_owner_findings_precede_shadowed(
     result = run_pathaudit_path_mode(
         pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
     )
+    code, owned = expect_path_findings(
+        [(0, winner, "UNSAFE_OWNER")],
+        [(0, early.resolve()), (1, late.resolve())],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
     assert result.returncode == 1
     assert result.stderr == b""
-    expected = findings_stdout(
-        [("UNSAFE_OWNER", winner)]
-    ) + shadowing_stdout([(cmd, winner, shadow)])
     assert result.stdout == expected
     assert result.stdout.find(b"UNSAFE_OWNER\t") < result.stdout.find(
         b"SHADOWED\t"
@@ -4711,16 +5027,15 @@ def test_path_mode_directory_and_executable_ownership_both_report(
     )
     root = str(world.resolve())
     result = run_pathaudit_path_mode(pathaudit_bin, root)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    expected = findings_stdout(
-        sort_findings(
-            [
-                (0, root, "WORLD_WRITABLE"),
-                (0, exe, "UNSAFE_OWNER"),
-            ]
-        )
+    code, expected = expect_path_findings(
+        [
+            (0, root, "WORLD_WRITABLE"),
+            (0, exe, "UNSAFE_OWNER"),
+        ],
+        [(0, root)],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
     assert result.stdout == expected
 
 
@@ -4746,7 +5061,7 @@ def test_explicit_roots_do_not_report_unsafe_owner(
 def test_command_mode_current_user_owned_match_is_trusted(
     pathaudit_bin, fixture_tree
 ):
-    """`--command` MATCH owned by getuid() stays exit 0 without UNSAFE_OWNER."""
+    """`--command` MATCH owned by getuid() is trusted; PATH ownership may still fire."""
 
     cmd = "tool"
     exe = install_executable(
@@ -4756,10 +5071,13 @@ def test_command_mode_current_user_owned_match_is_trusted(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.private)
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, fixture_tree.private)]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_root_owned_match_is_trusted_when_establishable(
@@ -4774,10 +5092,13 @@ def test_command_mode_root_owned_match_is_trusted_when_establishable(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(private.resolve())
     )
-    assert result.returncode == 0
+    code, expected = expect_command_query(
+        [exe], [], [(0, private.resolve())]
+    )
+    assert result.returncode == code
     assert result.stderr == b""
-    assert result.stdout == command_query_stdout([exe])
-    assert b"UNSAFE_OWNER" not in result.stdout
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
 
 
 def test_command_mode_foreign_owned_match_reports_unsafe_owner(
@@ -4793,14 +5114,15 @@ def test_command_mode_foreign_owned_match_reports_unsafe_owner(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(private.resolve())
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
-        [("UNSAFE_OWNER", exe)],
+        [(0, exe, "UNSAFE_OWNER")],
+        [(0, private.resolve())],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
     assert result.stdout.startswith(match_line(exe))
-    assert finding_line("UNSAFE_OWNER", private) not in result.stdout
 
 
 def test_command_mode_symlink_match_uses_final_target_owner(
@@ -4820,14 +5142,16 @@ def test_command_mode_symlink_match_uses_final_target_owner(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(link_dir.resolve())
     )
-    assert result.returncode == 1
+    code, expected = expect_command_query(
+        [link.resolve()],
+        [(0, link.resolve(), "UNSAFE_OWNER")],
+        [(0, link_dir.resolve())],
+    )
+    assert result.returncode == code
     assert result.stderr == b""
     resolved = link.resolve()
     assert resolved == real
-    assert result.stdout == command_query_stdout(
-        [resolved],
-        [("UNSAFE_OWNER", resolved)],
-    )
+    assert result.stdout == expected
 
 
 def test_command_mode_unsafe_owner_with_writability_orders_by_code_rank(
@@ -4843,16 +5167,18 @@ def test_command_mode_unsafe_owner_with_writability_orders_by_code_rank(
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(private.resolve())
     )
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
         [
-            ("GROUP_WRITABLE", exe),
-            ("WORLD_WRITABLE", exe),
-            ("UNSAFE_OWNER", exe),
+            (0, exe, "GROUP_WRITABLE"),
+            (0, exe, "WORLD_WRITABLE"),
+            (0, exe, "UNSAFE_OWNER"),
         ],
+        [(0, private.resolve())],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_command_mode_writable_dir_and_unsafe_owner_both_report(
@@ -4866,17 +5192,17 @@ def test_command_mode_writable_dir_and_unsafe_owner_both_report(
     exe = require_foreign_owned_executable(late, cmd, mode=MODE_EXE_TRUSTED)
     path_value = f"{early.resolve()}:{late.resolve()}"
     result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
-    assert result.returncode == 1
-    assert result.stderr == b""
-    assert result.stdout == command_query_stdout(
+    code, expected = expect_command_query(
         [exe],
-        sort_findings(
-            [
-                (0, early.resolve(), "GROUP_WRITABLE"),
-                (1, exe, "UNSAFE_OWNER"),
-            ]
-        ),
+        [
+            (0, early.resolve(), "GROUP_WRITABLE"),
+            (1, exe, "UNSAFE_OWNER"),
+        ],
+        [(0, early.resolve()), (1, late.resolve())],
     )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
 
 
 def test_path_mode_non_executable_foreign_owned_same_basename_is_not_reported(
@@ -4902,8 +5228,240 @@ def test_path_mode_non_executable_foreign_owned_same_basename_is_not_reported(
             "executing user lacks permission to create a distinct-owner fixture"
         )
     result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", decoy) not in result.stdout
+    assert b"tool" not in result.stdout
+
+# ---------------------------------------------------------------------------
+# Detect unsafe ownership of PATH directories and ancestors
+#
+# Extends the established executable-ownership trust policy (UID 0 and getuid()
+# trusted; every other final-target st_uid is UNSAFE_OWNER) to every usable PATH
+# directory consulted by `--path` / `--command` and to each ancestor through `/`.
+# Shared ancestor realpaths are deduplicated to the lowest PATH index that
+# observed them. Findings name the canonical offending directory realpath.
+# Missing, empty, and non-directory components stay reject/hazard-stable without
+# inventing ownership lines. Explicit-root mode remains ownership-blind.
+#
+# Non-privileged coverage uses ambient untrusted ancestors of the temporary
+# fixture tree when present, and optional in-tree foreign-owner directory plants
+# when the host can establish them without requiring a successful chown for the
+# suite to remain meaningful.
+# ---------------------------------------------------------------------------
+
+
+def _require_unsafe_path_dirs_for_gap(path: Path) -> list[Path]:
+    """Return untrusted dirs on path's ancestor chain, or plant/skip as needed."""
+
+    owned = [node for _, node, _ in ownership_finding_triples([(0, path)])]
+    if owned:
+        return owned
+
+    # Try an in-tree foreign-owned parent so the gap is still coverable when the
+    # host's ancestors through `/` are all trusted.
+    parent = path.parent
+    if parent == path:
+        pytest.skip("no unsafe ancestor available and PATH entry has no parent")
+    require_foreign_owned_directory(parent)
+    owned = [node for _, node, _ in ownership_finding_triples([(0, path)])]
+    if not owned:
+        pytest.skip("host cannot expose an unsafe PATH directory or ancestor")
+    return owned
+
+
+def test_path_mode_trusted_path_directory_ownership_is_accepted(
+    pathaudit_bin, tmp_path
+):
+    """Invoking-UID PATH directories themselves are trusted under the shared policy."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    assert private.stat().st_uid == os.getuid()
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    # The PATH entry itself must not be named when it is trusted.
+    assert finding_line("UNSAFE_OWNER", private.resolve()) not in result.stdout
+
+
+def test_path_mode_reports_unsafe_ancestors_of_trusted_path_directory(
+    pathaudit_bin, tmp_path
+):
+    """Trusted PATH entry still reports untrusted ancestors through `/`."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    unsafe = _require_unsafe_path_dirs_for_gap(private.resolve())
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    for node in unsafe:
+        assert finding_line("UNSAFE_OWNER", node) in result.stdout
+    assert finding_line("UNSAFE_OWNER", private.resolve()) not in result.stdout
+
+
+def test_path_mode_trusted_executable_through_unsafe_ancestor_reports_directory(
+    pathaudit_bin, tmp_path
+):
+    """Security gap: trusted executable via unsafe ancestor still emits UNSAFE_OWNER."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
+    assert ownership_is_trusted(exe.stat().st_uid)
+    unsafe = _require_unsafe_path_dirs_for_gap(private.resolve())
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
+    for node in unsafe:
+        assert finding_line("UNSAFE_OWNER", node) in result.stdout
+
+
+def test_path_mode_foreign_owned_path_directory_reports_unsafe_owner_when_establishable(
+    pathaudit_bin, tmp_path
+):
+    """Foreign-owned PATH directory itself is UNSAFE_OWNER when chown works."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    foreign = require_foreign_owned_directory(private)
+    assert not ownership_is_trusted(foreign.stat().st_uid)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(foreign.resolve()))
+    code, expected = expect_path_findings([], [(0, foreign.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert finding_line("UNSAFE_OWNER", foreign.resolve()) in result.stdout
+
+
+def test_path_mode_shared_ancestors_dedup_to_lowest_path_index(
+    pathaudit_bin, tmp_path
+):
+    """Shared untrusted ancestors appear once at the earliest PATH index."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    triples = ownership_finding_triples(
+        [(0, early.resolve()), (1, late.resolve())]
+    )
+    code, expected = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    # Each offending realpath appears exactly once.
+    for _, node, _ in triples:
+        assert result.stdout.count(finding_line("UNSAFE_OWNER", node)) == 1
+
+
+def test_path_mode_missing_and_nondirectory_skip_ownership_walk(
+    pathaudit_bin, fixture_tree
+):
+    """Missing/non-directory PATH entries do not invent ownership findings."""
+
+    missing = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.missing)
+    )
+    assert missing.returncode == 1
+    assert missing.stderr == b""
+    assert missing.stdout == findings_stdout(
+        [("MISSING_ROOT", fixture_tree.missing)]
+    )
+    assert b"UNSAFE_OWNER" not in missing.stdout
+
+    nondir = run_pathaudit_path_mode(
+        pathaudit_bin, str(fixture_tree.regular)
+    )
+    assert nondir.returncode == 1
+    assert nondir.stderr == b""
+    assert nondir.stdout == findings_stdout(
+        [("NON_DIRECTORY_ROOT", fixture_tree.regular)]
+    )
+    assert b"UNSAFE_OWNER" not in nondir.stdout
+
+
+def test_path_mode_empty_component_preserves_diagnostics_without_ownership(
+    pathaudit_bin,
+):
+    """Empty PATH fields stay EMPTY_ROOT-only (no ownership walk of cwd here)."""
+
+    result = run_pathaudit_path_mode(pathaudit_bin, "")
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("EMPTY_ROOT", b"")])
+    assert b"UNSAFE_OWNER" not in result.stdout
+
+
+def test_command_mode_trusted_match_through_unsafe_ancestor_reports_directory(
+    pathaudit_bin, tmp_path
+):
+    """`--command` MATCH owned by getuid() still reports unsafe PATH ancestors."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    exe = install_executable(private, cmd, mode=MODE_EXE_TRUSTED)
+    unsafe = _require_unsafe_path_dirs_for_gap(private.resolve())
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(private.resolve())
+    )
+    code, expected = expect_command_query(
+        [exe], [], [(0, private.resolve())]
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.startswith(match_line(exe))
+    assert finding_line("UNSAFE_OWNER", exe) not in result.stdout
+    for node in unsafe:
+        assert finding_line("UNSAFE_OWNER", node) in result.stdout
+
+
+def test_command_mode_ownership_composes_with_writability_under_code_rank(
+    pathaudit_bin, tmp_path
+):
+    """Directory WORLD_WRITABLE ranks before PATH/ancestor UNSAFE_OWNER."""
+
+    (world,) = _private_path_dirs(tmp_path, ("world",))
+    os.chmod(world, MODE_WORLD_WRITABLE)
+    cmd = "tool"
+    exe = install_executable(world, cmd, mode=MODE_EXE_TRUSTED)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(world.resolve())
+    )
+    code, expected = expect_command_query(
+        [exe],
+        [(0, world.resolve(), "WORLD_WRITABLE")],
+        [(0, world.resolve())],
+    )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    # Per-root code rank: WORLD_WRITABLE precedes UNSAFE_OWNER when both name
+    # the same directory realpath. Cross-root order follows root-byte sort.
+    world_line = finding_line("WORLD_WRITABLE", world.resolve())
+    owner_line = finding_line("UNSAFE_OWNER", world.resolve())
+    if owner_line in result.stdout:
+        assert result.stdout.find(world_line) < result.stdout.find(owner_line)
+
+
+def test_explicit_roots_remain_ownership_blind_for_directories(
+    pathaudit_bin, tmp_path
+):
+    """Explicit-root mode does not emit PATH/ancestor UNSAFE_OWNER findings."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    # Even when ambient ancestors are untrusted, explicit-root stays blind.
+    result = run_pathaudit(pathaudit_bin, str(private.resolve()))
     assert result.returncode == 0
     assert result.stderr == b""
     assert result.stdout == b""
     assert b"UNSAFE_OWNER" not in result.stdout
-    assert b"tool" not in result.stdout

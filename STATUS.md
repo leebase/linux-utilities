@@ -13,9 +13,16 @@ PATH directory roots (`pathaudit [--] ROOT...`), with closed hazard taxonomy
 `GROUP_WRITABLE`, `WORLD_WRITABLE`), reject-closed limits, and exit statuses
 0/1/2 per `docs/pathaudit-contract.md` and `man/pathaudit.1`. Later governed
 slices added opt-in `--path` (including writable directories, cwd-dependent
-entries, non-directory components, executable shadowing, and writable
-resolved-executables) and exclusive `--command NAME` inspection. Run
-`574d06adfc2a` applies the shared writability trust model to final executable
+entries, non-directory components, executable shadowing, writable
+resolved-executables, unsafe executable ownership, and unsafe ownership of
+PATH directories and ancestors) and exclusive `--command NAME` inspection. Run
+`50c0b4936d50` extends the shared UID-0-or-`getuid()` ownership trust model to
+every usable PATH directory and each ancestor through `/` under `--path` and
+`--command`, with shared-ancestor dedup and ownership-blind explicit-root
+mode; independent review
+`code-reviews/review-path-directory-ownership.verdict.json` is `pass` with one
+Low finding (`path-dir-ownership-1`). Run `574d06adfc2a` applies the shared
+writability trust model to final executable
 targets resolved through PATH in `--path` and `--command` modes; explicit-root
 mode still does not search executables. Pathaudit has no install target in
 these slices (`make pathaudit` verifies under mktemp only) and is **not**

@@ -279,7 +279,9 @@ executable trust model (writability plus `UNSAFE_OWNER`). Opt-in
 resolution order for one basename only (see Command-specific PATH risk
 inspection below), including that same trust model on each `MATCH` target.
 Explicit-root mode does not search for executables and remains ownership-blind.
-None of the modes examine ancestors or remediate anything. Lookup follows
+Under `--path` / `--command`, usable PATH directories also walk ancestor
+ownership through `/` under the same trust policy (see PATH Directory
+Ownership below). None of the modes remediate anything. Lookup follows
 symbolic links like `stat(2)`.
 
 Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
@@ -296,29 +298,32 @@ Writable-directory findings use only the final directory target's `S_IWGRP` /
 `S_IWOTH` bits. Under `--path` / `--command`, resolved regular executables
 reuse those writability codes on the executable `realpath`, and emit
 `UNSAFE_OWNER` when the final-target owner is neither UID 0 nor the invoking
-real UID (see Unsafe executable ownership below).
+real UID. The same ownership trust policy also audits usable PATH directories
+and their ancestors (see Unsafe executable ownership and PATH Directory
+Ownership below).
 
 Exit status `0` means every root or PATH component was inspected with no
 hazard. Status `1` means inspection completed and at least one hazard was
 emitted (including empty `PATH` → one `EMPTY_ROOT`, an existing non-directory
 component → `NON_DIRECTORY_ROOT`, a `SHADOWED` executable under `--path`, or
-`UNSAFE_OWNER`). Status `2` means usage error, unset `PATH` in `--path` or
-`--command` mode (`PATH_UNSET` on stderr, empty stdout), invalid `--command`
-name (`INVALID_COMMAND`), limit violation, operational metadata error,
-allocation failure, or stdout write/flush failure (reject-closed). `--path`
-and `--command` accept no root operands and no other options; mixing them with
-roots or with each other is a usage error.
+`UNSAFE_OWNER` on an executable, PATH directory, or ancestor). Status `2`
+means usage error, unset `PATH` in `--path` or `--command` mode (`PATH_UNSET`
+on stderr, empty stdout), invalid `--command` name (`INVALID_COMMAND`), limit
+violation, operational metadata error, allocation failure, or stdout
+write/flush failure (reject-closed). `--path` and `--command` accept no root
+operands and no other options; mixing them with roots or with each other is a
+usage error.
 
 Limitations: this is a metadata snapshot, not a security lock; filesystem
 state can change concurrently. The taxonomy does not cover packages, processes,
-services, capabilities, ACLs, or mount options. The only ownership rule is the
-narrow `UNSAFE_OWNER` check on `--path` / `--command` executable targets;
-directory ownership and explicit-root mode stay ownership-blind. `--path`
-scans only top-level regular executables in each PATH directory (no nested
-recursion); `--command` searches only the queried basename. Symlink loops and
-permission denials are status `2`, not new hazard codes. There is no install
-target for `pathaudit` yet, and this README does not claim that `pathaudit` is
-released.
+services, capabilities, ACLs, or mount options. Ownership findings under
+`--path` / `--command` reuse one narrow `UNSAFE_OWNER` rule for executable
+targets, usable PATH directories, and ancestors through `/`; explicit-root
+mode stays ownership-blind. `--path` scans only top-level regular executables
+in each PATH directory (no nested recursion); `--command` searches only the
+queried basename. Symlink loops and permission denials are status `2`, not new
+hazard codes. There is no install target for `pathaudit` yet, and this README
+does not claim that `pathaudit` is released.
 
 The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
 manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
@@ -406,11 +411,34 @@ those shared-taxonomy lines (directory and executable) precede all `SHADOWED`
 lines. Emitting `UNSAFE_OWNER` exits status `1` with empty stderr on the
 successful hazard path. Explicit-root mode never searches executables and
 never emits `UNSAFE_OWNER`. Non-executable same-basename decoys are not
-candidates. Directory ownership is not classified.
+candidates. The same trust policy also classifies usable PATH directories and
+ancestors; see PATH Directory Ownership.
 
 To remediate, replace foreign-owned PATH executables with root-owned or
 self-owned trusted binaries, or remove the untrusted PATH entry. `pathaudit`
 does not `chown` files or edit `PATH`.
+
+### PATH Directory Ownership
+
+Under `pathaudit --path` and `pathaudit --command`, every usable PATH
+directory consulted by the scan inherits the executable ownership trust
+policy: only root UID 0 and the invoking real UID from `getuid()` are
+trusted. Any other final-target `st_uid` emits `UNSAFE_OWNER` naming the
+canonical offending directory `realpath`. After resolving the PATH entry,
+`pathaudit` walks that realpath and each ancestor directory through `/`, so a
+trusted executable reached only through an untrusted PATH directory or
+untrusted parent still surfaces the directory ownership gap. Shared ancestor
+realpaths are deduplicated to the lowest PATH index that observed them.
+Missing, empty (except command-mode plant-risk audit of `.` when applicable),
+and non-directory components invent no ownership lines. Explicit-root mode
+stays ownership-blind and never emits directory or ancestor `UNSAFE_OWNER`.
+Diagnostics reuse the shared code-rank sort with writability findings; status
+`1` with empty stderr means inspection completed and at least one ownership
+(or other) hazard was reported. Treat findings as a metadata snapshot prompt
+to harden PATH entries or directory ownership—not as proof of active
+compromise, not as ACL/capability analysis, and not as remediation performed
+by `pathaudit` itself. Concurrent filesystem change can race `stat` /
+`realpath`; interpret results against a stable tree when possible.
 
 ### Executable Shadowing
 
@@ -467,11 +495,13 @@ the first match (plant risk); a writable directory after the winner with no
 match for `NAME` is not reported. Each `MATCH` target also receives the shared
 executable trust model, so group/other-writable images reuse
 `GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable realpath and foreign
-final-target owners emit `UNSAFE_OWNER` after those permission codes. Exit `0`
-means the query finished with no hazard lines (matches alone do not force
-status `1`); exit `1` means at least one hazard was emitted (including
-`UNSAFE_OWNER`); exit `2` covers usage, `INVALID_COMMAND`, `PATH_UNSET`,
-limits, inspection errors, allocation failure, and stdout write/flush failure.
+final-target owners emit `UNSAFE_OWNER` after those permission codes.
+Applicable PATH directories and ancestors receive that same ownership policy
+(see PATH Directory Ownership). Exit `0` means the query finished with no
+hazard lines (matches alone do not force status `1`); exit `1` means at least
+one hazard was emitted (including `UNSAFE_OWNER`); exit `2` covers usage,
+`INVALID_COMMAND`, `PATH_UNSET`, limits, inspection errors, allocation
+failure, and stdout write/flush failure.
 
 This is targeted risk inspection for one basename: other executables that
 happen to share a PATH directory are unrelated benign basename collisions and

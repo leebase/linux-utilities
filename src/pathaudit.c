@@ -49,7 +49,7 @@ struct Root {
 
 struct Finding {
   const char *root;
-  char *owned_root; /* non-NULL when root is an owned executable realpath */
+  char *owned_root; /* non-NULL when root is an owned realpath copy */
   size_t index;
   enum HazardCode code;
 };
@@ -247,9 +247,9 @@ static bool findings_append(struct FindingBuffer *buffer, const char *root,
 }
 
 /*
- * Append a finding whose root is an owned copy of text (executable realpath).
- * findings_free releases the copy. Used when the finding root is not aliased
- * into PATH component storage.
+ * Append a finding whose root is an owned copy of text (executable or
+ * directory-ownership realpath). findings_free releases the copy. Used when
+ * the finding root is not aliased into PATH component storage.
  */
 static bool findings_append_owned(struct FindingBuffer *buffer,
                                   const char *text, size_t index,
@@ -269,6 +269,108 @@ static bool findings_append_owned(struct FindingBuffer *buffer,
   buffer->items[buffer->len].code = code;
   buffer->len++;
   return true;
+}
+
+/*
+ * Trust policy shared by executable and PATH-directory ownership: only root
+ * UID 0 and the invoking real UID from getuid() are trusted.
+ */
+static bool owner_uid_is_trusted(uid_t owner) {
+  return owner == (uid_t)0 || owner == getuid();
+}
+
+/*
+ * Record UNSAFE_OWNER for an owned realpath, deduplicating shared ancestors to
+ * the lowest PATH index that observed the same offending path bytes.
+ */
+static bool findings_note_unsafe_owner(struct FindingBuffer *buffer,
+                                       const char *realpath_text,
+                                       size_t index) {
+  for (size_t i = 0; i < buffer->len; i++) {
+    if (buffer->items[i].code != HAZARD_UNSAFE_OWNER) {
+      continue;
+    }
+    if (cmp_unsigned_bytes(buffer->items[i].root, realpath_text) != 0) {
+      continue;
+    }
+    if (index < buffer->items[i].index) {
+      buffer->items[i].index = index;
+    }
+    return true;
+  }
+  return findings_append_owned(buffer, realpath_text, index,
+                               HAZARD_UNSAFE_OWNER);
+}
+
+/*
+ * Truncate an absolute realpath buffer to its parent directory. Returns false
+ * when path is already "/".
+ */
+static bool path_truncate_to_parent(char *path) {
+  if (path[0] == '/' && path[1] == '\0') {
+    return false;
+  }
+  char *slash = strrchr(path, '/');
+  if (slash == NULL) {
+    return false;
+  }
+  if (slash == path) {
+    path[1] = '\0';
+    return true;
+  }
+  *slash = '\0';
+  return true;
+}
+
+/*
+ * Walk path's realpath and each ancestor through "/" under the shared ownership
+ * trust policy. Findings name the canonical offending directory realpath.
+ * Missing, non-directory, and unresolvable inputs invent nothing. Shared
+ * offending realpaths keep the lowest PATH index. Hostile/racy metadata is
+ * skipped node-by-node without failing the scan.
+ */
+static int append_directory_chain_ownership(const char *path, size_t index,
+                                            struct FindingBuffer *findings) {
+  char *resolved = malloc(PATHAUDIT_MAX_ROOT_LENGTH + 1);
+  if (resolved == NULL) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+
+  errno = 0;
+  if (realpath(path, resolved) == NULL) {
+    int err = errno;
+    free(resolved);
+    if (err == ENOMEM) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+    return 0;
+  }
+
+  struct stat st;
+  if (stat(resolved, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    free(resolved);
+    return 0;
+  }
+
+  for (;;) {
+    if (stat(resolved, &st) == 0) {
+      if (!owner_uid_is_trusted(st.st_uid)) {
+        if (!findings_note_unsafe_owner(findings, resolved, index)) {
+          free(resolved);
+          emit_diag_reason("OUT_OF_MEMORY");
+          return 2;
+        }
+      }
+    }
+    if (!path_truncate_to_parent(resolved)) {
+      break;
+    }
+  }
+
+  free(resolved);
+  return 0;
 }
 
 static void matches_free(struct MatchBuffer *buffer) {
@@ -561,8 +663,16 @@ static bool root_is_cwd_dependent(const struct Root *root) {
   return root->len == 0 || root->text[0] != '/';
 }
 
+/*
+ * Classify one PATH/root component. When audit_directory_ownership is true
+ * (--path), usable directories also walk the shared UNSAFE_OWNER policy across
+ * the entry's realpath and ancestors through "/". Empty, missing, and
+ * non-directory components invent no ownership findings. Explicit-root mode
+ * passes false and stays ownership-blind.
+ */
 static int classify_root(const struct Root *root,
-                         struct FindingBuffer *findings) {
+                         struct FindingBuffer *findings,
+                         bool audit_directory_ownership) {
   if (root->len == 0) {
     /* Empty colon field: cwd-dependent for search; keep "" as EMPTY_ROOT. */
     if (!findings_append(findings, root->text, root->index,
@@ -644,6 +754,10 @@ static int classify_root(const struct Root *root,
       return 2;
     }
   }
+
+  if (audit_directory_ownership) {
+    return append_directory_chain_ownership(root->text, root->index, findings);
+  }
   return 0;
 }
 
@@ -674,7 +788,8 @@ static int run_audit(struct Root *roots, size_t root_count) {
   qsort(roots, root_count, sizeof(roots[0]), compare_roots_by_bytes_then_index);
 
   for (size_t i = 0; i < root_count; i++) {
-    int status = classify_root(&roots[i], &findings);
+    /* Explicit roots stay ownership-blind. */
+    int status = classify_root(&roots[i], &findings, false);
     if (status != 0) {
       findings_free(&findings);
       return status;
@@ -1116,16 +1231,16 @@ static int append_executable_writability(const char *resolved, size_t index,
 }
 
 /*
- * Trust only root UID 0 and the invoking real UID from getuid(). Every other
- * final-target owner is UNSAFE_OWNER naming the executable realpath. Uses
- * followed-target metadata (same st_uid as the successful stat that accepted
- * the regular executable).
+ * Same ownership trust policy as PATH directories: only root UID 0 and the
+ * invoking real UID from getuid() are trusted. Every other final-target
+ * owner is UNSAFE_OWNER naming the executable realpath. Uses followed-target
+ * metadata (same st_uid as the successful stat that accepted the regular
+ * executable).
  */
 static int append_executable_ownership(const char *resolved, size_t index,
                                        uid_t owner,
                                        struct FindingBuffer *findings) {
-  uid_t self = getuid();
-  if (owner == (uid_t)0 || owner == self) {
+  if (owner_uid_is_trusted(owner)) {
     return 0;
   }
   if (!findings_append_owned(findings, resolved, index, HAZARD_UNSAFE_OWNER)) {
@@ -1318,18 +1433,20 @@ static int emit_shadow_lines(const struct ShadowBuffer *shadows) {
 /*
  * Exclusive `pathaudit --path` mode.
  *
- * Classifies each PATH component with the shared directory-hazard taxonomy,
- * then detects executable shadowing and applies the shared writability and
- * ownership trust model to resolved executable targets across distinct PATH
- * directories in PATH order. Directory and executable hazard lines precede
- * SHADOWED lines. SHADOWED lines are ordered by command basename bytes, then
- * by PATH position of the shadowed executable. Exit status 1 when any
- * directory hazard, executable writability/ownership finding, or shadow is
- * reported.
+ * Classifies each PATH component with the shared directory-hazard taxonomy
+ * (including PATH-directory / ancestor UNSAFE_OWNER under the shared trust
+ * policy), then detects executable shadowing and applies the shared
+ * writability and ownership trust model to resolved executable targets across
+ * distinct PATH directories in PATH order. Directory and executable hazard
+ * lines precede SHADOWED lines. SHADOWED lines are ordered by command basename
+ * bytes, then by PATH position of the shadowed executable. Exit status 1 when
+ * any directory hazard, executable writability/ownership finding, or shadow
+ * is reported.
  *
- * Ownership: PathComponents aliases feed directory finding roots;
- * executable finding roots are owned copies. WinnerBuffer and ShadowBuffer
- * own their strings. All heap state is freed on every exit path.
+ * Ownership: PathComponents aliases feed directory finding roots for
+ * non-ownership hazards; directory-ownership and executable finding roots are
+ * owned realpath copies. WinnerBuffer and ShadowBuffer own their strings. All
+ * heap state is freed on every exit path.
  */
 static int run_path_mode(void) {
   struct PathComponents components;
@@ -1344,7 +1461,7 @@ static int run_path_mode(void) {
 
   /* Preserve PATH order: do not sort roots before classification or scan. */
   for (size_t i = 0; i < components.count; i++) {
-    int class_status = classify_root(&components.roots[i], &findings);
+    int class_status = classify_root(&components.roots[i], &findings, true);
     if (class_status != 0) {
       findings_free(&findings);
       winners_free(&winners);
@@ -1399,7 +1516,10 @@ static int run_path_mode(void) {
  * only appends findings that are applicable to a bounded command search.
  * Cwd-dependent codes always apply. Absolute MISSING/NON_DIRECTORY are
  * suppressed. Permission findings apply when this component produced a MATCH
- * or when no earlier MATCH exists (plant risk before the winner).
+ * or when no earlier MATCH exists (plant risk before the winner). The shared
+ * ownership trust policy walks usable directories (and empty -> ".") under the
+ * same applicability gate; shared ancestor realpaths dedup to the lowest
+ * PATH index.
  */
 static int classify_command_component(const struct Root *root,
                                       bool permission_applicable,
@@ -1411,6 +1531,14 @@ static int classify_command_component(const struct Root *root,
                          HAZARD_EMPTY_ROOT)) {
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
+    }
+    /*
+     * Empty fields search cwd. When plant-risk applicable, audit cwd
+     * ownership under the shared policy without inventing a synthetic
+     * directory hazard for "".
+     */
+    if (permission_applicable) {
+      return append_directory_chain_ownership(".", root->index, findings);
     }
     return 0;
   }
@@ -1483,6 +1611,7 @@ static int classify_command_component(const struct Root *root,
         return 2;
       }
     }
+    return append_directory_chain_ownership(root->text, root->index, findings);
   }
   return 0;
 }
@@ -1518,12 +1647,13 @@ static int emit_command_query(const struct MatchBuffer *matches,
  * taxonomy but only when applicable to the query (cwd-dependent entries,
  * permission plant-risk before the first MATCH, and permission findings on
  * match-bearing directories), plus the shared writability and ownership trust
- * model on each resolved MATCH target. Absolute MISSING/NON_DIRECTORY noise
- * is omitted.
+ * model on each resolved MATCH target and on applicable PATH directories /
+ * ancestors. Absolute MISSING/NON_DIRECTORY noise is omitted.
  *
- * Ownership: PathComponents storage aliases into directory finding roots;
- * executable finding roots are owned copies; MatchBuffer owns realpath
- * strings. All heap state is freed on every exit path.
+ * Ownership: PathComponents storage aliases into directory finding roots for
+ * non-ownership hazards; directory-ownership and executable finding roots are
+ * owned realpath copies; MatchBuffer owns realpath strings. All heap state is
+ * freed on every exit path.
  */
 static int run_command_mode(const char *command) {
   if (!command_name_is_valid(command)) {

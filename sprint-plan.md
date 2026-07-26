@@ -1,5 +1,30 @@
 # Sprint Plan
 
+## Detect unsafe ownership of PATH directories
+
+Governed run `50c0b4936d50` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect unsafe
+ownership of PATH directories for `pathaudit --path` and
+`pathaudit --command` (`UNSAFE_OWNER` on usable PATH directory and
+ancestor realpaths when `st_uid` is neither UID 0 nor `getuid()`;
+shared-ancestor dedup to lowest PATH index; missing/empty/non-directory
+invent no ownership lines; `owner_uid_is_trusted` shared with
+executables; explicit-root never emits directory/ancestor
+`UNSAFE_OWNER`). Exact verification (step-2): `make clean && make`
+exit 0; full pytest → 280 passed, 18 skipped in 26.84s. Exact smoke:
+`artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `280 passed, 18 skipped in
+20.40s`). Review
+`code-reviews/review-path-directory-ownership.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium, 1 Low path-dir-ownership-1).
+Allowlisted review check: pathaudit pytest → 143 passed, 15 skipped.
+Do **not** claim that `pathaudit` is released. Next: keep Low
+`path-dir-ownership-1` visible; prefer Detect writable ancestors of PATH
+directories as next genuine capability; optional Medium
+pathaudit-shadow-1 repair remains available; do not treat sysdiff smoke
+as directory-ownership `--path` / `--command` coverage.
+
 ## Detect executables with unsafe ownership
 
 Governed run `1d5eedc01202` (playbook
@@ -324,6 +349,29 @@ or release closure from this slice.
 ## Current sprint
 
 - [x] Deliver, smoke-test, independently review, and close out
+  Detect unsafe ownership of PATH directories for `pathaudit --path` /
+  `--command` in run `50c0b4936d50`,
+  `template_repair_before_review_feature_delivery`. Exact evidence:
+  step-2 `make clean && make` exit 0; full pytest 280 passed / 18
+  skipped in 26.84s; smoke start/check 0 with empty `blocking_errors`
+  (check.log pytest `280 passed, 18 skipped in 20.40s`); review
+  verdict `pass` with 0 Critical/High/Medium and 1 Low
+  (`path-dir-ownership-1`); allowlisted pathaudit pytest → 143 passed,
+  15 skipped. Not a pathaudit release; sysdiff smoke oracle does not
+  directly exercise directory-ownership `--path` / `--command`
+  detection.
+- [ ] Next after `50c0b4936d50`: keep Low `path-dir-ownership-1`
+  visible; prefer next genuine capability Detect writable ancestors of
+  PATH directories; optional Medium pathaudit-shadow-1 repair and prior
+  Medium backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff
+  packaging Mediums) remain available without claiming those were
+  closed by this review; keep prior Low PA-W1/PA-W2,
+  pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2,
+  pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for optional polish;
+  do not claim that `pathaudit` is released or that
+  `tests/smoke_manifest.json` covers directory-ownership `--path` /
+  `--command` behavior.
+- [x] Deliver, smoke-test, independently review, and close out
   Detect executables with unsafe ownership for `pathaudit --path` /
   `--command` in run `1d5eedc01202`,
   `template_repair_before_review_feature_delivery`. Exact evidence:
@@ -335,16 +383,6 @@ or release closure from this slice.
   271 passed, 14 skipped. Not a pathaudit release; sysdiff smoke
   oracle does not directly exercise an ownership-specific `--path` /
   `--command` user flow.
-- [ ] Next after `1d5eedc01202`: keep informational ownership review
-  notes visible; prefer repairing Medium pathaudit-shadow-1
-  (right-size retained realpath buffers) or resume prior Medium
-  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
-  Mediums) without claiming those were closed by this review; keep
-  prior Low PA-W1/PA-W2, pathaudit-shadow-2/3, nondir-1/2,
-  pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible
-  for optional polish; do not claim that `pathaudit` is released or
-  that `tests/smoke_manifest.json` covers ownership-specific `--path`
-  / `--command` behavior.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect writable resolved-executables through PATH for `pathaudit
   --path` / `--command` in run `574d06adfc2a`,

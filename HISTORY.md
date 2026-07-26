@@ -201,6 +201,39 @@ foreign-owner / root-owner fixtures that honestly `pytest.skip` on this
 non-root host. This cycle does not claim that `pathaudit` is released,
 installable via `make install`, or that a product release was published.
 
+## 2026-07-26 — Detect unsafe ownership of PATH directories
+
+Governed run `50c0b4936d50` (`template_repair_before_review_feature_delivery`)
+delivered Detect unsafe ownership of PATH directories for `pathaudit --path`
+and `pathaudit --command`. The slice extends the executable ownership trust
+rule to every usable PATH directory and each ancestor through `/`: emit
+`UNSAFE_OWNER` naming the canonical offending directory `realpath` when the
+final followed-target `st_uid` is neither UID 0 nor the invoking real UID
+from `getuid()` (not `geteuid`); shared ancestor realpaths deduplicate to
+the lowest PATH index; missing, empty, and non-directory components invent
+no ownership lines; `owner_uid_is_trusted` is shared with executable
+ownership so policy cannot drift; explicit-root mode stays ownership-blind
+and never emits directory or ancestor `UNSAFE_OWNER`. Exact deliverables:
+`tests/test_pathaudit.py`, `src/pathaudit.c`, `README.md`, `SECURITY.md`.
+Exact step-2 verification: `make clean && make` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q`
+→ 280 passed, 18 skipped in 26.84s. User smoke
+(`artifacts/user-smoke/result.json`) passed with start/check exit 0 and empty
+blocking errors; check.log pytest reported `280 passed, 18 skipped in
+20.40s`. The pinned sysdiff smoke oracle does not directly exercise
+directory-ownership `--path` / `--command` detection; pathaudit coverage is
+`tests/test_pathaudit.py`. Independent review
+`code-reviews/review-path-directory-ownership.verdict.json` is `pass`
+(0 Critical/High/Medium, 1 Low path-dir-ownership-1: O(N²) linear dedup of
+`UNSAFE_OWNER` findings under a hostile all-foreign-owned PATH; bounded by
+input limits; non-blocking). Allowlisted review check
+`python3 -m pytest -p no:cacheprovider tests/test_pathaudit.py -q` →
+143 passed, 15 skipped in ~1.8s. The 15 skips are host-capability
+self-skips (no distinct foreign UID / unprivileged `chown`, oversized-PATH
+env rejection), not failures. This cycle does not claim that `pathaudit` is
+released, installable via `make install`, or that a product release was
+published.
+
 ## 2026-07-25 — Detect non-directory PATH entries
 
 Governed run `35116f657f35` (`detect_non_directory_path_entries`) delivered

@@ -1,5 +1,49 @@
 # Result Review
 
+## Detect unsafe ownership of PATH directories
+
+Governed run `50c0b4936d50` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect unsafe
+ownership of PATH directories for `pathaudit --path` and
+`pathaudit --command`: every usable PATH directory and each ancestor
+through `/` inherits the executable ownership trust rule (UID 0 and
+invoking real UID from `getuid()`, not `geteuid`); untrusted final-target
+`st_uid` emits `UNSAFE_OWNER` on the canonical offending directory
+`realpath`; shared ancestor realpaths deduplicate to the lowest PATH
+index; missing, empty, and non-directory components invent no ownership
+lines; `owner_uid_is_trusted` is shared with executable ownership;
+explicit-root mode stays ownership-blind and never emits directory or
+ancestor `UNSAFE_OWNER`. Exact deliverables touched in-run:
+`tests/test_pathaudit.py`, `src/pathaudit.c`, `README.md`, `SECURITY.md`.
+Exact step-2 verification: `make clean && make` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 280 passed, 18 skipped in 26.84s. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `280 passed, 18 skipped in
+20.40s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise directory-ownership `--path` /
+`--command` detection; pathaudit coverage is `tests/test_pathaudit.py`.
+Independent review artifacts:
+`code-reviews/review-path-directory-ownership.md` and
+`code-reviews/review-path-directory-ownership.verdict.json`.
+Verdict: `pass` with no Critical, High, or Medium findings and one Low
+finding (`path-dir-ownership-1`: O(N²) linear dedup of `UNSAFE_OWNER`
+findings under a hostile all-foreign-owned PATH; bounded by input
+limits; non-blocking). Allowlisted review check:
+`python3 -m pytest -p no:cacheprovider tests/test_pathaudit.py -q` →
+exit 0, 143 passed, 15 skipped in ~1.8s. The 15 skips are host-capability
+self-skips (no distinct foreign UID / unprivileged `chown`, oversized-
+PATH env rejection), not failures. Remaining risks: Low
+`path-dir-ownership-1` plus prior Medium pathaudit-shadow-1 and Low
+pathaudit-shadow-2/3, Low PA-W1/PA-W2, Low nondir-1/2, pathaudit-cmd-1/2,
+pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2
+leftovers, and sysdiff Medium backlogs not closed by this review.
+Recommended next action: keep Low `path-dir-ownership-1` visible; prefer
+next genuine capability Detect writable ancestors of PATH directories;
+optional Medium pathaudit-shadow-1 repair remains available. Do not claim
+that `pathaudit` is released.
+
 ## Detect executables with unsafe ownership
 
 Governed run `1d5eedc01202` (playbook

@@ -1,5 +1,29 @@
 # Where Am I
 
+## Detect unsafe ownership of PATH directories
+
+Governed run `50c0b4936d50` delivered Detect unsafe ownership of PATH
+directories for `pathaudit --path` and `pathaudit --command`: every
+usable PATH directory and each ancestor through `/` inherits the
+executable ownership trust rule (UID 0 and invoking real UID from
+`getuid()`); untrusted owners emit `UNSAFE_OWNER` on the canonical
+directory `realpath`; shared ancestors deduplicate to the lowest PATH
+index; missing/empty/non-directory invent no ownership lines;
+`owner_uid_is_trusted` is shared with executable ownership;
+explicit-root stays ownership-blind. Exact evidence: step-2
+`make clean && make` exit 0; full pytest 280 passed, 18 skipped in
+26.84s. Exact smoke (`artifacts/user-smoke/result.json`):
+`app_started: true`, `core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`280 passed, 18 skipped in 20.40s`. Review
+`code-reviews/review-path-directory-ownership.{md,verdict.json}`
+is `pass` (0 Critical/High/Medium, 1 Low path-dir-ownership-1);
+allowlisted pathaudit pytest → 143 passed, 15 skipped. This does
+**not** claim that `pathaudit` is released or that the sysdiff smoke
+oracle covers directory-ownership `--path` / `--command` detection.
+Next: keep Low `path-dir-ownership-1` visible; prefer Detect writable
+ancestors of PATH directories as next genuine capability.
+
 ## Detect executables with unsafe ownership
 
 Governed run `1d5eedc01202` delivered Detect executables with unsafe
@@ -309,19 +333,25 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `1d5eedc01202` is
-Detect executables with unsafe ownership for `pathaudit --path` /
-`--command` (`UNSAFE_OWNER` on final followed-target realpaths when
-owner is neither UID 0 nor `getuid()`), with independent review
-`code-reviews/review-pathaudit-unsafe-executable-ownership.verdict.json`
-= `pass` (0 Critical/High/Medium/Low formal findings). This is **not** a
-pathaudit release and does not change the separately prepared
+The current milestone after recording run `50c0b4936d50` is
+Detect unsafe ownership of PATH directories for `pathaudit --path` /
+`--command` (`UNSAFE_OWNER` on usable PATH directory and ancestor
+realpaths when owner is neither UID 0 nor `getuid()`), with independent
+review `code-reviews/review-path-directory-ownership.verdict.json` =
+`pass` (0 Critical/High/Medium, 1 Low path-dir-ownership-1). This is
+**not** a pathaudit release and does not change the separately prepared
 unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
-Ownership behavior is covered by `tests/test_pathaudit.py`, not by the
-existing sysdiff smoke oracle.
+Directory-ownership behavior is covered by `tests/test_pathaudit.py`,
+not by the existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `50c0b4936d50` delivered and reviewed Detect unsafe ownership of
+  PATH directories: step-2 `make clean && make` exit 0; full pytest
+  280/18 in 26.84s; smoke start/check 0; review `pass` with Low
+  `path-dir-ownership-1` only; allowlisted pathaudit pytest 143 passed,
+  15 skipped. Not a pathaudit release; smoke oracle does not directly
+  exercise directory-ownership `--path` / `--command` detection.
 - Run `1d5eedc01202` delivered and reviewed Detect executables with
   unsafe ownership: step-4 `make quality` exit 0; Clang `-fsyntax-only`
   exit 0; cppcheck exit 0; full pytest 271/14 in 19.02s; smoke
@@ -547,14 +577,16 @@ existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep informational ownership review notes from run `1d5eedc01202`
-visible. Prefer repairing Medium pathaudit-shadow-1 (right-size
-retained realpath buffers) or resume prior Medium backlog repair
-(pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
-leftovers, plus sysdiff packaging Mediums) without claiming those were
-closed by the ownership review. Keep prior Low PA-W1/PA-W2,
-pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2,
-and PA-WP-1–PA-WP-4 visible for optional polish. Do not claim that
-`pathaudit` is released, and do not treat `tests/smoke_manifest.json`
-as ownership-specific `--path` / `--command` coverage. Separately
-preserve the unpublished `sysdiff` 0.1.0 candidate from `580b0f6ff811`.
+Keep Low `path-dir-ownership-1` from run `50c0b4936d50` visible.
+Prefer next genuine capability Detect writable ancestors of PATH
+directories (bounded writability walk of parent realpaths, parallel to
+the ownership ancestor walk just delivered). Optional Medium
+pathaudit-shadow-1 repair and prior Medium backlog (pathaudit PA-M2 /
+PA-M1 leftovers, plus sysdiff packaging Mediums) remain available
+without claiming those were closed by the directory-ownership review.
+Keep prior Low PA-W1/PA-W2, pathaudit-shadow-2/3, nondir-1/2,
+pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for
+optional polish. Do not claim that `pathaudit` is released, and do not
+treat `tests/smoke_manifest.json` as directory-ownership `--path` /
+`--command` coverage. Separately preserve the unpublished `sysdiff`
+0.1.0 candidate from `580b0f6ff811`.
