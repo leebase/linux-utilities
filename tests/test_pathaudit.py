@@ -29,6 +29,20 @@ present as a regular executable in two or more distinct PATH directories yields
 `SHADOWED` lines naming the command, the first-PATH winner realpath, and each
 later shadowed executable realpath, without falsely reporting non-executables
 or distinct command names.
+
+Writable resolved-executable coverage pins that `--path` and `--command` apply
+the existing trust model to final executable targets resolved through PATH:
+owner-only write modes stay silent, `S_IWGRP` / `S_IWOTH` reuse
+`GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable realpath, symlink
+resolution follows the final target, and unsafe inspection stays reject-closed
+via `INSPECTION_ERROR_N`. Explicit-root mode still does not search executables.
+
+Hostile-PATH regression coverage pins security-sensitive malformed and
+adversarial `PATH` shapes already supported by the utility: empty components,
+nonexistent directories, duplicate entries, and deterministic finding order.
+Fixtures plant attacker-controlled executable-looking files that would leave a
+side-effect marker if executed; the scanner must classify PATH components
+without ever running those plants.
 """
 
 from __future__ import annotations
@@ -103,10 +117,14 @@ MAX_ROOT_LENGTH = 65536
 MAX_ROOT_BYTES = 1024 * 1024
 
 # Controllable mode bits only (no ownership policy assertions).
+# Directory and regular-file targets share the same trust-model bits:
+# group/other write is untrusted; owner write alone is trusted.
 MODE_PRIVATE = 0o700
 MODE_GROUP_WRITABLE = 0o720
 MODE_WORLD_WRITABLE = 0o702
 MODE_BOTH_WRITABLE = 0o722
+# Trusted executable default: owner rwx, group/other rx, no group/other write.
+MODE_EXE_TRUSTED = 0o755
 
 
 def escape_root(root: bytes | str | os.PathLike[str]) -> bytes:
@@ -197,8 +215,14 @@ def shadowing_stdout(
     )
 
 
-def install_executable(directory: Path, name: str, mode: int = 0o755) -> Path:
-    """Create a regular executable basename under directory; return resolved path."""
+def install_executable(
+    directory: Path, name: str, mode: int = MODE_EXE_TRUSTED
+) -> Path:
+    """Create a regular executable basename under directory; return resolved path.
+
+    Default mode is trusted (no group/other write). Pass MODE_GROUP_WRITABLE,
+    MODE_WORLD_WRITABLE, or MODE_BOTH_WRITABLE to plant an untrusted target.
+    """
 
     path = directory / name
     path.write_bytes(b"#!/bin/sh\nexit 0\n")
@@ -999,31 +1023,34 @@ def test_path_mode_component_length_limit(pathaudit_bin):
 
 
 def test_path_mode_does_not_traverse_nested_directories(pathaudit_bin, fixture_tree):
-    """Nested dirs are not hazard-inspected; lone top-level executables are silent.
+    """Nested dirs are not hazard-inspected; trusted top-level executables stay silent.
 
-    `--path` may scan top-level regular executables for shadowing, but nested
-    directories must not contribute WORLD_WRITABLE (or other) findings, nested
-    same-basename executables must not invent SHADOWED lines, and a basename
-    present in only one PATH directory must not emit SHADOWED by itself.
+    `--path` may scan top-level regular executables for shadowing and for the
+    shared writability trust model, but nested directories must not contribute
+    WORLD_WRITABLE (or other) findings, nested same-basename executables must
+    not invent SHADOWED lines or executable-writability findings, and a
+    trusted-mode basename present in only one PATH directory must not emit
+    SHADOWED or permission findings by itself.
     """
 
     nested_world = fixture_tree.private / "nested-world"
     nested_world.mkdir()
     os.chmod(nested_world, MODE_WORLD_WRITABLE)
-    decoy = fixture_tree.private / "evil-bin"
-    decoy.write_bytes(b"#!/bin/sh\nexit 0\n")
-    os.chmod(decoy, 0o755)
+    # Trusted top-level executable: owner write only → no permission finding.
+    install_executable(fixture_tree.private, "evil-bin", mode=MODE_EXE_TRUSTED)
 
-    # Nested colliding basenames across two PATH roots must not invent shadows:
-    # only top-level regular executables participate in shadowing detection.
+    # Nested colliding basenames across two PATH roots must not invent shadows
+    # or executable-writability findings: only top-level regular executables
+    # participate in PATH executable inspection.
     other = fixture_tree.cwd / "other-root"
     other.mkdir()
     os.chmod(other, MODE_PRIVATE)
     nested_other = other / "nested-other"
     nested_other.mkdir()
     os.chmod(nested_other, MODE_PRIVATE)
-    install_executable(nested_world, "nested-tool")
-    install_executable(nested_other, "nested-tool")
+    # Even world-writable nested targets must remain invisible without traversal.
+    install_executable(nested_world, "nested-tool", mode=MODE_WORLD_WRITABLE)
+    install_executable(nested_other, "nested-tool", mode=MODE_WORLD_WRITABLE)
 
     result = run_pathaudit_path_mode(
         pathaudit_bin,
@@ -1034,6 +1061,7 @@ def test_path_mode_does_not_traverse_nested_directories(pathaudit_bin, fixture_t
     assert result.stdout == b""
     assert result.stderr == b""
     assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"GROUP_WRITABLE" not in result.stdout
     assert b"evil-bin" not in result.stdout
     assert b"SHADOWED\t" not in result.stdout
     assert b"nested-tool" not in result.stdout
@@ -2899,7 +2927,11 @@ def test_command_mode_match_in_writable_directory_reports_permission(
     pathaudit_bin, fixture_tree
 ):
     cmd = "tool"
-    exe = install_executable(fixture_tree.both_w, cmd)
+    # Executable itself is trusted-mode; only the match-bearing directory is
+    # reported under the shared GROUP_WRITABLE / WORLD_WRITABLE codes.
+    exe = install_executable(
+        fixture_tree.both_w, cmd, mode=MODE_EXE_TRUSTED
+    )
     result = run_pathaudit_command_mode(
         pathaudit_bin, cmd, str(fixture_tree.both_w)
     )
@@ -2912,6 +2944,9 @@ def test_command_mode_match_in_writable_directory_reports_permission(
             ("WORLD_WRITABLE", fixture_tree.both_w),
         ],
     )
+    # Permission findings name the directory, not the trusted executable.
+    assert finding_line("GROUP_WRITABLE", exe) not in result.stdout
+    assert finding_line("WORLD_WRITABLE", exe) not in result.stdout
 
 
 def test_command_mode_empty_and_relative_path_entries_remain_applicable(
@@ -3501,8 +3536,13 @@ def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
     """Shared-taxonomy directory findings remain first; SHADOWED follows them."""
 
     cmd = "tool"
-    winner = install_executable(fixture_tree.private, cmd)
-    shadow = install_executable(fixture_tree.world_w, cmd)
+    # Trusted executables: directory WORLD_WRITABLE is the only permission line.
+    winner = install_executable(
+        fixture_tree.private, cmd, mode=MODE_EXE_TRUSTED
+    )
+    shadow = install_executable(
+        fixture_tree.world_w, cmd, mode=MODE_EXE_TRUSTED
+    )
     path_value = f"{fixture_tree.private}:{fixture_tree.world_w}"
     result = run_pathaudit_path_mode(pathaudit_bin, path_value)
     assert result.returncode == 1
@@ -3515,6 +3555,8 @@ def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
     shadow_at = result.stdout.find(b"SHADOWED\t")
     assert world_at != -1 and shadow_at != -1
     assert world_at < shadow_at
+    assert finding_line("WORLD_WRITABLE", winner) not in result.stdout
+    assert finding_line("WORLD_WRITABLE", shadow) not in result.stdout
 
 
 def test_explicit_roots_do_not_emit_shadowed_for_colliding_executables(
@@ -3580,3 +3622,664 @@ def test_shadowed_line_helper_contract():
         b'SHADOWED\t"tool"\t"/a/tool"\t"/b/tool"\n'
         b'SHADOWED\t"tool"\t"/a/tool"\t"/c/tool"\n'
     )
+
+
+# ---------------------------------------------------------------------------
+# Hostile PATH regression coverage (`pathaudit --path`)
+#
+# Narrow security-sensitive corpus for adversarial PATH shapes the utility
+# already supports: empty colon fields, nonexistent directories, duplicate
+# components, and deterministic bytewise finding order. Every fixture tree is
+# isolated under pytest tmp paths. Attacker-controlled plants are regular +x
+# files whose bodies would create a marker file if ever executed; after each
+# scan the marker must remain absent so coverage cannot accidentally run
+# fixture content.
+# ---------------------------------------------------------------------------
+
+
+def _shell_safe_path(path: Path) -> str:
+    """Return an absolute path restricted to characters safe in an unquoted shell word."""
+
+    text = os.fspath(path.resolve())
+    for byte in os.fsencode(text):
+        if not (
+            (0x30 <= byte <= 0x39)
+            or (0x41 <= byte <= 0x5A)
+            or (0x61 <= byte <= 0x7A)
+            or byte in (ord("/"), ord("-"), ord("_"), ord("."), ord("="))
+        ):
+            raise AssertionError(
+                f"hostile-PATH probe path must be shell-safe ASCII: {text!r}"
+            )
+    return text
+
+
+def _plant_execution_probe(directory: Path, basename: str, marker: Path) -> Path:
+    """Install a regular +x plant that would create *marker* if executed.
+
+    Returns the resolved plant path. Callers assert the marker stays absent
+    after pathaudit runs.
+    """
+
+    marker_text = _shell_safe_path(marker)
+    plant = directory / basename
+    plant.write_bytes(
+        b"#!/bin/sh\n"
+        + f"printf executed >{marker_text}\n".encode("ascii")
+        + b"exit 0\n"
+    )
+    os.chmod(plant, 0o755)
+    return plant.resolve()
+
+
+def _assert_probe_not_executed(marker: Path) -> None:
+    """Fail if an attacker-controlled plant left its execution side-effect."""
+
+    if marker.exists():
+        raise AssertionError(
+            f"attacker-controlled PATH plant was executed; marker present: {marker}"
+        )
+
+
+def test_hostile_path_empty_missing_duplicates_ordered_without_executing_plants(
+    pathaudit_bin, tmp_path
+):
+    """Empty, missing, and duplicate PATH entries keep contract order; plants idle.
+
+    PATH shape: "" : attacker : missing : "" : attacker : private
+    - leading and middle empty fields → EMPTY_ROOT retained as ""
+    - nonexistent absolute → MISSING_ROOT
+    - duplicate attacker directory → no self-shadow; private stays silent
+    - planted +x trojan under attacker must never run
+    """
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+
+    attacker, private = _private_path_dirs(tmp_path, ("attacker", "private"))
+    missing = tmp_path / "missing-hostile-root"
+    assert not missing.exists()
+    _plant_execution_probe(attacker, "trojan", marker)
+
+    attacker_s = str(attacker.resolve())
+    private_s = str(private.resolve())
+    missing_s = str(missing)
+    path_value = f":{attacker_s}:{missing_s}::{attacker_s}:{private_s}"
+
+    assert not marker.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
+    _assert_probe_not_executed(marker)
+
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (3, b"", "EMPTY_ROOT"),
+                (2, missing_s, "MISSING_ROOT"),
+            ]
+        )
+    )
+    assert result.stdout == expected
+    assert result.stdout.count(b"EMPTY_ROOT\t") == 2
+    assert result.stdout.count(b"MISSING_ROOT\t") == 1
+    assert escape_root(attacker_s) not in result.stdout
+    assert escape_root(private_s) not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"trojan" not in result.stdout
+
+
+def test_hostile_path_duplicate_hazard_entries_preserve_position_without_execution(
+    pathaudit_bin, tmp_path
+):
+    """Duplicate writable PATH entries emit one finding each, never execute plants."""
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+
+    (world,) = _private_path_dirs(tmp_path, ("world-dup",))
+    os.chmod(world, MODE_WORLD_WRITABLE)
+    _plant_execution_probe(world, "plant", marker)
+
+    root = str(world.resolve())
+    path_value = f"{root}:{root}"
+
+    assert not marker.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    _assert_probe_not_executed(marker)
+
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("WORLD_WRITABLE", root),
+            ("WORLD_WRITABLE", root),
+        ]
+    )
+    assert result.stdout.count(b"WORLD_WRITABLE\t") == 2
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"plant" not in result.stdout
+
+
+def test_hostile_path_permutation_ordering_with_empty_and_missing(
+    pathaudit_bin, tmp_path
+):
+    """Permuting empty/missing/hazard components remaps indices deterministically."""
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+
+    (group,) = _private_path_dirs(tmp_path, ("group-hostile",))
+    os.chmod(group, MODE_GROUP_WRITABLE)
+    _plant_execution_probe(group, "decoy", marker)
+    missing = tmp_path / "no-such-hostile-dir"
+    assert not missing.exists()
+
+    group_s = str(group.resolve())
+    missing_s = str(missing)
+
+    first_path = f":{group_s}:{missing_s}"
+    second_path = f"{missing_s}::{group_s}"
+
+    assert not marker.exists()
+    first = run_pathaudit_path_mode(pathaudit_bin, first_path, cwd=tmp_path)
+    second = run_pathaudit_path_mode(pathaudit_bin, second_path, cwd=tmp_path)
+    _assert_probe_not_executed(marker)
+
+    assert first.returncode == second.returncode == 1
+    assert first.stderr == second.stderr == b""
+    assert first.stdout == findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (1, group_s, "GROUP_WRITABLE"),
+                (2, missing_s, "MISSING_ROOT"),
+            ]
+        )
+    )
+    assert second.stdout == findings_stdout(
+        sort_findings(
+            [
+                (1, b"", "EMPTY_ROOT"),
+                (2, group_s, "GROUP_WRITABLE"),
+                (0, missing_s, "MISSING_ROOT"),
+            ]
+        )
+    )
+    # Same finding multiset modulo operand-index tie-breaks encoded in order.
+    assert sorted(first.stdout.splitlines()) == sorted(second.stdout.splitlines())
+    assert b"decoy" not in first.stdout
+    assert b"decoy" not in second.stdout
+
+
+def test_hostile_path_shadow_observation_does_not_execute_attacker_plants(
+    pathaudit_bin, tmp_path
+):
+    """SHADOWED observation of colliding plants must not execute either body.
+
+    Two distinct PATH directories each contain the same attacker basename as a
+    regular +x file. The scanner may report shadowing, but neither plant may
+    run. Empty and missing components around the collision stay classified
+    under the shared taxonomy and do not invent extra shadows.
+    """
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker_early = probe_dir / "executed-early"
+    marker_late = probe_dir / "executed-late"
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    missing = tmp_path / "missing-between"
+    assert not missing.exists()
+    cmd = "collide"
+    winner = _plant_execution_probe(early, cmd, marker_early)
+    shadow = _plant_execution_probe(late, cmd, marker_late)
+
+    early_s = str(early.resolve())
+    late_s = str(late.resolve())
+    missing_s = str(missing)
+    # Empty : early : missing : late : empty — empties and missing skipped for
+    # shadowing; collision still observed across the two real directories.
+    path_value = f":{early_s}:{missing_s}:{late_s}:"
+
+    assert not marker_early.exists()
+    assert not marker_late.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
+    _assert_probe_not_executed(marker_early)
+    _assert_probe_not_executed(marker_late)
+
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, b"", "EMPTY_ROOT"),
+                (4, b"", "EMPTY_ROOT"),
+                (2, missing_s, "MISSING_ROOT"),
+            ]
+        )
+    ) + shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 1
+    assert result.stdout.count(b"EMPTY_ROOT\t") == 2
+    assert result.stdout.count(b"MISSING_ROOT\t") == 1
+
+
+# ---------------------------------------------------------------------------
+# Detect writable executables resolved through PATH
+#
+# Authored ahead of implementation. Additive contract: when `--path` or
+# `--command` resolves a regular executable through PATH, apply the existing
+# directory trust model to the final executable target. Owner-only write
+# (trusted) stays silent. `S_IWGRP` / `S_IWOTH` reuse GROUP_WRITABLE /
+# WORLD_WRITABLE with the executable realpath as the finding root. Symlink
+# resolution follows the final target. Paths/files that cannot be inspected
+# safely reject-close with INSPECTION_ERROR_N. Explicit-root mode still does
+# not search executables. Shared-taxonomy findings (directory and executable)
+# precede SHADOWED lines; `--command` keeps MATCH lines before hazards.
+# ---------------------------------------------------------------------------
+
+
+def test_path_mode_trusted_executable_is_silent(pathaudit_bin, tmp_path):
+    """Owner-writable-only executables are trusted and produce no findings."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    install_executable(private, "tool", mode=MODE_EXE_TRUSTED)
+    # Also cover MODE_PRIVATE (0700): owner rwx only, still trusted.
+    install_executable(private, "private-tool", mode=MODE_PRIVATE)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+
+
+def test_path_mode_group_writable_executable_reports_group_writable(
+    pathaudit_bin, tmp_path
+):
+    """Group-writable final executable targets reuse GROUP_WRITABLE."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = install_executable(private, "tool", mode=MODE_GROUP_WRITABLE)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("GROUP_WRITABLE", exe)])
+    assert b"WORLD_WRITABLE" not in result.stdout
+    assert escape_root(private) not in result.stdout
+
+
+def test_path_mode_world_writable_executable_reports_world_writable(
+    pathaudit_bin, tmp_path
+):
+    """Other-writable final executable targets reuse WORLD_WRITABLE."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = install_executable(private, "tool", mode=MODE_WORLD_WRITABLE)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("WORLD_WRITABLE", exe)])
+    assert b"GROUP_WRITABLE" not in result.stdout
+
+
+def test_path_mode_both_writable_executable_reports_both_codes(
+    pathaudit_bin, tmp_path
+):
+    """Executables with both untrusted write bits emit both shared codes."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    exe = install_executable(private, "tool", mode=MODE_BOTH_WRITABLE)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout(
+        [
+            ("GROUP_WRITABLE", exe),
+            ("WORLD_WRITABLE", exe),
+        ]
+    )
+
+
+def test_path_mode_symlink_executable_uses_final_writable_target(
+    pathaudit_bin, tmp_path
+):
+    """Symlink resolution reports writability of the final executable target."""
+
+    target_dir, link_dir = _private_path_dirs(tmp_path, ("target-dir", "link-dir"))
+    cmd = "tool"
+    real = install_executable(target_dir, cmd, mode=MODE_WORLD_WRITABLE)
+    link = link_dir / cmd
+    link.symlink_to(real)
+    # PATH names the private link directory; the final target is world-writable.
+    result = run_pathaudit_path_mode(pathaudit_bin, str(link_dir.resolve()))
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("WORLD_WRITABLE", real)])
+    # Finding root is the realpath (final target), matching MATCH/SHADOWED.
+    assert link.resolve() == real
+    assert escape_root(link_dir) not in result.stdout
+
+
+def test_path_mode_directory_and_executable_writability_both_report(
+    pathaudit_bin, tmp_path
+):
+    """Directory and executable trust-model findings coexist under one scan."""
+
+    (world,) = _private_path_dirs(tmp_path, ("world",))
+    os.chmod(world, MODE_WORLD_WRITABLE)
+    exe = install_executable(world, "tool", mode=MODE_GROUP_WRITABLE)
+    root = str(world.resolve())
+    result = run_pathaudit_path_mode(pathaudit_bin, root)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        sort_findings(
+            [
+                (0, root, "WORLD_WRITABLE"),
+                (0, exe, "GROUP_WRITABLE"),
+            ]
+        )
+    )
+    assert result.stdout == expected
+
+
+def test_path_mode_writable_executable_findings_precede_shadowed(
+    pathaudit_bin, tmp_path
+):
+    """Executable writability is shared-taxonomy output and precedes SHADOWED."""
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    winner = install_executable(early, cmd, mode=MODE_WORLD_WRITABLE)
+    shadow = install_executable(late, cmd, mode=MODE_EXE_TRUSTED)
+    result = run_pathaudit_path_mode(
+        pathaudit_bin, f"{early.resolve()}:{late.resolve()}"
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    expected = findings_stdout(
+        [("WORLD_WRITABLE", winner)]
+    ) + shadowing_stdout([(cmd, winner, shadow)])
+    assert result.stdout == expected
+    assert result.stdout.find(b"WORLD_WRITABLE\t") < result.stdout.find(
+        b"SHADOWED\t"
+    )
+    assert finding_line("WORLD_WRITABLE", shadow) not in result.stdout
+
+
+def test_path_mode_non_executable_writable_same_basename_is_not_reported(
+    pathaudit_bin, tmp_path
+):
+    """Non-executable group/other-writable files are not executable findings."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    decoy = private / "tool"
+    decoy.write_bytes(b"not-executable\n")
+    os.chmod(decoy, MODE_WORLD_WRITABLE)
+    result = run_pathaudit_path_mode(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"tool" not in result.stdout
+
+
+def test_explicit_roots_do_not_report_writable_executables(
+    pathaudit_bin, tmp_path
+):
+    """Explicit-root mode never searches executables for writability."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    install_executable(private, "tool", mode=MODE_BOTH_WRITABLE)
+    result = run_pathaudit(pathaudit_bin, str(private.resolve()))
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == b""
+    assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"WORLD_WRITABLE" not in result.stdout
+    assert b"MATCH\t" not in result.stdout
+    assert b"tool" not in result.stdout
+
+
+def test_command_mode_trusted_executable_match_exits_zero(
+    pathaudit_bin, fixture_tree
+):
+    """Trusted-mode MATCH alone remains exit 0 with no permission findings."""
+
+    cmd = "tool"
+    exe = install_executable(
+        fixture_tree.private, cmd, mode=MODE_EXE_TRUSTED
+    )
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout([exe])
+    assert b"GROUP_WRITABLE" not in result.stdout
+    assert b"WORLD_WRITABLE" not in result.stdout
+
+
+def test_command_mode_world_writable_executable_reports_after_match(
+    pathaudit_bin, fixture_tree
+):
+    """`--command` emits MATCH then WORLD_WRITABLE on the executable realpath."""
+
+    cmd = "tool"
+    exe = install_executable(
+        fixture_tree.private, cmd, mode=MODE_WORLD_WRITABLE
+    )
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        [("WORLD_WRITABLE", exe)],
+    )
+    assert result.stdout.startswith(match_line(exe))
+    assert finding_line("WORLD_WRITABLE", fixture_tree.private) not in (
+        result.stdout
+    )
+
+
+def test_command_mode_group_writable_executable_reports_group_writable(
+    pathaudit_bin, fixture_tree
+):
+    cmd = "tool"
+    exe = install_executable(
+        fixture_tree.private, cmd, mode=MODE_GROUP_WRITABLE
+    )
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(fixture_tree.private)
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        [("GROUP_WRITABLE", exe)],
+    )
+
+
+def test_command_mode_symlink_match_reports_final_writable_target(
+    pathaudit_bin, fixture_tree
+):
+    """Symlinked MATCH uses realpath; writability follows that final target."""
+
+    cmd = "tool"
+    real = install_executable(
+        fixture_tree.private, cmd, mode=MODE_BOTH_WRITABLE
+    )
+    link_dir = fixture_tree.root / "link-dir-writable-exe"
+    link_dir.mkdir()
+    os.chmod(link_dir, MODE_PRIVATE)
+    link = link_dir / cmd
+    link.symlink_to(real)
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, str(link_dir.resolve())
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    resolved = link.resolve()
+    assert resolved == real
+    assert result.stdout == command_query_stdout(
+        [resolved],
+        [
+            ("GROUP_WRITABLE", resolved),
+            ("WORLD_WRITABLE", resolved),
+        ],
+    )
+
+
+def test_command_mode_writable_dir_and_writable_exe_both_report(
+    pathaudit_bin, fixture_tree
+):
+    """Directory plant-risk and executable writability combine deterministically."""
+
+    cmd = "tool"
+    exe = install_executable(
+        fixture_tree.private, cmd, mode=MODE_WORLD_WRITABLE
+    )
+    path_value = f"{fixture_tree.group_w}:{fixture_tree.private}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, path_value)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == command_query_stdout(
+        [exe],
+        sort_findings(
+            [
+                (0, fixture_tree.group_w, "GROUP_WRITABLE"),
+                (1, exe, "WORLD_WRITABLE"),
+            ]
+        ),
+    )
+
+
+def test_command_mode_unreadable_symlink_target_is_inspection_error(
+    pathaudit_bin, tmp_path
+):
+    """Executable candidates that cannot be inspected safely reject-close."""
+
+    if os.geteuid() == 0:
+        pytest.skip("EACCES fixture is unreliable when running as root")
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    link_dir = tmp_path / "link-dir"
+    blocked = tmp_path / "blocked"
+    secret = blocked / "secret"
+    link_dir.mkdir()
+    blocked.mkdir()
+    secret.mkdir()
+    os.chmod(link_dir, MODE_PRIVATE)
+    os.chmod(secret, MODE_PRIVATE)
+
+    cmd = "tool"
+    real = install_executable(secret, cmd, mode=MODE_EXE_TRUSTED)
+    link_root = str(link_dir.resolve())
+    link = link_dir / cmd
+    link.symlink_to(real)
+    # pathaudit joins PATH component text with the basename for the candidate.
+    candidate = f"{link_root}/{cmd}"
+    os.chmod(blocked, 0)
+    try:
+        result = run_pathaudit_command_mode(pathaudit_bin, cmd, link_root)
+        assert result.returncode == 2
+        assert result.stdout == b""
+        reason = f"INSPECTION_ERROR_{errno_mod.EACCES}"
+        assert result.stderr == diagnostic_lines(reason, candidate)
+        assert_no_raw_unsafe_bytes(result.stderr)
+    finally:
+        os.chmod(blocked, MODE_PRIVATE)
+
+
+def test_path_mode_unreadable_symlink_target_is_inspection_error(
+    pathaudit_bin, tmp_path
+):
+    """`--path` scanning rejects closed when an executable candidate is opaque."""
+
+    if os.geteuid() == 0:
+        pytest.skip("EACCES fixture is unreliable when running as root")
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    link_dir = tmp_path / "link-dir"
+    blocked = tmp_path / "blocked"
+    secret = blocked / "secret"
+    link_dir.mkdir()
+    blocked.mkdir()
+    secret.mkdir()
+    os.chmod(link_dir, MODE_PRIVATE)
+    os.chmod(secret, MODE_PRIVATE)
+
+    cmd = "tool"
+    real = install_executable(secret, cmd, mode=MODE_EXE_TRUSTED)
+    link_root = str(link_dir.resolve())
+    link = link_dir / cmd
+    link.symlink_to(real)
+    candidate = f"{link_root}/{cmd}"
+    os.chmod(blocked, 0)
+    try:
+        result = run_pathaudit_path_mode(pathaudit_bin, link_root)
+        assert result.returncode == 2
+        assert result.stdout == b""
+        reason = f"INSPECTION_ERROR_{errno_mod.EACCES}"
+        assert result.stderr == diagnostic_lines(reason, candidate)
+        assert_no_raw_unsafe_bytes(result.stderr)
+        assert b"SHADOWED\t" not in result.stdout
+    finally:
+        os.chmod(blocked, MODE_PRIVATE)
+
+
+def test_path_mode_symlink_loop_executable_candidate_is_inspection_error(
+    pathaudit_bin, tmp_path
+):
+    """Symlink-loop executable candidates are unsafe inspection, not silent skips."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    private_root = str(private.resolve())
+    # Single self-referential symlink so readdir order cannot ambiguate the
+    # diagnostic operand (avoid a two-node loop with two basenames).
+    loop = private / cmd
+    loop.symlink_to(cmd)
+    candidate = f"{private_root}/{cmd}"
+    result = run_pathaudit_path_mode(pathaudit_bin, private_root)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    assert result.stderr == diagnostic_lines(reason, candidate)
+    assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def test_command_mode_symlink_loop_executable_is_inspection_error(
+    pathaudit_bin, tmp_path
+):
+    """`--command` reject-closes when the queried basename resolves into a loop."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    cmd = "tool"
+    private_root = str(private.resolve())
+    loop = private / cmd
+    loop.symlink_to(cmd)
+    candidate = f"{private_root}/{cmd}"
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, private_root)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    assert result.stderr == diagnostic_lines(reason, candidate)
+    assert_no_raw_unsafe_bytes(result.stderr)

@@ -142,6 +142,33 @@ High threshold (0 Critical/High, 2 Medium PA-M1/PA-M2, 7 Low PA-L1–PA-L7).
 This cycle does not claim that `pathaudit` is released, installable via
 `make install`, or that a product release was published.
 
+## 2026-07-26 — Detect writable resolved-executables through PATH
+
+Governed run `574d06adfc2a` (`template_repair_before_review_feature_delivery`)
+delivered Detect writable resolved-executables through PATH for
+`pathaudit --path` and `pathaudit --command`. The slice extends the shared
+directory trust model to final executable targets resolved through PATH:
+owner-only write modes stay silent; `S_IWGRP` / `S_IWOTH` reuse
+`GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable `realpath`; symlink
+resolution follows the final target; shebang/ELF probing keeps non-executable
+same-basename decoys out of the candidate set; unsafe inspection reject-closes
+via `INSPECTION_ERROR_N`; explicit-root mode still never searches executables;
+writability findings sort with directory hazards and precede `SHADOWED`. Exact
+deliverables: `tests/test_pathaudit.py`, `src/pathaudit.c`. Exact step-3
+verification: `clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsyntax-only
+src/pathaudit.c` exited 0; `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p
+no:cacheprovider tests/ -q` → 269 passed, 1 skipped. User smoke
+(`artifacts/user-smoke/result.json`) passed with start/check exit 0 and empty
+blocking errors; check.log pytest reported `269 passed, 1 skipped in 18.74s`.
+The pinned sysdiff smoke oracle does not directly exercise
+writable-executable `--path` / `--command` detection; pathaudit coverage is
+`tests/test_pathaudit.py`. Independent review
+`code-reviews/review-pathaudit-writable-executables.verdict.json` is `pass`
+(0 Critical/High/Medium, 2 Low PA-W1/PA-W2). Allowlisted review check
+`python3 -m pytest tests/ -q -p no:cacheprovider` → 269 passed, 1 skipped in
+~18s. This cycle does not claim that `pathaudit` is released, installable via
+`make install`, or that a product release was published.
+
 ## 2026-07-25 — Detect non-directory PATH entries
 
 Governed run `35116f657f35` (`detect_non_directory_path_entries`) delivered

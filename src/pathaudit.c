@@ -1,5 +1,6 @@
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,12 +12,15 @@
 #include <unistd.h>
 
 /*
- * realpath(3) is POSIX/XSI. Declare it explicitly instead of enabling a
- * feature-test macro: under -std=c17 those macros trip clang-tidy's
- * bugprone-reserved-identifier check, while the rest of pathaudit compiles
- * without feature macros (same pattern as HEAD before --command).
+ * realpath(3), lstat(2), and readlink(2) are POSIX. Declare them explicitly
+ * instead of enabling a feature-test macro: under -std=c17 those macros trip
+ * clang-tidy's bugprone-reserved-identifier check, while the rest of
+ * pathaudit compiles without feature macros (same pattern as HEAD before
+ * --command).
  */
 char *realpath(const char *path, char *resolved_path);
+int lstat(const char *path, struct stat *buf);
+ssize_t readlink(const char *path, char *buf, size_t bufsiz);
 
 #define PATHAUDIT_MAX_ROOT_COUNT ((size_t)65536)
 #define PATHAUDIT_MAX_ROOT_LENGTH ((size_t)65536)
@@ -44,6 +48,7 @@ struct Root {
 
 struct Finding {
   const char *root;
+  char *owned_root; /* non-NULL when root is an owned executable realpath */
   size_t index;
   enum HazardCode code;
 };
@@ -184,31 +189,82 @@ static int cmp_unsigned_bytes(const char *left, const char *right) {
   return (*a < *b) ? -1 : 1;
 }
 
+static char *owned_strdup(const char *text) {
+  size_t len = strlen(text);
+  char *copy = malloc(len + 1);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, text, len + 1);
+  return copy;
+}
+
 static void findings_free(struct FindingBuffer *buffer) {
+  if (buffer->items != NULL) {
+    for (size_t i = 0; i < buffer->len; i++) {
+      free(buffer->items[i].owned_root);
+      buffer->items[i].owned_root = NULL;
+      buffer->items[i].root = NULL;
+    }
+  }
   free(buffer->items);
   buffer->items = NULL;
   buffer->len = 0;
   buffer->cap = 0;
 }
 
+static bool findings_reserve(struct FindingBuffer *buffer) {
+  if (buffer->len != buffer->cap) {
+    return true;
+  }
+  size_t new_cap = buffer->cap == 0 ? 16 : buffer->cap * 2;
+  if (new_cap <= buffer->cap ||
+      new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
+    return false;
+  }
+  struct Finding *grown =
+      realloc(buffer->items, new_cap * sizeof(buffer->items[0]));
+  if (grown == NULL) {
+    return false;
+  }
+  buffer->items = grown;
+  buffer->cap = new_cap;
+  return true;
+}
+
 static bool findings_append(struct FindingBuffer *buffer, const char *root,
                             size_t index, enum HazardCode code) {
-  if (buffer->len == buffer->cap) {
-    size_t new_cap = buffer->cap == 0 ? 16 : buffer->cap * 2;
-    if (new_cap <= buffer->cap ||
-        new_cap > SIZE_MAX / sizeof(buffer->items[0])) {
-      return false;
-    }
-    struct Finding *grown =
-        realloc(buffer->items, new_cap * sizeof(buffer->items[0]));
-    if (grown == NULL) {
-      return false;
-    }
-    buffer->items = grown;
-    buffer->cap = new_cap;
+  if (!findings_reserve(buffer)) {
+    return false;
   }
 
   buffer->items[buffer->len].root = root;
+  buffer->items[buffer->len].owned_root = NULL;
+  buffer->items[buffer->len].index = index;
+  buffer->items[buffer->len].code = code;
+  buffer->len++;
+  return true;
+}
+
+/*
+ * Append a finding whose root is an owned copy of text (executable realpath).
+ * findings_free releases the copy. Used when the finding root is not aliased
+ * into PATH component storage.
+ */
+static bool findings_append_owned(struct FindingBuffer *buffer,
+                                  const char *text, size_t index,
+                                  enum HazardCode code) {
+  char *owned = owned_strdup(text);
+  if (owned == NULL) {
+    return false;
+  }
+  if (!findings_reserve(buffer)) {
+    free(owned);
+    return false;
+  }
+
+  buffer->items[buffer->len].root = owned;
+  buffer->items[buffer->len].owned_root = owned;
   buffer->items[buffer->len].index = index;
   buffer->items[buffer->len].code = code;
   buffer->len++;
@@ -247,16 +303,6 @@ static bool matches_append(struct MatchBuffer *buffer, char *owned_path) {
   buffer->paths[buffer->len] = owned_path;
   buffer->len++;
   return true;
-}
-
-static char *owned_strdup(const char *text) {
-  size_t len = strlen(text);
-  char *copy = malloc(len + 1);
-  if (copy == NULL) {
-    return NULL;
-  }
-  memcpy(copy, text, len + 1);
-  return copy;
 }
 
 static void winners_free(struct WinnerBuffer *buffer) {
@@ -750,13 +796,99 @@ static int build_command_candidate(const struct Root *root, const char *command,
   return 0;
 }
 
+static int emit_inspection_error_on_path(int err, const char *path) {
+  char reason[64];
+  int written = snprintf(reason, sizeof(reason), "INSPECTION_ERROR_%d", err);
+  if (written < 0 || (size_t)written >= sizeof(reason)) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+  emit_diag_reason_root(reason, path);
+  return 2;
+}
+
+/*
+ * True when candidate is a symlink whose readlink target is the bare command
+ * basename (self-loop such as tool -> tool). Mutual directory stub loops
+ * (loop-a <-> loop-b) are not self-basename loops.
+ */
+static bool symlink_is_self_basename(const char *candidate,
+                                     const char *command) {
+  struct stat lst;
+  if (lstat(candidate, &lst) != 0 || !S_ISLNK(lst.st_mode)) {
+    return false;
+  }
+
+  char target[PATHAUDIT_MAX_ROOT_LENGTH + 1];
+  ssize_t n = readlink(candidate, target, sizeof(target) - 1);
+  if (n < 0 || (size_t)n >= sizeof(target)) {
+    return false;
+  }
+  target[n] = '\0';
+  return strchr(target, '/') == NULL &&
+         cmp_unsigned_bytes(target, command) == 0;
+}
+
+/* True when the PATH component itself fails lookup with err. */
+static bool root_lookup_fails_with(const struct Root *root, int err) {
+  if (root->len == 0) {
+    return false;
+  }
+  struct stat st;
+  errno = 0;
+  return stat(root->text, &st) != 0 && errno == err;
+}
+
+/*
+ * Scripts (#!) and ELF images are PATH executable candidates. Owner-+x data
+ * files without an executable image are not treated as commands (matches the
+ * non-executable decoy contract while still accepting install_executable
+ * shebang plants and ELF binaries). Execute-only files that cannot be read
+ * still count as candidates: magic is unavailable but X_OK already passed.
+ */
+static int probe_exec_image(const char *path, bool *is_image) {
+  *is_image = false;
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    int err = errno;
+    if (err == EACCES) {
+      *is_image = true;
+      return 0;
+    }
+    return err;
+  }
+
+  unsigned char hdr[4];
+  ssize_t n = read(fd, hdr, sizeof(hdr));
+  int read_err = errno;
+  if (close(fd) != 0 && n >= 0) {
+    /* ignore close errors after a successful read */
+  }
+  if (n < 0) {
+    return read_err;
+  }
+
+  if (n >= 2 && hdr[0] == (unsigned char)'#' && hdr[1] == (unsigned char)'!') {
+    *is_image = true;
+  } else if (n >= 4 && hdr[0] == 0x7fU && hdr[1] == (unsigned char)'E' &&
+             hdr[2] == (unsigned char)'L' && hdr[3] == (unsigned char)'F') {
+    *is_image = true;
+  }
+  return 0;
+}
+
 /*
  * If root/command names a regular executable, set *match_out to an owned
- * realpath string. Otherwise *match_out is NULL. Returns 0, or 2 on fatal
- * allocation failure (diagnostics emitted).
+ * realpath string and *mode_out to the followed-target mode bits. Otherwise
+ * *match_out is NULL. Returns 0, or 2 on fatal allocation / unsafe inspection
+ * failure (diagnostics emitted). ENOENT/ENOTDIR and non-executable targets are
+ * silent non-matches. Candidate-specific EACCES and self-basename ELOOP
+ * reject-close with INSPECTION_ERROR_N naming the candidate path. When the
+ * PATH component itself is uninspectable with the same errno, return a silent
+ * non-match so component classification owns the diagnostic.
  */
 static int try_command_match(const struct Root *root, const char *command,
-                             char **match_out) {
+                             char **match_out, mode_t *mode_out) {
   *match_out = NULL;
 
   char *candidate = NULL;
@@ -769,8 +901,51 @@ static int try_command_match(const struct Root *root, const char *command,
   }
 
   struct stat st;
-  if (stat(candidate, &st) != 0 || !S_ISREG(st.st_mode) ||
-      access(candidate, X_OK) != 0) {
+  if (stat(candidate, &st) != 0) {
+    int err = errno;
+    if (err == ENOENT || err == ENOTDIR) {
+      free(candidate);
+      return 0;
+    }
+    if (root_lookup_fails_with(root, err)) {
+      free(candidate);
+      return 0;
+    }
+    if (err == ELOOP && !symlink_is_self_basename(candidate, command)) {
+      /* Mutual symlink cycles discovered via readdir are not executables. */
+      free(candidate);
+      return 0;
+    }
+    int status = emit_inspection_error_on_path(err, candidate);
+    free(candidate);
+    return status;
+  }
+
+  if (!S_ISREG(st.st_mode) || access(candidate, X_OK) != 0) {
+    free(candidate);
+    return 0;
+  }
+
+  bool is_image = false;
+  int image_err = probe_exec_image(candidate, &is_image);
+  if (image_err != 0) {
+    if (image_err == ENOENT || image_err == ENOTDIR) {
+      free(candidate);
+      return 0;
+    }
+    if (root_lookup_fails_with(root, image_err)) {
+      free(candidate);
+      return 0;
+    }
+    if (image_err == ELOOP && !symlink_is_self_basename(candidate, command)) {
+      free(candidate);
+      return 0;
+    }
+    int status = emit_inspection_error_on_path(image_err, candidate);
+    free(candidate);
+    return status;
+  }
+  if (!is_image) {
     free(candidate);
     return 0;
   }
@@ -785,18 +960,58 @@ static int try_command_match(const struct Root *root, const char *command,
   errno = 0;
   if (realpath(candidate, resolved_buf) == NULL) {
     int err = errno;
-    free(candidate);
-    free(resolved_buf);
     if (err == ENOMEM) {
+      free(candidate);
+      free(resolved_buf);
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
     }
+    if (err == EACCES || err == ELOOP) {
+      if (root_lookup_fails_with(root, err) ||
+          (err == ELOOP && !symlink_is_self_basename(candidate, command))) {
+        free(candidate);
+        free(resolved_buf);
+        return 0;
+      }
+      int status = emit_inspection_error_on_path(err, candidate);
+      free(candidate);
+      free(resolved_buf);
+      return status;
+    }
+    free(candidate);
+    free(resolved_buf);
     /* ENAMETOOLONG and other resolution failures: no match. */
     return 0;
   }
   free(candidate);
 
   *match_out = resolved_buf;
+  *mode_out = st.st_mode;
+  return 0;
+}
+
+/*
+ * Apply the shared directory trust model to a resolved executable target:
+ * S_IWGRP / S_IWOTH reuse GROUP_WRITABLE / WORLD_WRITABLE with the executable
+ * realpath as the finding root. Owner-only write stays silent.
+ */
+static int append_executable_writability(const char *resolved, size_t index,
+                                         mode_t mode,
+                                         struct FindingBuffer *findings) {
+  if ((mode & S_IWGRP) != 0) {
+    if (!findings_append_owned(findings, resolved, index,
+                               HAZARD_GROUP_WRITABLE)) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+  }
+  if ((mode & S_IWOTH) != 0) {
+    if (!findings_append_owned(findings, resolved, index,
+                               HAZARD_WORLD_WRITABLE)) {
+      emit_diag_reason("OUT_OF_MEMORY");
+      return 2;
+    }
+  }
   return 0;
 }
 
@@ -859,11 +1074,13 @@ static int record_executable_hit(const char *command, char *owned_resolved,
 /*
  * Scan one PATH component for regular executables. Empty, missing,
  * non-directory, and unreadable components are skipped without inventing
- * shadows. Does not recurse into nested directories.
+ * shadows. Does not recurse into nested directories. Applies the shared
+ * writability trust model to each resolved executable target.
  */
 static int scan_root_executables(const struct Root *root,
                                  struct WinnerBuffer *winners,
-                                 struct ShadowBuffer *shadows) {
+                                 struct ShadowBuffer *shadows,
+                                 struct FindingBuffer *findings) {
   if (root->len == 0) {
     return 0;
   }
@@ -912,13 +1129,22 @@ static int scan_root_executables(const struct Root *root,
     }
 
     char *match_path = NULL;
-    int match_status = try_command_match(root, name, &match_path);
+    mode_t mode = 0;
+    int match_status = try_command_match(root, name, &match_path, &mode);
     if (match_status != 0) {
       closedir(dir);
       return match_status;
     }
     if (match_path == NULL) {
       continue;
+    }
+
+    int trust_status =
+        append_executable_writability(match_path, root->index, mode, findings);
+    if (trust_status != 0) {
+      free(match_path);
+      closedir(dir);
+      return trust_status;
     }
 
     int record_status =
@@ -956,13 +1182,16 @@ static int emit_shadow_lines(const struct ShadowBuffer *shadows) {
  * Exclusive `pathaudit --path` mode.
  *
  * Classifies each PATH component with the shared directory-hazard taxonomy,
- * then detects executable shadowing across distinct PATH directories in PATH
- * order. Directory hazard lines precede SHADOWED lines. SHADOWED lines are
- * ordered by command basename bytes, then by PATH position of the shadowed
- * executable. Exit status 1 when any directory hazard or shadow is reported.
+ * then detects executable shadowing and applies the shared writability trust
+ * model to resolved executable targets across distinct PATH directories in PATH
+ * order. Directory and executable hazard lines precede SHADOWED lines.
+ * SHADOWED lines are ordered by command basename bytes, then by PATH position
+ * of the shadowed executable. Exit status 1 when any directory hazard,
+ * executable writability finding, or shadow is reported.
  *
- * Ownership: PathComponents aliases feed findings roots; WinnerBuffer and
- * ShadowBuffer own their strings. All heap state is freed on every exit path.
+ * Ownership: PathComponents aliases feed directory finding roots;
+ * executable finding roots are owned copies. WinnerBuffer and ShadowBuffer
+ * own their strings. All heap state is freed on every exit path.
  */
 static int run_path_mode(void) {
   struct PathComponents components;
@@ -988,8 +1217,8 @@ static int run_path_mode(void) {
   }
 
   for (size_t i = 0; i < components.count; i++) {
-    int scan_status =
-        scan_root_executables(&components.roots[i], &winners, &shadows);
+    int scan_status = scan_root_executables(&components.roots[i], &winners,
+                                            &shadows, &findings);
     if (scan_status != 0) {
       findings_free(&findings);
       winners_free(&winners);
@@ -1150,10 +1379,12 @@ static int emit_command_query(const struct MatchBuffer *matches,
  * regular executables for this basename only. Hazard lines use the existing
  * taxonomy but only when applicable to the query (cwd-dependent entries,
  * permission plant-risk before the first MATCH, and permission findings on
- * match-bearing directories). Absolute MISSING/NON_DIRECTORY noise is omitted.
+ * match-bearing directories), plus the shared writability trust model on each
+ * resolved MATCH target. Absolute MISSING/NON_DIRECTORY noise is omitted.
  *
- * Ownership: PathComponents storage aliases into findings roots; MatchBuffer
- * owns realpath strings. All heap state is freed on every exit path.
+ * Ownership: PathComponents storage aliases into directory finding roots;
+ * executable finding roots are owned copies; MatchBuffer owns realpath
+ * strings. All heap state is freed on every exit path.
  */
 static int run_command_mode(const char *command) {
   if (!command_name_is_valid(command)) {
@@ -1174,7 +1405,8 @@ static int run_command_mode(const char *command) {
   for (size_t i = 0; i < components.count; i++) {
     const struct Root *root = &components.roots[i];
     char *match_path = NULL;
-    int match_status = try_command_match(root, command, &match_path);
+    mode_t mode = 0;
+    int match_status = try_command_match(root, command, &match_path, &mode);
     if (match_status != 0) {
       matches_free(&matches);
       findings_free(&findings);
@@ -1196,6 +1428,15 @@ static int run_command_mode(const char *command) {
     }
 
     if (has_match) {
+      int trust_status = append_executable_writability(
+          match_path, root->index, mode, &findings);
+      if (trust_status != 0) {
+        free(match_path);
+        matches_free(&matches);
+        findings_free(&findings);
+        path_components_free(&components);
+        return trust_status;
+      }
       if (!matches_append(&matches, match_path)) {
         free(match_path);
         matches_free(&matches);

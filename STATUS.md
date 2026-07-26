@@ -11,18 +11,24 @@ additive `pathaudit` 0.1.0: a read-only ISO C17 scanner for explicitly supplied
 PATH directory roots (`pathaudit [--] ROOT...`), with closed hazard taxonomy
 (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`, `NON_DIRECTORY_ROOT`,
 `GROUP_WRITABLE`, `WORLD_WRITABLE`), reject-closed limits, and exit statuses
-0/1/2 per `docs/pathaudit-contract.md` and `man/pathaudit.1`. Pathaudit has no
-install target in this slice (`make pathaudit` verifies under mktemp only) and
-is **not** released. The repository includes Makefile quality targets, shell
-and pytest coverage (including `tests/test_pathaudit.py`), sanitizer and
-Valgrind wiring, Ubuntu CI configuration, and man pages for both utilities. A
-curated public repository `https://github.com/leebase/linux-utilities` exists;
-AgentFlow notes record a successful Ubuntu `make quality` CI run on commit
-`fbdf071` and a GitHub `v0.1.0` tag/release aimed at that curated commit for
-`sysdiff`. Make `install`/`uninstall` DESTDIR staging remains sysdiff-only.
-Accepted Low limitations (changed-line delimiter ambiguity, Ubuntu-only CI, no
-packaged `.deb`/`.rpm`, explicit-snapshot-only sysdiff scope) remain in force.
-The existing sysdiff smoke oracle does not directly exercise pathaudit.
+0/1/2 per `docs/pathaudit-contract.md` and `man/pathaudit.1`. Later governed
+slices added opt-in `--path` (including writable directories, cwd-dependent
+entries, non-directory components, executable shadowing, and writable
+resolved-executables) and exclusive `--command NAME` inspection. Run
+`574d06adfc2a` applies the shared writability trust model to final executable
+targets resolved through PATH in `--path` and `--command` modes; explicit-root
+mode still does not search executables. Pathaudit has no install target in
+these slices (`make pathaudit` verifies under mktemp only) and is **not**
+released. The repository includes Makefile quality targets, shell and pytest
+coverage (including `tests/test_pathaudit.py`), sanitizer and Valgrind wiring,
+Ubuntu CI configuration, and man pages for both utilities. A curated public
+repository `https://github.com/leebase/linux-utilities` exists; AgentFlow notes
+record a successful Ubuntu `make quality` CI run on commit `fbdf071` and a
+GitHub `v0.1.0` tag/release aimed at that curated commit for `sysdiff`. Make
+`install`/`uninstall` DESTDIR staging remains sysdiff-only. Accepted Low
+limitations (changed-line delimiter ambiguity, Ubuntu-only CI, no packaged
+`.deb`/`.rpm`, explicit-snapshot-only sysdiff scope) remain in force. The
+existing sysdiff smoke oracle does not directly exercise pathaudit.
 
 ## Release Status
 

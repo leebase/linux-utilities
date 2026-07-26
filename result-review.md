@@ -1,5 +1,46 @@
 # Result Review
 
+## Detect writable resolved-executables through PATH
+
+Governed run `574d06adfc2a` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect writable
+resolved-executables through PATH for `pathaudit --path` and
+`pathaudit --command`: apply the existing directory trust model to final
+executable targets resolved through PATH (`GROUP_WRITABLE` /
+`WORLD_WRITABLE` on the executable `realpath`; owner-only write silent);
+symlink resolution follows the final target; shebang/ELF probing keeps
+non-executable same-basename decoys out of the candidate set; unsafe
+inspection reject-closes via `INSPECTION_ERROR_N`; explicit-root mode
+still never searches executables; writability findings sort with
+directory hazards and precede `SHADOWED`. Exact deliverables touched
+in-run: `tests/test_pathaudit.py`, `src/pathaudit.c`. Exact step-3
+verification: `clang -std=c17 -Wall -Wextra -Wpedantic -Werror
+-fsyntax-only src/pathaudit.c` exited 0;
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/ -q` → 269 passed, 1 skipped. Exact smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest `269 passed, 1 skipped in
+18.74s`. The pinned smoke oracle remains the sysdiff fixture path and
+does **not** directly exercise writable-executable `--path` /
+`--command` detection; pathaudit coverage is `tests/test_pathaudit.py`.
+Independent review artifacts:
+`code-reviews/review-pathaudit-writable-executables.md` and
+`code-reviews/review-pathaudit-writable-executables.verdict.json`.
+Verdict: `pass` with no Critical, High, or Medium findings and two Low
+findings (PA-W1: ~64 KiB stack `readlink` target buffer in
+`symlink_is_self_basename`; PA-W2: documented trust-model scope gap where
+group/other-writable `+x` files that are neither `#!` nor ELF are not
+reported). Allowlisted review check:
+`python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 269 passed,
+1 skipped in ~18s. Remaining risks: Low PA-W1/PA-W2 plus prior Medium
+pathaudit-shadow-1 and Low pathaudit-shadow-2/3, Low nondir-1/2,
+pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
+Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
+this review. Recommended next action: optional Low PA-W polish; prefer
+repairing pathaudit-shadow-1 or resume prior Medium backlog. Do not
+claim that `pathaudit` is released.
+
 ## Detect executable shadowing across PATH entries
 
 Governed run `f94509b47fd3` (playbook

@@ -1,5 +1,27 @@
 # Sprint Plan
 
+## Detect writable resolved-executables through PATH
+
+Governed run `574d06adfc2a` (playbook
+`template_repair_before_review_feature_delivery`) delivered Detect writable
+resolved-executables through PATH for `pathaudit --path` and
+`pathaudit --command` (shared `GROUP_WRITABLE` / `WORLD_WRITABLE` on final
+executable realpaths; owner-only write silent; symlink → final target;
+reject-closed inspection; explicit-root never searches executables;
+findings precede `SHADOWED`). Exact verification (step-3): Clang
+`-fsyntax-only` exit 0; full pytest → 269 passed, 1 skipped. Exact
+smoke: `artifacts/user-smoke/result.json` → `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors` (check.log pytest `269 passed, 1 skipped in
+18.74s`). Review
+`code-reviews/review-pathaudit-writable-executables.{md,verdict.json}`
+verdict `pass` (0 Critical/High/Medium, 2 Low PA-W1/PA-W2). Allowlisted
+review check: full pytest → 269 passed, 1 skipped. Do **not** claim that
+`pathaudit` is released. Next: keep Low PA-W1/PA-W2 visible; prefer
+repairing Medium pathaudit-shadow-1 or resume prior Medium backlog; do
+not treat sysdiff smoke as writable-executable `--path` / `--command`
+coverage.
+
 ## Detect executable shadowing across PATH entries
 
 Governed run `f94509b47fd3` (playbook
@@ -279,6 +301,27 @@ or release closure from this slice.
 ## Current sprint
 
 - [x] Deliver, smoke-test, independently review, and close out
+  Detect writable resolved-executables through PATH for `pathaudit
+  --path` / `--command` in run `574d06adfc2a`,
+  `template_repair_before_review_feature_delivery`. Exact evidence:
+  step-3 Clang `-fsyntax-only` exit 0; full pytest 269 passed / 1
+  skipped; smoke start/check 0 with empty `blocking_errors` (check.log
+  pytest `269 passed, 1 skipped in 18.74s`); review verdict `pass`
+  with 0 Critical/High/Medium and 2 Low (PA-W1, PA-W2); allowlisted
+  full pytest → 269 passed, 1 skipped. Not a pathaudit release;
+  sysdiff smoke oracle does not directly exercise writable-executable
+  `--path` / `--command` detection.
+- [ ] Next after `574d06adfc2a`: keep Low PA-W1/PA-W2 visible for
+  optional polish; prefer repairing Medium pathaudit-shadow-1
+  (right-size retained realpath buffers) or resume prior Medium
+  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
+  Mediums) without claiming those were closed by this review; keep
+  prior Low pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2,
+  pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for optional polish;
+  do not claim that `pathaudit` is released or that
+  `tests/smoke_manifest.json` covers writable-executable `--path` /
+  `--command` behavior.
+- [x] Deliver, smoke-test, independently review, and close out
   Detect executable shadowing across PATH entries for `pathaudit
   --path` in run `f94509b47fd3`,
   `template_repair_before_review_feature_delivery`. Exact evidence:
@@ -289,15 +332,11 @@ or release closure from this slice.
   (pathaudit-shadow-2, pathaudit-shadow-3); allowlisted full pytest →
   247 passed, 1 skipped. Not a pathaudit release; sysdiff smoke oracle
   does not directly exercise executable-shadowing `--path` detection.
-- [ ] Next after `f94509b47fd3`: keep Medium pathaudit-shadow-1 and Low
-  pathaudit-shadow-2/3 visible; prefer repairing pathaudit-shadow-1
-  (right-size retained realpath buffers) or resume prior Medium
-  backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff packaging
-  Mediums) without claiming those were closed by this review; keep
-  prior Low nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and
-  PA-WP-1–PA-WP-4 visible for optional polish; do not claim that
-  `pathaudit` is released or that `tests/smoke_manifest.json` covers
-  shadowing `--path` behavior.
+- [ ] Keep Medium pathaudit-shadow-1 and Low pathaudit-shadow-2/3 from
+  `f94509b47fd3` visible unless a later review explicitly closes them;
+  prefer repairing pathaudit-shadow-1 or resume prior Medium backlog;
+  do not claim that `pathaudit` is released or that
+  `tests/smoke_manifest.json` covers shadowing `--path` behavior.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect non-directory PATH entries for `pathaudit --path` / explicit
   roots in run `35116f657f35`, `detect_non_directory_path_entries`.

@@ -1,5 +1,28 @@
 # Where Am I
 
+## Detect writable resolved-executables through PATH
+
+Governed run `574d06adfc2a` delivered Detect writable
+resolved-executables through PATH for `pathaudit --path` and
+`pathaudit --command`: final executable targets reuse
+`GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable `realpath`
+(owner-only write silent); symlink resolution follows the final
+target; shebang/ELF probing excludes non-executable decoys; unsafe
+inspection reject-closes via `INSPECTION_ERROR_N`; explicit-root never
+searches executables; findings precede `SHADOWED`. Exact evidence:
+step-3 Clang `-fsyntax-only` exit 0; full pytest 269 passed, 1 skipped.
+Exact smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`,
+`check_exit_code: 0`, empty `blocking_errors`; check.log pytest
+`269 passed, 1 skipped in 18.74s`. Review
+`code-reviews/review-pathaudit-writable-executables.{md,verdict.json}`
+is `pass` (0 Critical/High/Medium, 2 Low PA-W1/PA-W2); allowlisted
+full pytest → 269 passed, 1 skipped. This does **not** claim that
+`pathaudit` is released or that the sysdiff smoke oracle covers
+writable-executable `--path` / `--command` detection. Next: keep Low
+PA-W1/PA-W2 visible; prefer repairing Medium pathaudit-shadow-1 or
+resume prior Medium backlog.
+
 ## Detect executable shadowing across PATH entries
 
 Governed run `f94509b47fd3` delivered Detect executable shadowing
@@ -264,19 +287,25 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `f94509b47fd3` is
-Detect executable shadowing across PATH entries for `pathaudit --path`
-(`SHADOWED` lines for later distinct realpath hits against the first
-PATH-order winner), with independent review
-`code-reviews/review-executable-shadowing.verdict.json` = `pass`
-(0 Critical/High, 1 Medium pathaudit-shadow-1, 2 Low
-pathaudit-shadow-2/3). This is **not** a pathaudit release and does not
-change the separately prepared unpublished `sysdiff` 0.1.0 package from
-run `580b0f6ff811`. Executable-shadowing `--path` behavior is covered
-by `tests/test_pathaudit.py`, not by the existing sysdiff smoke oracle.
+The current milestone after recording run `574d06adfc2a` is
+Detect writable resolved-executables through PATH for `pathaudit
+--path` / `--command` (shared trust-model writability on final
+executable realpaths), with independent review
+`code-reviews/review-pathaudit-writable-executables.verdict.json` =
+`pass` (0 Critical/High/Medium, 2 Low PA-W1/PA-W2). This is **not** a
+pathaudit release and does not change the separately prepared
+unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
+Writable-executable behavior is covered by `tests/test_pathaudit.py`,
+not by the existing sysdiff smoke oracle.
 
 ## Milestone state
 
+- Run `574d06adfc2a` delivered and reviewed Detect writable
+  resolved-executables through PATH: step-3 Clang `-fsyntax-only`
+  exit 0; full pytest 269/1; smoke start/check 0; review `pass` with
+  Low PA-W1/PA-W2 only; allowlisted full pytest 269 passed, 1 skipped.
+  Not a pathaudit release; smoke oracle does not directly exercise
+  writable-executable `--path` / `--command` detection.
 - Run `f94509b47fd3` delivered and reviewed Detect executable shadowing
   across PATH entries: step-4 GCC/Clang `-fsyntax-only` exit 0; full
   pytest 247/1; smoke start/check 0; review `pass` with Medium
@@ -489,14 +518,14 @@ by `tests/test_pathaudit.py`, not by the existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep Medium pathaudit-shadow-1 and Low pathaudit-shadow-2/3 from run
-`f94509b47fd3` visible. Prefer repairing pathaudit-shadow-1 (right-size
-retained realpath buffers) or resume prior Medium backlog repair
-(pathaudit PA-M2 hostile-byte stderr fixture / PA-M1 architecture
-leftovers, plus sysdiff packaging Mediums) without claiming those were
-closed by the shadowing review. Keep prior Low nondir-1/2,
-pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for
-optional polish. Do not claim that `pathaudit` is released, and do not
-treat `tests/smoke_manifest.json` as executable-shadowing `--path`
-coverage. Separately preserve the unpublished `sysdiff` 0.1.0 candidate
-from `580b0f6ff811`.
+Keep Low PA-W1/PA-W2 from run `574d06adfc2a` visible for optional
+polish. Prefer repairing Medium pathaudit-shadow-1 (right-size retained
+realpath buffers) or resume prior Medium backlog repair (pathaudit
+PA-M2 hostile-byte stderr fixture / PA-M1 architecture leftovers, plus
+sysdiff packaging Mediums) without claiming those were closed by the
+writable-executable review. Keep prior Low pathaudit-shadow-2/3,
+nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4
+visible for optional polish. Do not claim that `pathaudit` is released,
+and do not treat `tests/smoke_manifest.json` as writable-executable
+`--path` / `--command` coverage. Separately preserve the unpublished
+`sysdiff` 0.1.0 candidate from `580b0f6ff811`.
