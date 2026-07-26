@@ -1,5 +1,23 @@
 # Sprint Plan
 
+## Next Utility Evaluation
+
+Reviewed Future Mission Discovery selects bootstrap `permguard` as the
+next mission after pathaudit v1 capability completion (explicit-root /
+`--path` / `--command` plus quality floor; writable-ancestor and
+setuid-on-PATH deferred, not blockers). First vertical slice: explicit-
+root `permguard [--] PATH...` contract + C17 scanner + man + pytest +
+Makefile wiring, without recursion, PATH reading, remediation, or a
+release claim. Independent review
+`code-reviews/review-next-linux-utility-evaluation.verdict.json` =
+`pass` with two Low findings (`permguard-writability-overlap`,
+`first-slice-scope-breadth`); evidence checks were plan-only, not
+implementation smoke. Sprint posture: prefer governed permguard
+bootstrap next; keep evaluation Lows and prior pathaudit Medium/Low plus
+sysdiff packaging Mediums visible; do not schedule pathaudit-only polish
+or renewed `sysdiff` release work (`v0.1.0` tag already exists). No
+utility was implemented or released by this evaluation handoff.
+
 ## Detect unsafe ownership of PATH directories
 
 Governed run `50c0b4936d50` (playbook
@@ -348,6 +366,20 @@ or release closure from this slice.
 
 ## Current sprint
 
+- [x] Record reviewed Future Mission Discovery selection: pathaudit v1
+  capability-complete; chosen mission bootstrap `permguard`; first
+  vertical slice explicit-root permission scanner; review verdict
+  `pass` with Low `permguard-writability-overlap` and
+  `first-slice-scope-breadth`; plan-evidence checks only. Not an
+  implementation or release of any utility.
+- [ ] Next executable action after selection handoff: author/launch
+  governed playbook to bootstrap `permguard` (`docs/permguard-contract.md`,
+  `src/permguard.c`, `man/permguard.1`, `tests/test_permguard.py`,
+  Makefile wiring). Keep evaluation Lows visible; keep prior pathaudit
+  Medium/Low and sysdiff packaging Mediums as ordinary repair; do not
+  schedule pathaudit-only polish or renewed `sysdiff` release work; do
+  not claim pathaudit/permguard released or that sysdiff smoke covers
+  them.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect unsafe ownership of PATH directories for `pathaudit --path` /
   `--command` in run `50c0b4936d50`,
@@ -360,17 +392,13 @@ or release closure from this slice.
   15 skipped. Not a pathaudit release; sysdiff smoke oracle does not
   directly exercise directory-ownership `--path` / `--command`
   detection.
-- [ ] Next after `50c0b4936d50`: keep Low `path-dir-ownership-1`
-  visible; prefer next genuine capability Detect writable ancestors of
-  PATH directories; optional Medium pathaudit-shadow-1 repair and prior
-  Medium backlog (pathaudit PA-M2 / PA-M1 leftovers and sysdiff
-  packaging Mediums) remain available without claiming those were
-  closed by this review; keep prior Low PA-W1/PA-W2,
-  pathaudit-shadow-2/3, nondir-1/2, pathaudit-cmd-1/2,
-  pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for optional polish;
-  do not claim that `pathaudit` is released or that
-  `tests/smoke_manifest.json` covers directory-ownership `--path` /
-  `--command` behavior.
+- [x] Historical next-after-`50c0b4936d50` preference (Detect writable
+  ancestors of PATH directories) is superseded by reviewed Future Mission
+  Discovery: writable-ancestor is deferred out of pathaudit v1 scope;
+  suite next mission is `permguard` bootstrap. Keep Low
+  `path-dir-ownership-1`, optional Medium pathaudit-shadow-1, and prior
+  Medium/Low backlogs visible as ordinary repair without claiming they
+  were closed by the evaluation review.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect executables with unsafe ownership for `pathaudit --path` /
   `--command` in run `1d5eedc01202`,

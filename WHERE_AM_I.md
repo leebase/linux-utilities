@@ -1,5 +1,21 @@
 # Where Am I
 
+## Next Utility Evaluation
+
+Product orientation after reviewed Future Mission Discovery: pathaudit is
+declared capability-complete for v1 product scope, and the chosen next
+mission is bootstrap `permguard` (third suite utility)—a read-only
+explicit-path permission/ownership auditor, not another pathaudit
+detector. First vertical slice is `permguard [--] PATH...` with a closed
+hazard taxonomy and suite-aligned exits; non-goals include recursion,
+PATH reading, remediation, and any release claim. Review outcome:
+`pass` with unresolved Low `permguard-writability-overlap` and
+`first-slice-scope-breadth` only; review evidence was plan verification,
+not a new-utility smoke or release gate. Next executable action: launch
+governed work to deliver that permguard bootstrap slice. Do not treat
+this handoff as implementation or release of permguard, pathaudit, or
+sysdiff; prior Medium/Low repair backlogs remain separately visible.
+
 ## Detect unsafe ownership of PATH directories
 
 Governed run `50c0b4936d50` delivered Detect unsafe ownership of PATH
@@ -333,16 +349,16 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone after recording run `50c0b4936d50` is
-Detect unsafe ownership of PATH directories for `pathaudit --path` /
-`--command` (`UNSAFE_OWNER` on usable PATH directory and ancestor
-realpaths when owner is neither UID 0 nor `getuid()`), with independent
-review `code-reviews/review-path-directory-ownership.verdict.json` =
-`pass` (0 Critical/High/Medium, 1 Low path-dir-ownership-1). This is
-**not** a pathaudit release and does not change the separately prepared
-unpublished `sysdiff` 0.1.0 package from run `580b0f6ff811`.
-Directory-ownership behavior is covered by `tests/test_pathaudit.py`,
-not by the existing sysdiff smoke oracle.
+The current milestone is the reviewed Future Mission Discovery selection:
+pathaudit is at its v1 capability-completion boundary, and the chosen
+next mission is bootstrap `permguard` (first vertical slice: explicit-
+root permission scanner). Independent evaluation review
+`code-reviews/review-next-linux-utility-evaluation.verdict.json` =
+`pass` (2 Low findings only; plan-evidence checks, not product smoke).
+This is **not** implementation or release of permguard or pathaudit and
+does not change the separately prepared unpublished `sysdiff` 0.1.0
+package from run `580b0f6ff811`. Prior pathaudit directory-ownership
+work from `50c0b4936d50` remains historical capability evidence.
 
 ## Milestone state
 
@@ -577,16 +593,15 @@ not by the existing sysdiff smoke oracle.
 
 ## Next milestone
 
-Keep Low `path-dir-ownership-1` from run `50c0b4936d50` visible.
-Prefer next genuine capability Detect writable ancestors of PATH
-directories (bounded writability walk of parent realpaths, parallel to
-the ownership ancestor walk just delivered). Optional Medium
-pathaudit-shadow-1 repair and prior Medium backlog (pathaudit PA-M2 /
-PA-M1 leftovers, plus sysdiff packaging Mediums) remain available
-without claiming those were closed by the directory-ownership review.
-Keep prior Low PA-W1/PA-W2, pathaudit-shadow-2/3, nondir-1/2,
-pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4 visible for
-optional polish. Do not claim that `pathaudit` is released, and do not
-treat `tests/smoke_manifest.json` as directory-ownership `--path` /
-`--command` coverage. Separately preserve the unpublished `sysdiff`
-0.1.0 candidate from `580b0f6ff811`.
+Next executable action: governed bootstrap of the `permguard` explicit-
+root vertical slice (contract, `src/permguard.c`, man page, pytest,
+Makefile wiring) under existing strict quality gates. Keep evaluation
+Low findings `permguard-writability-overlap` and
+`first-slice-scope-breadth` visible. Keep prior pathaudit Medium/Low
+(including `path-dir-ownership-1`, pathaudit-shadow-1, PA-M leftovers)
+and sysdiff packaging Mediums visible as ordinary repair—not blockers
+for starting permguard, and not closed by this selection. Writable-
+ancestor pathaudit work remains deferred/enhancement per the completion
+boundary. Do not claim pathaudit or permguard released; do not renew
+`sysdiff` release work (`v0.1.0` exists). Preserve the unpublished
+`sysdiff` 0.1.0 candidate from `580b0f6ff811`.

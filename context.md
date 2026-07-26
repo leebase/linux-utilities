@@ -2,6 +2,38 @@
 
 ## Snapshot
 
+Future Mission Discovery plan `plans/next-linux-utility-evaluation.md` was
+independently reviewed
+(`code-reviews/review-next-linux-utility-evaluation.{md,verdict.json}`) with
+verdict `pass` (0 Critical/High/Medium; 2 Low:
+`permguard-writability-overlap`, `first-slice-scope-breadth`). Chosen mission:
+bootstrap `permguard` as the third suite utility. Pathaudit completion
+boundary: capability-complete for v1 product scope (explicit-root, `--path`,
+`--command`, in-tree quality floor) without requiring further detector
+expansion before the next utility; pathaudit remains unreleased and sysdiff
+smoke does not cover it. First vertical slice: `permguard [--] PATH...`
+explicit-root permission scanner (closed taxonomy including writability,
+`UNSAFE_OWNER`, `SETUID`/`SETGID`, `STICKY`; no recursion, no PATH read, no
+remediation). Review checks were plan-evidence only (`compileall` on
+`tests/test_pathaudit.py`, `git tag -l` → `v0.1.0`, `wc -l src/pathaudit.c`
+→ 1849, taxonomy grep); this handoff does not claim permguard implementation,
+a pathaudit/sysdiff release, or that smoke exercised the evaluation.
+
+## What's Happening Now
+
+Recorded the reviewed next-utility selection into AgentFlow without
+implementing code. Next executable action: author and launch a governed
+playbook to bootstrap the `permguard` explicit-root vertical slice
+(`docs/permguard-contract.md`, `src/permguard.c`, `man/permguard.1`,
+`tests/test_permguard.py`, Makefile wiring) under existing strict C/quality
+gates. Keep evaluation Low findings visible; keep prior pathaudit Medium/Low
+and sysdiff packaging Medium backlogs visible as ordinary repair, not
+blockers for starting permguard. Do not schedule pathaudit-only polish or
+renewed sysdiff release work; do not claim pathaudit or permguard released.
+Runs root: `/home/lee/projects/linux-utilities-agent-orch-runs`.
+
+## Prior snapshot — Detect unsafe ownership of PATH directories
+
 Governed run `50c0b4936d50` (playbook
 `template_repair_before_review_feature_delivery`) delivered Detect unsafe
 ownership of PATH directories for `pathaudit --path` and
@@ -33,22 +65,3 @@ self-skips (no distinct foreign UID / unprivileged `chown`, oversized-
 PATH env rejection), not failures. This does **not** claim that
 `pathaudit` is released or that the sysdiff smoke oracle directly
 exercises directory-ownership `--path` / `--command` behavior.
-
-## What's Happening Now
-
-Handoff after run `50c0b4936d50`: Detect unsafe ownership of PATH
-directories is documented in AgentFlow, smoke-gated, and independently
-reviewed with verdict `pass` (one Low formal finding). Remaining
-non-blocking risk from this review: Low `path-dir-ownership-1` (O(N²)
-ownership-finding dedup under a crafted all-foreign-owned PATH). Prior
-Medium pathaudit-shadow-1 and Low pathaudit-shadow-2/3, Low PA-W1/PA-W2,
-Low nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, PA-WP-1–PA-WP-4,
-bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff Medium packaging
-backlogs remain separately visible and were not closed by this review.
-Smallest next genuine capability work: Detect writable ancestors of
-PATH directories (bounded writability walk of parent realpaths, parallel
-to the ownership ancestor walk just delivered). Keep Low
-`path-dir-ownership-1` visible; optional Medium pathaudit-shadow-1 repair
-remains available without claiming release or that the sysdiff smoke
-oracle covers directory-ownership `--path` / `--command` behavior. Runs
-root: `/home/lee/projects/linux-utilities-agent-orch-runs`.

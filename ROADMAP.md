@@ -14,6 +14,22 @@ packages) remains deferred until source-first distribution is no longer
 sufficient. Do not schedule live capture, networking, or persistence into a
 patch release of 0.1.x without a new approved decision record.
 
+## Next Utility Evaluation
+
+Roadmap after reviewed Future Mission Discovery (plan
+`plans/next-linux-utility-evaluation.md`; verdict `pass` with two Low
+findings): pathaudit is at its v1 capability-completion boundary
+(explicit-root, `--path`, `--command`, in-tree quality floor) and should
+not grow near-duplicate detectors before suite breadth improves. Chosen
+mission: bootstrap `permguard` as the third utility. First vertical
+slice: explicit-root permission scanner only—no recursion, no PATH mode,
+no remediation, and no packaging/release claim for permguard or
+pathaudit. `sysdiff` already has tag `v0.1.0`; do not renew release-
+candidate work for it as the next mission. Next executable action:
+governed permguard vertical-slice bootstrap under existing Make quality
+gates. This roadmap update records selection only; it does not claim a
+utility was implemented or released.
+
 ## Post-Release Ideas
 
 - Optional reversible or structured changed-line encoding if consumers need to

@@ -1,5 +1,27 @@
 # Result Review
 
+## Next Utility Evaluation
+
+Future Mission Discovery plan
+`plans/next-linux-utility-evaluation.md` (2026-07-26) was independently
+reviewed in `code-reviews/review-next-linux-utility-evaluation.md` /
+`.verdict.json` with verdict `pass` (0 Critical/High/Medium; 2 Low:
+`permguard-writability-overlap`, `first-slice-scope-breadth`). Chosen
+mission: bootstrap `permguard` as the third suite utility. Pathaudit
+completion boundary: v1 capability-complete (explicit-root, `--path`,
+`--command`, in-tree quality floor); further detector expansion is not
+required before starting the next utility; pathaudit remains unreleased
+and is not covered by the sysdiff smoke oracle. First vertical slice:
+explicit-root `permguard [--] PATH...` with a closed `stat`-shaped
+taxonomy (writability, ownership, setuid/setgid, sticky); no recursion,
+PATH read, remediation, or release claim. Review checks were
+plan-evidence only (`compileall`, `git tag -l`, `wc -l`, taxonomy grep)—
+not product smoke for a new binary. Unresolved: those two Low findings
+plus prior pathaudit/sysdiff Medium/Low backlogs kept visible as ordinary
+repair. Next executable action: governed bootstrap of the permguard
+vertical slice. This selection handoff does not implement or release a
+utility.
+
 ## Detect unsafe ownership of PATH directories
 
 Governed run `50c0b4936d50` (playbook
