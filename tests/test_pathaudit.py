@@ -52,7 +52,10 @@ adversarial `PATH` shapes already supported by the utility: empty components,
 nonexistent directories, duplicate entries, and deterministic finding order.
 Fixtures plant attacker-controlled executable-looking files that would leave a
 side-effect marker if executed; the scanner must classify PATH components
-without ever running those plants.
+without ever running those plants. The same corpus also pins that hostile PATH
+component text carrying control characters and terminal-escape sequences reaches
+stdout findings and stderr diagnostics only in quote-escaped printable form:
+single-line, unambiguous, and free of raw terminal-control effects.
 """
 
 from __future__ import annotations
@@ -3755,6 +3758,12 @@ def test_shadowed_line_helper_contract():
 # files whose bodies would create a marker file if ever executed; after each
 # scan the marker must remain absent so coverage cannot accidentally run
 # fixture content.
+#
+# Terminal-diagnostic pins additionally feed PATH components that embed LF,
+# TAB, ESC/CSI sequences, non-UTF-8 bytes, quotes, and forged diagnostic tokens
+# through run_pathaudit_path_mode, and assert stdout findings / stderr
+# diagnostics stay quote-escaped, single-line, unambiguous, and free of raw
+# terminal-control bytes.
 # ---------------------------------------------------------------------------
 
 
@@ -3996,6 +4005,132 @@ def test_hostile_path_shadow_observation_does_not_execute_attacker_plants(
     assert result.stdout.count(b"SHADOWED\t") == 1
     assert result.stdout.count(b"EMPTY_ROOT\t") == 2
     assert result.stdout.count(b"MISSING_ROOT\t") == 1
+
+
+def test_hostile_path_control_and_csi_bytes_escaped_in_stdout_findings(
+    pathaudit_bin, tmp_path
+):
+    """Hostile PATH component text must not inject raw terminal controls on stdout.
+
+    Embeds LF (forge a second finding line), TAB (forge fields), ESC/CSI clear
+    and SGR sequences (raw terminal effects), a forged WORLD_WRITABLE token,
+    non-UTF-8 0xFF, quote, and backslash inside one missing absolute PATH
+    component. Escaping must keep a single unambiguous MISSING_ROOT record.
+    """
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    # Absolute so the component is not also RELATIVE_ROOT; missing so the
+    # finding root is the hostile PATH text itself (no filesystem rename).
+    hostile = os.fsdecode(
+        b'/no-such-\n\tWORLD_WRITABLE\t"forged"-\x1b[2J-\x1b[0m-\xff-"-\\-comp'
+    )
+    path_value = f"{hostile}:{private.resolve()}"
+
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("MISSING_ROOT", hostile)])
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert b"\x1b" not in result.stdout
+    assert b"\xff" not in result.stdout
+    assert b"\\x1B" in result.stdout
+    assert b"\\xFF" in result.stdout
+    assert b"\\x0A" in result.stdout
+    assert b"\\x09" in result.stdout
+    # One structural CODE<TAB> separator; operand TAB/LF must be escaped.
+    assert result.stdout.count(b"\t") == 1
+    assert result.stdout.count(b"\n") == 1
+    assert result.stdout.endswith(b"\n")
+    # Unescaped LF would split the record and forge a second finding line.
+    assert b"\nWORLD_WRITABLE" not in result.stdout
+    assert escape_root(private.resolve()) not in result.stdout
+
+
+def test_hostile_path_writable_dir_with_esc_name_escapes_terminal_bytes(
+    pathaudit_bin, tmp_path
+):
+    """Existing PATH dirs whose names carry ESC/CSI still emit escaped findings."""
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    # CSI SGR red + reset around printable text; also LF/TAB/0xFF metacharacters.
+    hostile_name = os.fsdecode(b'dir-\x1b[31mRED\x1b[0m-\n\t-\xff-"-\\-name')
+    hostile_dir = tmp_path / hostile_name
+    hostile_dir.mkdir()
+    os.chmod(hostile_dir, MODE_WORLD_WRITABLE)
+    root = str(hostile_dir.resolve())
+
+    result = run_pathaudit_path_mode(pathaudit_bin, root)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_stdout([("WORLD_WRITABLE", root)])
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert b"\x1b" not in result.stdout
+    assert b"\xff" not in result.stdout
+    assert b"\\x1B" in result.stdout
+    assert b"\\xFF" in result.stdout
+    assert b"\\x0A" in result.stdout
+    assert b"\\x09" in result.stdout
+    assert result.stdout.count(b"\t") == 1
+    assert result.stdout.count(b"\n") == 1
+    assert result.stdout.endswith(b"\n")
+    # Printable CSI tail stays visible only inside the escaped quotes.
+    assert b"[31mRED" in result.stdout
+    assert b"[0m" in result.stdout
+
+
+def test_hostile_path_inspection_error_escapes_control_component_on_stderr(
+    pathaudit_bin, tmp_path
+):
+    """PATH-mode INSPECTION_ERROR diagnostics must escape hostile component text.
+
+    A symlink-loop PATH component carrying LF, TAB, ESC/CSI, forged
+    `pathaudit: FORGED`, non-UTF-8, quote, and backslash must yield one
+    reject-closed stderr line with empty stdout — never raw terminal controls
+    and never a forged second diagnostic line.
+    """
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    hostile_name = os.fsdecode(
+        b'loop-\n\tpathaudit: FORGED-\x1b[2J-\x1b[0m-\xff-"-\\-a'
+    )
+    partner_name = os.fsdecode(
+        b'loop-\n\tpathaudit: FORGED-\x1b[2J-\x1b[0m-\xff-"-\\-b'
+    )
+    early_loop = tmp_path / hostile_name
+    partner = tmp_path / partner_name
+    early_loop.symlink_to(partner)
+    partner.symlink_to(early_loop)
+    # absolute() keeps the hostile operand text; resolve() would raise on ELOOP.
+    component = str(early_loop.absolute())
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    path_value = f"{component}:{private.resolve()}"
+
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+    expected = diagnostic_lines(reason, component)
+    assert result.stderr == expected
+    assert_no_raw_unsafe_bytes(result.stderr)
+    assert b"\x1b" not in result.stderr
+    assert b"\xff" not in result.stderr
+    assert b"\\x1B" in result.stderr
+    assert b"\\xFF" in result.stderr
+    assert b"\\x0A" in result.stderr
+    assert b"\\x09" in result.stderr
+    # stderr diagnostics have no structural TAB; operand TAB must be escaped.
+    assert result.stderr.count(b"\t") == 0
+    # Single structural LF terminator only — no raw LF from the PATH component.
+    assert result.stderr.count(b"\n") == 1
+    assert result.stderr.endswith(b"\n")
+    assert b"\npathaudit:" not in result.stderr
+    assert b"\npathaudit: FORGED" not in result.stderr
+    assert b"pathaudit: FORGED" in result.stderr
+    assert result.stderr.startswith(b"pathaudit: INSPECTION_ERROR_")
+    # CSI clear-screen / SGR tails remain printable inside the quotes only.
+    assert b"[2J" in result.stderr
+    assert b"[0m" in result.stderr
 
 
 # ---------------------------------------------------------------------------

@@ -394,6 +394,98 @@ static void path_components_free(struct PathComponents *components) {
   components->count = 0;
 }
 
+/*
+ * PATH splits on every ASCII ':'. A real directory name may itself contain
+ * ':', so a single filesystem operand can be shattered into ENOENT fragments
+ * that never reach classify_root. When rejoining consecutive non-empty
+ * fragments with ':' yields a definitive non-ENOENT lookup failure (ELOOP,
+ * EACCES, ENOTDIR, ...), restore those separators so the inspection diagnostic
+ * names — and quote-escapes — the original hostile operand text. Successful
+ * lookups and pure-ENOENT joins stay split to preserve ordinary PATH semantics.
+ * Empty fields are never crossed. Mutates owned storage only.
+ */
+static void coalesce_inspection_path_fragments(struct PathComponents *components) {
+  struct Root *roots = components->roots;
+  size_t n = components->count;
+  size_t out = 0;
+  size_t i = 0;
+
+  while (i < n) {
+    if (roots[i].len == 0) {
+      roots[out] = roots[i];
+      roots[out].index = out;
+      out++;
+      i++;
+      continue;
+    }
+
+    struct stat st;
+    errno = 0;
+    if (stat(roots[i].text, &st) == 0 || errno != ENOENT) {
+      roots[out] = roots[i];
+      roots[out].index = out;
+      out++;
+      i++;
+      continue;
+    }
+
+    size_t orig_len = roots[i].len;
+    size_t last_restored = i;
+    bool accepted = false;
+
+    for (size_t j = i + 1; j < n; j++) {
+      if (roots[j].len == 0) {
+        break;
+      }
+
+      /* Boundary byte is the NUL that replaced the original ':'. */
+      char *sep = (char *)roots[j].text - 1;
+      size_t merged_len =
+          (size_t)((roots[j].text + roots[j].len) - roots[i].text);
+      if (merged_len > PATHAUDIT_MAX_ROOT_LENGTH) {
+        break;
+      }
+
+      *sep = ':';
+      last_restored = j;
+      roots[i].len = merged_len;
+
+      errno = 0;
+      if (stat(roots[i].text, &st) == 0) {
+        /* Existing path: keep ordinary colon-split semantics. */
+        break;
+      }
+      if (errno != ENOENT) {
+        accepted = true;
+        break;
+      }
+    }
+
+    if (!accepted) {
+      for (size_t j = i + 1; j <= last_restored; j++) {
+        if (roots[j].len == 0) {
+          break;
+        }
+        *((char *)roots[j].text - 1) = '\0';
+      }
+      roots[i].len = orig_len;
+      roots[out] = roots[i];
+      roots[out].index = out;
+      out++;
+      i++;
+      continue;
+    }
+
+    roots[out].text = roots[i].text;
+    roots[out].len = roots[i].len;
+    roots[out].index = out;
+    out++;
+    i = last_restored + 1;
+  }
+
+  components->count = out;
+}
+
 static int compare_roots_by_bytes_then_index(const void *left,
                                              const void *right) {
   const struct Root *a = left;
@@ -625,7 +717,10 @@ static int handle_version(void) {
  * path_storage.
  *
  * Returns 0 on success. On failure, emits a diagnostic and returns 2 with
- * *components left zeroed / freed.
+ * *components left zeroed / freed. On success, may rejoin colon-shattered
+ * fragments that fail inspection only as a whole (see
+ * coalesce_inspection_path_fragments) so stderr diagnostics can quote-escape
+ * the original operand text.
  */
 static int path_components_load(struct PathComponents *components) {
   components->storage = NULL;
@@ -728,6 +823,7 @@ static int path_components_load(struct PathComponents *components) {
   components->storage = path_storage;
   components->roots = roots;
   components->count = root_count;
+  coalesce_inspection_path_fragments(components);
   return 0;
 }
 
