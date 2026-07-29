@@ -2557,18 +2557,20 @@ def _assert_temp_outside_workspace_with_cleanup(recipe: str, target: str) -> Non
 
 
 def test_makefile_test_suite_scrubs_inherited_pathaudit_routing():
-    """PAC-M1: make -n test-suite must scrub ambient PATHAUDIT routing."""
+    """PAC-M1: make -n test-suite must scrub ambient PATHAUDIT / PERMGUARD routing."""
 
     if shutil.which("make") is None:
         pytest.skip("GNU make required for Makefile seam checks")
 
     makefile = _read_makefile()
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in makefile
     assert 'SYSDIFF_BIN="$(CURDIR)/$(BIN)"' in makefile
 
     dry = _make_dry_run("test-suite")
     assert dry.returncode == 0, dry.stderr + dry.stdout
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in dry.stdout
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in dry.stdout
     assert "SYSDIFF_BIN=" in dry.stdout
 
 
@@ -2646,6 +2648,8 @@ def test_makefile_release_and_distcheck_require_pathaudit_members():
     ):
         assert required in makefile
     # Release staging required-file loop must name pathaudit members explicitly.
+    # permguard remains outside the published release/dist required-member loops
+    # for this unreleased bootstrap (PG-NG-3); quality/man/sanitize surfaces cover it.
     release_idx = makefile.index("error: release staging missing required product file")
     release_window = makefile[max(0, release_idx - 500) : release_idx]
     assert "src/pathaudit.c" in release_window
@@ -2938,9 +2942,13 @@ def test_makefile_pathaudit_quality_targets_preserve_existing_make_surface():
         assert "PATHAUDIT_SRC" in recipe or "src/pathaudit.c" in recipe, (
             f"{name} must keep compiling pathaudit"
         )
+        assert "PERMGUARD_SRC" in recipe or "src/permguard.c" in recipe, (
+            f"{name} must keep compiling permguard"
+        )
         assert "mktemp" in recipe
         assert "trap" in recipe
         assert "PATHAUDIT_BIN" in recipe
+        assert "PERMGUARD_BIN" in recipe
 
     # Non-writing default pathaudit recipe remains (no workspace binary).
     pathaudit_recipe = _makefile_target_block(makefile, "pathaudit")
@@ -2948,13 +2956,21 @@ def test_makefile_pathaudit_quality_targets_preserve_existing_make_surface():
     assert "trap" in pathaudit_recipe
     assert "build/pathaudit" not in pathaudit_recipe
 
+    # Non-writing default permguard recipe remains (no workspace binary).
+    permguard_recipe = _makefile_target_block(makefile, "permguard")
+    assert "mktemp" in permguard_recipe
+    assert "trap" in permguard_recipe
+    assert "build/permguard" not in permguard_recipe
+
     # Existing scrub / routing contracts stay intact.
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in makefile
     test_suite = _makefile_target_block(makefile, "test-suite")
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in test_suite
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in test_suite
 
     # Dry-run pins: existing targets still expand without error.
-    for target in ("pathaudit", "test-asan", "test-valgrind", "test-suite"):
+    for target in ("pathaudit", "permguard", "test-asan", "test-valgrind", "test-suite"):
         dry = _make_dry_run(target)
         assert dry.returncode == 0, f"{target}: {dry.stderr + dry.stdout}"
 

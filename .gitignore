@@ -11,6 +11,8 @@ build/
 .agent-orch-scratch/
 .agent-orch/user-smoke/
 artifacts/
+# Syncthing/macOS AppleDouble sidecars are never product artifacts.
+._*
 __pycache__/
 */__pycache__/
 .pytest_cache/

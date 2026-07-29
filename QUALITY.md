@@ -6,27 +6,29 @@ runs the complete quality floor in this order:
 
 1. `make clean`
 2. `make gcc-strict` — GCC `-std=c17 -Wall -Wextra -Wpedantic -Werror -O2`
-   for `src/sysdiff.c` and `src/pathaudit.c` (mktemp binaries only)
+   for all three C sources (mktemp binaries only)
 3. `make clang-strict` — Clang with the same strict flags (full link build;
    standalone `clang-syntax` exists but is not part of `quality`)
-4. `make format-check` — `clang-format --dry-run --Werror` on both C sources
+4. `make format-check` — `clang-format --dry-run --Werror` on all C sources
 5. `make clang-tidy-check` — selected checks with `--warnings-as-errors='*'`
 6. `make cppcheck-check` — `--enable=all --error-exitcode=1`
 7. `make clang-analyzer-check` — `clang --analyze` with `-analyzer-werror`
-8. `make man-check` — groff `-man -Tutf8 -ww -z` for `man/sysdiff.1` and
-   `man/pathaudit.1`, fail on nonzero exit or any warning
+8. `make man-check` — groff `-man -Tutf8 -ww -z` for all three section-1
+   manuals, fail on nonzero exit or any warning
 9. `make test-suite` — shell suite plus `python3 -m pytest tests/ -q` (unit,
-   integration, regression, fixture, malformed-input fuzz, pathaudit contract,
-   and benchmark contract modules); pins `SYSDIFF_BIN` to `build/sysdiff` and
-   scrubs ambient `PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND`
+   integration, regression, fixture, malformed-input fuzz, pathaudit and
+   permguard contracts, and benchmark contract modules); pins `SYSDIFF_BIN`
+   to `build/sysdiff` and
+   scrubs ambient `PATHAUDIT_*` and `PERMGUARD_*` binary-routing variables
 10. `make benchmark-check` — `scripts/benchmark_sysdiff.py` with a temp-dir JSON
     report (thresholds must pass; does not write `artifacts/`)
 11. `make test-sanitize` — AddressSanitizer then UndefinedBehaviorSanitizer
-    (Clang instrumented binaries for sysdiff and pathaudit; leak-fatal ASan;
+    (Clang instrumented binaries for all three utilities; leak-fatal ASan;
     halt-on-error UBSan)
 12. `make test-valgrind` — GCC debug rebuild under Valgrind memcheck with
     `--error-exitcode=99`, `SYSDIFF_UNDER_VALGRIND=1`, and
-    `PATHAUDIT_UNDER_VALGRIND=1` (see Valgrind Coverage)
+    `PATHAUDIT_UNDER_VALGRIND=1`, and `PERMGUARD_UNDER_VALGRIND=1`
+    (see Valgrind Coverage)
 
 Pathaudit hermetic-gate regressions (PAC-M1 through PAC-M4) are pinned in the
 pytest suite: **PAC-M1** `make test-suite` scrubs ambient `PATHAUDIT_*`
@@ -40,9 +42,10 @@ allowlist-forward sanitizer options into the sealed child env
 Standalone `make benchmark` still writes
 `artifacts/performance/sysdiff-benchmark.json` for local inspection. Default
 `make` / `make sysdiff` builds `build/sysdiff` with
-`-std=c17 -Wall -Wextra -Wpedantic -Werror -O2`. `make pathaudit` compiles
-`src/pathaudit.c` under mktemp only (no workspace binary). Hosts running the
-full gate need both `gcc` and `clang`, plus `clang-format`, `clang-tidy`,
+`-std=c17 -Wall -Wextra -Wpedantic -Werror -O2`. `make pathaudit` and
+`make permguard` compile their source under secure temporary directories
+without leaving workspace binaries. Hosts running the full gate need both
+`gcc` and `clang`, plus `clang-format`, `clang-tidy`,
 `cppcheck`, `groff`, `valgrind`, `python3`, and `pytest`. Ubuntu CI installs the
 required tools (including groff) and runs exactly `make quality`. AGENTS.md
 lists the intended release-quality toolset; treat Makefile targets as the
@@ -70,9 +73,9 @@ floor with this cycle's fresh subset evidence.
 
 ## Valgrind Coverage
 
-`make test-valgrind` rebuilds `sysdiff` and `pathaudit` with GCC debug flags
-into mktemp binaries, sets `SYSDIFF_BIN` / `PATHAUDIT_BIN` to those paths and
-`SYSDIFF_UNDER_VALGRIND=1` / `PATHAUDIT_UNDER_VALGRIND=1`, then runs
+`make test-valgrind` rebuilds all three utilities with GCC debug flags into
+temporary binaries, sets their `*_BIN` and `*_UNDER_VALGRIND` routing
+variables, then runs
 `./tests/test_sysdiff.sh` followed by `python3 -m pytest tests/ -q`.
 Memcheck is applied only where harness helpers honor the flag.
 

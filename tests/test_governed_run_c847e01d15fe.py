@@ -199,12 +199,13 @@ def test_c847e01d15fe_make_release_checksum_verifies_beside_archive():
 
 
 def test_make_test_suite_scrubs_pathaudit_routing_like_distcheck():
-    """PAC-M1: ambient PATHAUDIT_BIN must not redirect make test.
+    """PAC-M1: ambient PATHAUDIT_BIN / PERMGUARD_BIN must not redirect make test.
 
-    distcheck already uses ``env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND``.
-    Ordinary ``make test`` / ``test-suite`` must apply the same scrub so a
-    caller's shell (or an outer memory-gate export) cannot silently re-point
-    the contract suite at a stale binary.
+    distcheck already uses ``env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND``
+    and ``-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND``. Ordinary
+    ``make test`` / ``test-suite`` must apply the same scrub so a caller's
+    shell (or an outer memory-gate export) cannot silently re-point the
+    contract suites at stale binaries.
     """
 
     if shutil.which("make") is None:
@@ -212,8 +213,10 @@ def test_make_test_suite_scrubs_pathaudit_routing_like_distcheck():
 
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in makefile
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in makefile
     # distcheck and test-suite both carry the scrub.
     assert makefile.count("PATHAUDIT_BIN") >= 2
+    assert makefile.count("PERMGUARD_BIN") >= 2
 
     dry = subprocess.run(
         ["make", "-C", str(ROOT), "-n", "test-suite"],
@@ -223,6 +226,7 @@ def test_make_test_suite_scrubs_pathaudit_routing_like_distcheck():
     )
     assert dry.returncode == 0, dry.stderr + dry.stdout
     assert "env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND" in dry.stdout
+    assert "-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND" in dry.stdout
 
 
 def test_make_release_required_members_include_pathaudit():

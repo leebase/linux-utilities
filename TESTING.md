@@ -13,7 +13,9 @@ of values/paths/commands, closed-stdout `EPIPE` behavior, and snapshot
 byte-limit boundaries. `tests/test_pathaudit.py` encodes the pathaudit contract
 and compiles `src/pathaudit.c` into a pytest-owned temporary directory (or
 honors `PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND` when memory gates supply
-them). Smoke (`scripts/smoke.sh` via `make test`, plus
+them). `tests/test_permguard.py` does the same for `src/permguard.c` and
+honors `PERMGUARD_BIN` / `PERMGUARD_UNDER_VALGRIND`. Smoke
+(`scripts/smoke.sh` via `make test`, plus
 Agent-Orch `tests/smoke_manifest.json`) exercises the same functional path
 without special privileges. Dynamic analysis is separate: ASan/UBSan rebuild
 and re-run the suite; Valgrind wraps the shell suite and `tests/test_sysdiff.py`
@@ -50,9 +52,10 @@ from `tests/test_sysdiff.py` and raise timeouts when
 
 ## Running the Tests
 
-Build the binary first with `make` (or `make sysdiff`); output is
-`build/sysdiff`. `make pathaudit` compiles pathaudit under mktemp only and does
-not write a workspace binary. Functional checks:
+Build `sysdiff` first with `make` (or `make sysdiff`); output is
+`build/sysdiff`. `make pathaudit` and `make permguard` compile their preview
+sources under temporary directories and do not write workspace binaries.
+Functional checks:
 
 ```sh
 make test
@@ -63,9 +66,9 @@ bash tests/test_sysdiff_fixture.sh
 
 `make test` runs `test-suite`: `tests/test_sysdiff.sh` with `SYSDIFF_BIN`
 pinned to `build/sysdiff`, then pytest with that same pin and with ambient
-`PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND` scrubbed so a stale override
-cannot redirect the pathaudit contract suite. Memory gates still set those
-variables deliberately on their own pytest invocations. For the full
+`PATHAUDIT_*` and `PERMGUARD_*` routing variables scrubbed so stale overrides
+cannot redirect either preview utility's contract suite. Memory gates still
+set those variables deliberately on their own pytest invocations. For the full
 declared release gate (compilers, formatters, static analysis, man-check,
 tests, sanitizers, Valgrind):
 
@@ -88,15 +91,16 @@ path form without rewriting the live `artifacts/` deliverable;
 Individual analysis targets include `make sanitizer-test`, `make asan-test`,
 `make ubsan-test`, and `make valgrind-test` (the Valgrind target cleans and
 rebuilds with GCC first, then sets `SYSDIFF_UNDER_VALGRIND=1` and
-`PATHAUDIT_UNDER_VALGRIND=1`). Override the binary with
+`PATHAUDIT_UNDER_VALGRIND=1` and `PERMGUARD_UNDER_VALGRIND=1`). Override the binary with
 `SYSDIFF_BIN=/path/to/sysdiff` when running shell fixtures directly, or
-`PATHAUDIT_BIN=/path/to/pathaudit` for pathaudit pytest. View man pages with
-`man -l man/sysdiff.1` and `man -l man/pathaudit.1`; lint them with
+`PATHAUDIT_BIN=/path/to/pathaudit` / `PERMGUARD_BIN=/path/to/permguard` for
+focused pytest. View man pages with `man -l man/sysdiff.1`,
+`man -l man/pathaudit.1`, and `man -l man/permguard.1`; lint them with
 `make man-check`.
 Do not treat this documentation file as proof that those commands were executed
 in the current documentation-writing step; run them locally or in CI when
 verifying a change. Set `CC` to select the compiler used by the default build
-and by pytest’s `sysdiff_bin` / `pathaudit_bin` fixtures. Maintainers: keep
+and by pytest’s per-utility binary fixtures. Maintainers: keep
 shell goldens, parametrize cases, and man-page EXAMPLES aligned when changing
 output or limits; ownership and cleanup expectations for parse buffers are
 documented in `architecture.md`.

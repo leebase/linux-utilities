@@ -5,14 +5,17 @@ SHELL := /bin/bash
 
 SRC := src/sysdiff.c
 PATHAUDIT_SRC := src/pathaudit.c
+PERMGUARD_SRC := src/permguard.c
 # Ordinary product binary. Keep under build/ so .gitignore covers it; do not
 # emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
-# pathaudit has no workspace binary target; quality recipes compile it under mktemp.
+# pathaudit and permguard have no workspace binary target; quality recipes
+# compile them under mktemp.
 BIN := build/sysdiff
 MANPAGE := man/sysdiff.1
 PATHAUDIT_MANPAGE := man/pathaudit.1
-ALL_SRCS := $(SRC) $(PATHAUDIT_SRC)
-ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE)
+PERMGUARD_MANPAGE := man/permguard.1
+ALL_SRCS := $(SRC) $(PATHAUDIT_SRC) $(PERMGUARD_SRC)
+ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE) $(PERMGUARD_MANPAGE)
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
 ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
@@ -76,13 +79,14 @@ RELEASE_PATHSPECS := \
 	tests \
 	scripts
 
-.PHONY: all sysdiff pathaudit test check clean quality make-quality test-suite \
-	test-shell install uninstall dist distcheck release \
+.PHONY: all sysdiff pathaudit permguard test check clean quality make-quality \
+	test-suite test-shell install uninstall dist distcheck release \
 	gcc-strict clang-strict clang-syntax format-check clang-tidy-check \
 	cppcheck-check clang-analyzer-check \
 	man-check sanitizer-test asan-test ubsan-test valgrind-test \
 	test-sanitize test-asan test-ubsan test-valgrind \
 	pathaudit-sanitize pathaudit-valgrind \
+	permguard-sanitize permguard-valgrind \
 	benchmark benchmark-check
 
 all: $(BIN)
@@ -101,6 +105,17 @@ pathaudit:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	$(CC) $(CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
 
+# Non-writing permguard recipe: compile/link under a named /tmp workdir only,
+# then discard. Does not create build/permguard or a top-level ./permguard.
+permguard:
+	@set -e; \
+	workdir=$$(mktemp -d /tmp/permguard-build.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	$(CC) $(CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+
+# install/uninstall remain sysdiff-only in this slice (PG-NG-3: packaging /
+# installation outside the vertical slice). pathaudit and permguard stay
+# compile-verified via quality/sanitize recipes without shipping install paths.
 install: $(BIN)
 	install -d "$(DESTDIR)$(bindir)"
 	install -d "$(DESTDIR)$(man1dir)"
@@ -137,10 +152,11 @@ gcc-strict:
 		printf 'error: gcc is required for make gcc-strict\n' >&2; \
 		exit 1; \
 	fi; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-gcc-strict.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
-	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
+	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
+	gcc $(STRICT_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 clang-strict:
 	@set -e; \
@@ -148,14 +164,16 @@ clang-strict:
 		printf 'error: clang is required for make clang-strict\n' >&2; \
 		exit 1; \
 	fi; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-clang-strict.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	clang $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
-	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
+	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
+	clang $(STRICT_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 clang-syntax:
 	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
 	clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC)
+	clang $(STRICT_WARNINGS) -fsyntax-only $(PERMGUARD_SRC)
 
 format-check:
 	clang-format --dry-run --Werror $(ALL_SRCS)
@@ -163,6 +181,7 @@ format-check:
 clang-tidy-check:
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS)
+	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS)
 
 cppcheck-check:
 	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
@@ -175,15 +194,17 @@ clang-analyzer-check:
 		printf 'error: clang is required for make clang-analyzer-check\n' >&2; \
 		exit 1; \
 	fi; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-analyzer.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
 		-Xclang -analyzer-output=text -o "$$workdir/sysdiff" $(SRC); \
 	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
-		-Xclang -analyzer-output=text -o "$$workdir/pathaudit" $(PATHAUDIT_SRC)
+		-Xclang -analyzer-output=text -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
+	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
+		-Xclang -analyzer-output=text -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 man-check:
-	@warnfile=$$(mktemp) || exit 1; \
+	@warnfile=$$(mktemp /tmp/permguard-manwarn.XXXXXXXXXX) || exit 1; \
 	status=0; \
 	for manpage in $(ALL_MANPAGES); do \
 		if ! groff -man -Tutf8 -ww -z "$$manpage" 2>"$$warnfile"; then \
@@ -201,9 +222,10 @@ man-check:
 
 # Pin the ordinary product binary so an inherited SYSDIFF_BIN (e.g. from an
 # outer sanitizer/Valgrind/pytest invocation) cannot redirect or skip packaging.
-# Scrub PATHAUDIT_BIN / PATHAUDIT_UNDER_VALGRIND on the pytest line so an
-# inherited override (or a nested extract under an outer memory gate) cannot
-# redirect the pathaudit contract suite away from compiling src/pathaudit.c.
+# Scrub PATHAUDIT_BIN / PATHAUDIT_UNDER_VALGRIND / PERMGUARD_BIN /
+# PERMGUARD_UNDER_VALGRIND on the pytest line so an inherited override (or a
+# nested extract under an outer memory gate) cannot redirect those contract
+# suites away from compiling their sources.
 # Leave test-asan / test-ubsan / test-valgrind alone; those set the vars
 # deliberately on their inlined pytest invocations.
 test-shell: $(BIN)
@@ -212,6 +234,7 @@ test-shell: $(BIN)
 test-suite: $(BIN)
 	$(MAKE) test-shell
 	env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
+		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND \
 		SYSDIFF_BIN="$(CURDIR)/$(BIN)" $(PYTEST_NO_CACHE) tests/ -q
 
 sanitizer-test: test-sanitize
@@ -227,10 +250,11 @@ test-sanitize: test-asan test-ubsan
 test-asan:
 	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
 	@set -eu; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-asan.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-asan"; \
 	pathaudit_bin="$$workdir/pathaudit-asan"; \
+	permguard_bin="$$workdir/permguard-asan"; \
 	if ! clang $(ASAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: AddressSanitizer build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
@@ -239,13 +263,17 @@ test-asan:
 		printf 'error: AddressSanitizer pathaudit build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(ASAN_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+		printf 'error: AddressSanitizer permguard build failed (clang or ASan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
-		PATHAUDIT_BIN="$$pathaudit_bin" \
+		PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
-			PATHAUDIT_BIN="$$pathaudit_bin" \
+			PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -253,10 +281,11 @@ test-asan:
 test-ubsan:
 	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
 	@set -eu; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-ubsan.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-ubsan"; \
 	pathaudit_bin="$$workdir/pathaudit-ubsan"; \
+	permguard_bin="$$workdir/permguard-ubsan"; \
 	if ! clang $(UBSAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
@@ -265,13 +294,17 @@ test-ubsan:
 		printf 'error: UndefinedBehaviorSanitizer pathaudit build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(UBSAN_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+		printf 'error: UndefinedBehaviorSanitizer permguard build failed (clang or UBSan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
-		PATHAUDIT_BIN="$$pathaudit_bin" \
+		PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
-			PATHAUDIT_BIN="$$pathaudit_bin" \
+			PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -279,10 +312,11 @@ test-ubsan:
 test-valgrind:
 	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind
 	@set -eu; \
-	workdir=$$(mktemp -d) || exit 1; \
+	workdir=$$(mktemp -d /tmp/permguard-valgrind-suite.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/sysdiff-valgrind"; \
 	pathaudit_bin="$$workdir/pathaudit-valgrind"; \
+	permguard_bin="$$workdir/permguard-valgrind"; \
 	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: Valgrind debug build failed\n' >&2; \
 		exit 1; \
@@ -291,13 +325,19 @@ test-valgrind:
 		printf 'error: Valgrind pathaudit debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! gcc $(VALGRIND_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+		printf 'error: Valgrind permguard debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
 		PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
+		PERMGUARD_BIN="$$permguard_bin" PERMGUARD_UNDER_VALGRIND=1 \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
 			PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
+			PERMGUARD_BIN="$$permguard_bin" PERMGUARD_UNDER_VALGRIND=1 \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -335,6 +375,47 @@ pathaudit-valgrind:
 	valgrind --quiet --error-exitcode=99 --leak-check=full \
 		--show-leak-kinds=all \
 		"$$tmpbin" --help >/dev/null
+
+# permguard-only ASan+UBSan gate: compile under a secure /tmp workdir, scan a
+# clean temporary operand (representative path; --help is also supported for
+# suite quality-floor probes), and remove the tree on every exit path. Does
+# not write build/permguard or a top-level ./permguard.
+permguard-sanitize:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/permguard-sanitize.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/permguard-sanitize"; \
+	fixture="$$workdir/clean"; \
+	if ! clang $(ASAN_CFLAGS) -fsanitize=undefined -o "$$tmpbin" $(PERMGUARD_SRC); then \
+		printf 'error: permguard AddressSanitizer/UBSan build failed (clang or sanitizer runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
+	: >"$$fixture"; \
+	chmod 600 "$$fixture"; \
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		"$$tmpbin" "$$fixture" >/dev/null
+
+# permguard-only Valgrind gate: separate non-sanitized debug binary under a
+# secure /tmp workdir, full leak checking with all leak kinds shown, nonzero
+# error-exitcode, representative clean-operand scan, and trap cleanup on exit.
+permguard-valgrind:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/permguard-valgrind.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/permguard-valgrind"; \
+	fixture="$$workdir/clean"; \
+	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(PERMGUARD_SRC); then \
+		printf 'error: permguard Valgrind debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
+	: >"$$fixture"; \
+	chmod 600 "$$fixture"; \
+	valgrind --quiet --error-exitcode=99 --leak-check=full \
+		--show-leak-kinds=all \
+		"$$tmpbin" "$$fixture" >/dev/null
 
 clean:
 	rm -rf build
@@ -590,6 +671,8 @@ distcheck:
 			exit 1; \
 			;; \
 	esac; \
-	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
-	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
+		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
+	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
+		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
 	printf 'distcheck: ok\n'
