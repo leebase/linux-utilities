@@ -99,6 +99,39 @@ list and individual targets.
 Security reports should follow [SECURITY.md](SECURITY.md). Contributions are
 welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## pathaudit
+
+`pathaudit` is a preview ISO C17 scanner with three exclusive forms:
+`pathaudit [--] ROOT...` (explicit roots; ignores `PATH`; ownership-blind),
+`pathaudit --path` (split `PATH` on `:`; shared hazards plus executable
+`SHADOWED` rows), and `pathaudit --command NAME` (one basename; PATH-ordered
+`MATCH` rows, never `SHADOWED`). Sole-argument `--help` / `--version` remain
+informational. Under `--path`, the first PATH-order executable realpath wins;
+each later distinct realpath emits one
+`SHADOWED<TAB>"COMMAND"<TAB>"WINNER"<TAB>"SHADOW"<LF>` row, and an exact
+`(command, winner, shadow)` tuple emits at most once. Shared findings,
+including directory and ancestor-chain `UNSAFE_OWNER` when the owner is
+neither UID 0 nor the invoking real UID from `getuid()`, precede all
+`SHADOWED` rows. Under `--path` that ownership walk applies to usable PATH
+directories; under `--command` it is gated by the same match-or-plant-risk
+rule as directory permission codes, and an empty PATH field may audit the
+cwd chain (`.`) under that gate (`--path` does not). Exits stay `0` (clean),
+`1` (hazard or unique shadow), and `2` (usage, unset `PATH`, limits,
+allocation, or stdout failure). See `docs/pathaudit.md` and `man/pathaudit.1`.
+
+### pathaudit Maintenance Repairs
+
+Candidate maintenance repairs for `pathaudit-shadow-1/2/3` keep the public CLI
+unchanged: retained winner/shadow realpaths use exact `strlen + 1` storage,
+winner lookup uses a bounded basename index, shadow duplicate checks use a
+bounded `(command, shadow)` index, and exact duplicate shadow tuples emit
+once (`PATH=early:late:late` → one `SHADOWED`, status `1`, empty stderr).
+Distinct later realpaths still each produce one row. Diagnostics such as
+`PATH_UNSET`, `INVALID_COMMAND`, `OUT_OF_MEMORY`, and `STDOUT_WRITE` remain
+stderr-only. Non-goals: no new modes, hazard codes, ownership policy,
+remediation, packaging, or pathaudit release claim. Failed run
+`6ca4cebc8527` is not treated as a passed delivery.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

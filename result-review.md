@@ -1,5 +1,94 @@
 # Result Review
 
+## pathaudit Governed Run `6ca4cebc8527` Recovery
+
+Governed recovery run `4ae7a820b0a3` (`repair_governed_run_6ca4cebc8527`)
+reconciled the dirty candidate pathaudit maintenance work left by failed run
+`6ca4cebc8527` (`pathaudit_maintenance_repairs`): right-sized retained
+`realpath` copies, a bounded basename winner index, and exact
+`(command, winner, shadow)` `SHADOWED` tuple uniqueness via a bounded
+`(command, shadow)` index. The recovery does **not** claim that failed run
+`6ca4cebc8527` passed; that origin run remains a failed, incomplete delivery
+whose dirty tree was repaired and freshly reviewed here.
+
+Exact verification by provenance: focused
+`python3 -m pytest tests/test_pathaudit.py -q -p no:cacheprovider` →
+151 passed, 15 skipped (review allowlisted check and step evidence; the 15
+skips are pre-existing host-capability skips). Step-5 static gates on
+`src/pathaudit.c` — GCC/Clang `-fsyntax-only`, clang-format `--dry-run
+--Werror`, clang-tidy, cppcheck, and Clang `--analyze` — all exited 0.
+Step-6 ASan+UBSan and Valgrind pathaudit routes each reported
+151 passed / 15 skipped. Step-7 complete suite recorded
+343 passed / 15 skipped under a scratch writable gitdir workaround for this
+host's read-only git common dir. Governed smoke
+(`artifacts/user-smoke/result.json`): `app_started: true`,
+`core_flow_completed: true`, `start_exit_code: 0`, `check_exit_code: 0`,
+empty `blocking_errors`; check.log pytest
+`340 passed, 18 skipped in 22.01s` through transitive `make test` (sysdiff
+oracle; not a dedicated pathaudit end-to-end flow). The independent review
+worker separately observed complete-suite
+`1 failed, 342 passed, 15 skipped` from
+`test_release_excludes_untracked_files` / `git worktree` EROFS and recorded
+that as Medium PA-6CA-4; closeout does not treat that environment note as a
+pathaudit product regression or as review-worker evidence that the
+complete-suite acceptance item was satisfied on that worker alone.
+
+Independent artifacts
+`code-reviews/review-pathaudit-governed-run-6ca4cebc8527.md` and
+`code-reviews/review-pathaudit-governed-run-6ca4cebc8527.verdict.json`
+record verdict `pass`: no Critical or High findings; Medium PA-6CA-4
+(environment/complete-suite note); Low PA-6CA-1 (duplicated winner/shadow
+index implementation), PA-6CA-2 (comment-only shadow-index seal before
+`qsort`), and PA-6CA-3 (no durable regression gate for quadratic/retention
+reverts; unexercised index-insert rollback). The review closes
+`pathaudit-shadow-1`, `pathaudit-shadow-2`, and `pathaudit-shadow-3` on
+fresh behavioral and ownership/complexity evidence. Unrelated backlogs stay
+open: permguard Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512;
+bootstrap Medium PA-M1/PA-M2 leftovers; pathaudit Lows outside the three
+closed shadow IDs; sysdiff packaging Mediums; planning-only `inodealias` /
+`shebangcheck` with FUM5 Mediums/Lows. This recovery does not install,
+package, tag, publish, or release `pathaudit`.
+
+## Fifth Utility Mission Evaluation
+
+Governed run `e5f6740c1571` completed a read-only fifth-mission selection and
+recommended one planning commitment: bootstrap `shebangcheck`, an ISO C17
+utility that would preflight explicit script files against a deliberately
+narrow direct-absolute-interpreter shebang subset without executing scripts or
+interpreters and without searching PATH. Its bounded first vertical slice
+would inspect explicit regular files, read only a contract-capped first-line
+prefix, classify malformed or unsupported headers, inspect the directly named
+interpreter under a closed usability rule, and render deterministic escaped
+findings. A later contract must define the exact CLI, output, resource limits,
+diagnostics, signal behavior, and exit statuses.
+
+Independent artifacts
+`code-reviews/review-fifth-utility-mission.md` and
+`code-reviews/review-fifth-utility-mission.verdict.json` record verdict
+`pass`: no Critical or High findings, two Medium (FUM5-M1 matrix-to-contract
+criteria and rating-evidence mismatch; FUM5-M2 inconsistent practical-value
+treatment of the excluded common `/usr/bin/env` form), and four Low
+(FUM5-L1 lockscope total arithmetic; FUM5-L2 missing fourth-frame citation;
+FUM5-L3 ambiguous required-heading count in the selection contract; FUM5-L4
+unexplained security-exposure score for a content-derived path). The review's
+single allowlisted routed-tool preflight reported 22 passed; it was
+infrastructure evidence only, not compiler, product-test, smoke, sanitizer,
+Valgrind, implementation, or release verification.
+
+Remaining gates are unchanged for expansion sequencing. `inodealias` is the
+selected fourth mission but still planning only. Failed origin run
+`6ca4cebc8527` is still not a passed delivery; recovery run `4ae7a820b0a3`
+has since reconciled and independently reviewed that dirty candidate and
+closed `pathaudit-shadow-1/2/3` while leaving Medium PA-6CA-4 and Low
+PA-6CA-1/2/3 visible. Before feature expansion, permguard Medium
+PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 require bounded
+repair and fresh independent review, along with any other still-applicable
+Medium-or-higher gate. Next action after those gates clear is a separately
+governed `shebangcheck` implementation playbook beginning with a normative
+contract, then fixture tests, source, documentation, dedicated smoke, quality
+evidence, and independent review. This evaluation did not implement, compile,
+test, install, package, tag, publish, verify, or release `shebangcheck`.
+
 ## Bootstrap permguard
 
 Objective: deliver and independently review the `permguard` bootstrap as a
@@ -140,14 +229,14 @@ limits; non-blocking). Allowlisted review check:
 exit 0, 143 passed, 15 skipped in ~1.8s. The 15 skips are host-capability
 self-skips (no distinct foreign UID / unprivileged `chown`, oversized-
 PATH env rejection), not failures. Remaining risks: Low
-`path-dir-ownership-1` plus prior Medium pathaudit-shadow-1 and Low
-pathaudit-shadow-2/3, Low PA-W1/PA-W2, Low nondir-1/2, pathaudit-cmd-1/2,
-pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2
-leftovers, and sysdiff Medium backlogs not closed by this review.
-Recommended next action: keep Low `path-dir-ownership-1` visible; prefer
-next genuine capability Detect writable ancestors of PATH directories;
-optional Medium pathaudit-shadow-1 repair remains available. Do not claim
-that `pathaudit` is released.
+`path-dir-ownership-1` plus prior Low pathaudit-shadow-2/3 historically open
+from `f94509b47fd3` (now closed by recovery `4ae7a820b0a3`), Low PA-W1/PA-W2,
+Low nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4,
+bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed
+by this review. Recommended next action: keep Low `path-dir-ownership-1`
+visible; prefer next genuine capability Detect writable ancestors of PATH
+directories; Medium pathaudit-shadow-1 is closed by later recovery
+`4ae7a820b0a3`. Do not claim that `pathaudit` is released.
 
 ## Detect executables with unsafe ownership
 
@@ -189,13 +278,13 @@ root-owner fixtures that honestly `pytest.skip` on this non-root host
 and pass. Remaining risks: informational review notes only
 (per-finding `getuid()` re-call; `stat`/`realpath` TOCTOU under
 concurrent FS change, contract-disclaimed; positive emission path
-host-privilege gated) plus prior Medium pathaudit-shadow-1 and Low
-pathaudit-shadow-2/3, Low PA-W1/PA-W2, Low nondir-1/2,
-pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
-Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
-this review. Recommended next action: keep informational ownership
-notes visible; prefer repairing pathaudit-shadow-1 or resume prior
-Medium backlog. Do not claim that `pathaudit` is released.
+host-privilege gated) plus prior pathaudit-shadow-1/2/3 historically open
+from `f94509b47fd3` (closed by later recovery `4ae7a820b0a3`), Low
+PA-W1/PA-W2, Low nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and
+PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff
+Medium backlogs not closed by this review. Recommended next action: keep
+informational ownership notes visible; resume prior Medium backlog other
+than the closed shadow IDs. Do not claim that `pathaudit` is released.
 
 ## Detect writable resolved-executables through PATH
 
@@ -230,13 +319,13 @@ findings (PA-W1: ~64 KiB stack `readlink` target buffer in
 group/other-writable `+x` files that are neither `#!` nor ELF are not
 reported). Allowlisted review check:
 `python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 269 passed,
-1 skipped in ~18s. Remaining risks: Low PA-W1/PA-W2 plus prior Medium
-pathaudit-shadow-1 and Low pathaudit-shadow-2/3, Low nondir-1/2,
-pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
-Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
-this review. Recommended next action: optional Low PA-W polish; prefer
-repairing pathaudit-shadow-1 or resume prior Medium backlog. Do not
-claim that `pathaudit` is released.
+1 skipped in ~18s. Remaining risks: Low PA-W1/PA-W2 plus prior pathaudit-shadow-1/2/3
+historically open from `f94509b47fd3` (closed by later recovery
+`4ae7a820b0a3`), Low nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2,
+and PA-WP-1–PA-WP-4, bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff
+Medium backlogs not closed by this review. Recommended next action:
+optional Low PA-W polish; resume prior Medium backlog other than the
+closed shadow IDs. Do not claim that `pathaudit` is released.
 
 ## Detect executable shadowing across PATH entries
 
@@ -274,12 +363,13 @@ pathaudit-shadow-3: repeated non-winner PATH directories can emit
 duplicate identical `SHADOWED` lines because de-dup checks only the
 winner realpath). Allowlisted review check:
 `python3 -m pytest tests/ -q -p no:cacheprovider` → exit 0, 247 passed,
-1 skipped in ~17.95s. Remaining risks: Medium pathaudit-shadow-1 and
-Low pathaudit-shadow-2/3 plus prior pathaudit Low nondir-1/2,
-pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4, bootstrap
-Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not closed by
-this review. Recommended next action: repair pathaudit-shadow-1 or
-resume prior Medium backlog; keep Low shadow findings visible. Do not
+1 skipped in ~17.95s. Remaining risks at that closeout: Medium
+pathaudit-shadow-1 and Low pathaudit-shadow-2/3 plus prior pathaudit Low
+nondir-1/2, pathaudit-cmd-1/2, pathaudit-wdp-1/2, and PA-WP-1–PA-WP-4,
+bootstrap Medium PA-M1/PA-M2 leftovers, and sysdiff Medium backlogs not
+closed by this review. Later recovery run `4ae7a820b0a3` closed
+pathaudit-shadow-1/2/3 under a fresh independent review; keep that
+historical Medium/Low record visible as prior evidence only. Do not
 claim that `pathaudit` is released.
 
 ## Detect non-directory PATH entries

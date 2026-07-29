@@ -49,7 +49,8 @@ Typical findings include:
 - `GROUP_WRITABLE` / `WORLD_WRITABLE` — unsafe write permissions.
 - `UNSAFE_OWNER` — an executable or directory is owned by neither root nor
   the invoking user.
-- `SHADOWED` — a later executable has the same command name as an earlier one.
+- `SHADOWED` — a later executable has the same command name as an earlier one;
+  exact `(command, winner, shadow)` tuples emit once.
 
 ## Inspect one command
 

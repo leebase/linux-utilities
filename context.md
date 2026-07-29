@@ -2,48 +2,62 @@
 
 ## Snapshot
 
-Governed run `51100a584ac9` (`bootstrap_permguard_first_vertical_slice`)
-delivered and independently reviewed the live `permguard` bootstrap under
-`docs/permguard-bootstrap-contract.md`. The ISO C17 utility accepts
-`permguard [--] PATH...` plus sole-argument `--help` / `--version`, performs
-exactly one `lstat` per operand, never follows the final symlink, streams
-findings per operand, and continues after per-operand errors. Its closed
-four-code taxonomy emits `GROUP_WRITABLE`, `OTHER_WRITABLE`, `SET_USER_ID`,
-and `SET_GROUP_ID` from the named object's own mode bits without file-type
-heuristics; final symlinks are status-2 rejections. Operand bytes are escaped,
-and exits are 0 clean, 1 hazards-only, or 2 operational failure (with error
-precedence over hazards). Delivered artifacts are the bootstrap contract and
-plan, `src/permguard.c`, `tests/test_permguard.py`, `man/permguard.1`,
-README/CHANGELOG documentation, and additive Makefile wiring. Independent
-verdict `code-reviews/review-permguard-bootstrap.verdict.json` is `pass` with
-5 Medium and 6 Low findings. This reviewed bootstrap is not a release and does
-not provide recursion, PATH reading, remediation, or packaging.
+Governed recovery run `4ae7a820b0a3` (`repair_governed_run_6ca4cebc8527`)
+reconciled the dirty pathaudit maintenance candidate left by failed run
+`6ca4cebc8527` and obtained a clean independent review. Exact focused
+pathaudit pytest is 151 passed / 15 skipped. Step-5 static gates on
+`src/pathaudit.c` (GCC/Clang `-fsyntax-only`, clang-format, clang-tidy,
+cppcheck, Clang analyzer) all exited 0. Step-6 ASan+UBSan and Valgrind
+pathaudit routes each reported 151 passed / 15 skipped. Step-7 complete
+suite recorded 343 passed / 15 skipped under a scratch writable gitdir.
+Governed smoke (`artifacts/user-smoke/result.json`) passed with
+`app_started`/`core_flow_completed` true, start/check exit 0, empty
+`blocking_errors`; check.log pytest `340 passed, 18 skipped in 22.01s`.
+Independent verdict
+`code-reviews/review-pathaudit-governed-run-6ca4cebc8527.verdict.json`
+is `pass` and closes `pathaudit-shadow-1/2/3`. Remaining findings are
+Medium PA-6CA-4 (review-worker complete-suite/`git worktree` EROFS
+environment note; not a pathaudit product defect) and Low PA-6CA-1/2/3.
+Failed run `6ca4cebc8527` itself is still not a passed delivery.
 
 ## What's Happening Now
 
-Closeout for `51100a584ac9` records evidence by provenance. Independent review
-freshly ran only
-`python3 -m pytest -p no:cacheprovider tests/test_permguard.py -q` → exit 0,
-52 passed in 0.43s, zero skipped; its session fixture transitively performed a
-strict-warning build into a temp tree, but review did not freshly run Make,
-the full suite, sanitizers, Valgrind, or static analyzers as gate results.
-Step-5 quality-floor validation recorded GCC/Clang strict syntax, clang-format,
-clang-tidy, cppcheck, Clang analyzer, ASan+UBSan `--help` and Valgrind `--help`
-probes, full pytest `332 passed, 18 skipped`, and both shell fixture suites
-exiting 0; the quality worker separately reported focused pytest 52 passed.
-Smoke `artifacts/user-smoke/result.json` records start/check 0 and empty
-`blocking_errors`; check.log records `332 passed, 18 skipped in 19.78s` through
-`make test`, which reaches permguard transitively but is not a
-permguard-specific user flow. One-code drafts
-`docs/permguard-first-vertical-slice-contract.md` /
-`plans/permguard-first-vertical-slice-plan.md` are superseded non-authority.
-Next: bounded governed repair of Medium PG-DOC-501 (architecture taxonomy
-mismatch), remaining PG-DOC-502 draft markers, PG-TEST-503 (`STDOUT_WRITE` /
-SIGPIPE coverage), PG-PORT-505 (hand-declared `lstat`), and PG-DOC-512
-(QUALITY/TESTING silence), then fresh independent review. Keep Low
-PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511 visible. Do not claim
-installation, packaging, publication, recursion, remediation, or release
-readiness. Runs root: `/home/lee/projects/linux-utilities-agent-orch-runs`.
+Closeout records the reviewed recovery without claiming that failed run
+`6ca4cebc8527` passed, without releasing pathaudit, and without closing
+unrelated backlogs. Live product state remains three implemented utilities
+plus planning-only `inodealias` and `shebangcheck`. Permguard Medium
+PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 still require
+bounded governed repair plus fresh independent review before feature
+expansion. Keep Low PA-6CA-1/2/3 and Medium PA-6CA-4 visible; do not treat
+PA-6CA-4 as a pathaudit regression. Fifth-mission selection risks
+FUM5-M1/M2 and FUM5-L1–L4 remain open planning notes. Next action: clear
+the active permguard Medium-or-higher expansion gates, then generate a
+separate governed `shebangcheck` implementation playbook beginning with
+its normative contract. Runs root:
+`/home/lee/projects/linux-utilities-agent-orch-runs`.
+
+## Prior snapshot — fifth utility mission evaluation `e5f6740c1571`
+
+Governed run `e5f6740c1571`
+(`discover_evaluate_fifth_linux_utility`) selected exactly one fifth mission:
+bootstrap `shebangcheck` for read-only validation of direct absolute
+interpreters named by explicitly supplied script files. The bounded first
+vertical slice is planning only: inspect explicit regular-file operands, read
+a contract-capped first line or prefix, accept only a closed direct-absolute-
+interpreter shebang subset, inspect the named interpreter without executing
+it or searching PATH, and emit deterministic escaped findings for malformed,
+unsupported, or unusable cases. Exact CLI, output bytes, finding taxonomy,
+resource constants, diagnostics, signal behavior, and numeric exit statuses
+remain for a later normative implementation contract. The independent review
+verdict is `pass` with no Critical or High findings, two Medium findings
+(FUM5-M1 and FUM5-M2), and four Low findings (FUM5-L1 through FUM5-L4).
+This selection does not implement, verify, install, package, tag, publish, or
+release `shebangcheck`; live product state remains three implemented utilities
+and planning-only fourth mission `inodealias`. At that closeout, failed
+pathaudit maintenance run `6ca4cebc8527` was still dirty and unreviewed;
+recovery run `4ae7a820b0a3` now supersedes that maintenance posture for
+`pathaudit-shadow-1/2/3` while leaving the failed origin run as not a passed
+delivery.
 
 ## Prior snapshot — permguard first vertical slice `f742c10135e5`
 

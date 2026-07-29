@@ -27,8 +27,10 @@ usable directories, missing entries, empty components, ordering, and duplicates.
 Executable-shadowing coverage (`pathaudit --path`) pins that a command basename
 present as a regular executable in two or more distinct PATH directories yields
 `SHADOWED` lines naming the command, the first-PATH winner realpath, and each
-later shadowed executable realpath, without falsely reporting non-executables
-or distinct command names.
+later *distinct* shadowed executable realpath. Exact duplicate
+`(command, winner, shadow)` tuples are emitted once; repeated identical
+non-winner realpaths must not append the same row again. Non-executables and
+distinct command names never produce `SHADOWED`.
 
 Writable resolved-executable coverage pins that `--path` and `--command` apply
 the existing trust model to final executable targets resolved through PATH:
@@ -614,7 +616,11 @@ def run_pathaudit_command_mode(
     )
 
 
-def run_with_closed_stdout_pipe(binary: Path, *args: str):
+def run_with_closed_stdout_pipe(
+    binary: Path,
+    *args: str,
+    env: dict[str, str | None] | None = None,
+):
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     cmd, vg_log = _valgrind_command([str(binary), *args])
@@ -622,7 +628,7 @@ def run_with_closed_stdout_pipe(binary: Path, *args: str):
         cmd,
         stdout=write_fd,
         stderr=subprocess.PIPE,
-        env=_base_child_env(),
+        env=_base_child_env(env),
     )
     os.close(write_fd)
     _, stderr = proc.communicate()
@@ -2350,7 +2356,9 @@ def test_control_bytes_quotes_and_non_utf8_in_stdout_findings(pathaudit_bin, tmp
     assert b"\nWORLD_WRITABLE" not in result.stdout
 
 
-def test_closed_stdout_pipe_reports_stdout_write(pathaudit_bin, fixture_tree):
+def test_closed_stdout_pipe_reports_stdout_write(
+    pathaudit_bin, fixture_tree, tmp_path
+):
     status, stderr = run_with_closed_stdout_pipe(pathaudit_bin, "--help")
     assert status == 2
     assert stderr == diagnostic_lines("STDOUT_WRITE")
@@ -2359,6 +2367,19 @@ def test_closed_stdout_pipe_reports_stdout_write(pathaudit_bin, fixture_tree):
     # Hazard emission must also fail closed on a broken stdout pipe.
     status, stderr = run_with_closed_stdout_pipe(
         pathaudit_bin, str(fixture_tree.group_w)
+    )
+    assert status == 2
+    assert stderr == diagnostic_lines("STDOUT_WRITE")
+    assert_no_raw_unsafe_bytes(stderr)
+
+    # --path SHADOWED emission must likewise exit 2 with STDOUT_WRITE and
+    # release winner/shadow tables (including indexes) on the failure path.
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    install_executable(early, "tool")
+    install_executable(late, "tool")
+    path_value = f"{early.resolve()}:{late.resolve()}:{late.resolve()}"
+    status, stderr = run_with_closed_stdout_pipe(
+        pathaudit_bin, "--path", env={"PATH": path_value}
     )
     assert status == 2
     assert stderr == diagnostic_lines("STDOUT_WRITE")
@@ -3649,9 +3670,11 @@ def test_command_mode_mixed_shadow_and_plant_risk_deterministic(
 # ---------------------------------------------------------------------------
 # Detect executable shadowing across PATH entries (`pathaudit --path`)
 #
-# Authored ahead of implementation. Additive contract: when two or more
-# distinct PATH directories each contain a regular executable with the same
-# basename, report every later hit as shadowed against the first-PATH winner.
+# Additive contract: when two or more distinct PATH directories each contain a
+# regular executable with the same basename, report each later *distinct*
+# realpath as shadowed against the first-PATH winner. Uniqueness is by
+# (command, winner realpath, shadow realpath): exact duplicate tuples emit
+# once; genuinely distinct later realpaths still emit one row each.
 #
 # Line shape (TAB-separated, quote-escaped fields):
 #   SHADOWED<TAB>"COMMAND"<TAB>"WINNER_REALPATH"<TAB>"SHADOWED_REALPATH"<LF>
@@ -3661,7 +3684,11 @@ def test_command_mode_mixed_shadow_and_plant_risk_deterministic(
 # command basename bytes, then by PATH position of the shadowed executable.
 # Non-executable same-basename files and distinct command names never produce
 # SHADOWED. Repeated identical directory components do not self-shadow.
-# Shadowing alone is a completed hazard path: exit status 1, empty stderr.
+# Repeated identical non-winner shadow realpaths (PATH=winner:shadow:shadow)
+# emit one SHADOWED row, keep exit status 1, and leave stderr empty.
+# Maintenance regressions also pin a bounded many-basename fixture that
+# exercises winner indexing and retained canonical-path ownership without
+# treating wall-clock timing as the sole oracle.
 # ---------------------------------------------------------------------------
 
 
@@ -3736,7 +3763,11 @@ def test_path_mode_shadowing_first_entry_precedence_is_deterministic(
 def test_path_mode_shadowing_reports_every_later_shadowed_location(
     pathaudit_bin, tmp_path
 ):
-    """Three PATH hits for one basename → winner plus every later shadow."""
+    """Three distinct later realpaths → winner plus one SHADOWED per distinct shadow.
+
+    Distinct non-winner realpaths must each produce a row. This is the
+    compatibility pin that duplicate suppression must not collapse.
+    """
 
     first_dir, second_dir, third_dir = _private_path_dirs(
         tmp_path, ("a", "b", "c")
@@ -3745,6 +3776,7 @@ def test_path_mode_shadowing_reports_every_later_shadowed_location(
     winner = install_executable(first_dir, cmd)
     shadow_b = install_executable(second_dir, cmd)
     shadow_c = install_executable(third_dir, cmd)
+    assert shadow_b != shadow_c
     path_value = ":".join(
         str(d.resolve()) for d in (first_dir, second_dir, third_dir)
     )
@@ -3767,6 +3799,8 @@ def test_path_mode_shadowing_reports_every_later_shadowed_location(
     assert result.stderr == b""
     assert result.stdout == expected
     assert result.stdout.count(b"SHADOWED\t") == 2
+    assert shadowed_line(cmd, winner, shadow_b) in result.stdout
+    assert shadowed_line(cmd, winner, shadow_c) in result.stdout
 
 
 def test_path_mode_shadowing_ignores_non_executable_same_basename(
@@ -3884,6 +3918,229 @@ def test_path_mode_shadowing_repeated_directory_does_not_self_shadow(
     assert b"SHADOWED\t" not in result.stdout
 
 
+def test_path_mode_shadowing_repeated_identical_shadow_realpath_emits_once(
+    pathaudit_bin, tmp_path
+):
+    """PATH=winner:shadow:shadow emits one SHADOWED tuple (pathaudit-shadow-3).
+
+    The live pre-repair implementation compares only against the winner, so a
+    repeated later directory appends the identical winner/shadow row twice and
+    still exits 1. After repair, the exact tuple is emitted once; status stays
+    1 (dedup must not turn a genuine hazard into 0) and stderr stays empty.
+    """
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    winner = install_executable(early, cmd)
+    shadow = install_executable(late, cmd)
+    early_s = str(early.resolve())
+    late_s = str(late.resolve())
+    # Contract fixture shape: first-PATH winner, then the same non-winner
+    # component twice (PATH=early:late:late).
+    path_value = f"{early_s}:{late_s}:{late_s}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [], [(0, early_s), (1, late_s), (2, late_s)]
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
+    # Unique SHADOWED forces status 1 even when PATH dirs/ancestors are trusted
+    # (expect_path_findings ownership-only code may be 0 on such hosts).
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 1
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow)) == 1
+    # First PATH hit remains the winner; the later realpath is never promoted.
+    assert shadowed_line(cmd, shadow, winner) not in result.stdout
+
+
+def test_path_mode_shadowing_duplicate_among_distinct_later_realpaths(
+    pathaudit_bin, tmp_path
+):
+    """Distinct later realpaths stay; only exact duplicate tuples disappear.
+
+    PATH=winner:mid:late:late → two SHADOWED rows (mid and late once each).
+    """
+
+    winner_dir, mid_dir, late_dir = _private_path_dirs(
+        tmp_path, ("winner", "mid", "late")
+    )
+    cmd = "tool"
+    winner = install_executable(winner_dir, cmd)
+    shadow_mid = install_executable(mid_dir, cmd)
+    shadow_late = install_executable(late_dir, cmd)
+    assert shadow_mid != shadow_late
+    path_value = ":".join(
+        [
+            str(winner_dir.resolve()),
+            str(mid_dir.resolve()),
+            str(late_dir.resolve()),
+            str(late_dir.resolve()),
+        ]
+    )
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [],
+        [
+            (0, winner_dir.resolve()),
+            (1, mid_dir.resolve()),
+            (2, late_dir.resolve()),
+            (3, late_dir.resolve()),
+        ],
+    )
+    expected = owned + shadowing_stdout(
+        [
+            (cmd, winner, shadow_mid),
+            (cmd, winner, shadow_late),
+        ]
+    )
+    # Unique SHADOWED rows force status 1 regardless of ownership findings.
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 2
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow_mid)) == 1
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow_late)) == 1
+
+
+def test_path_mode_shadowing_symlink_alias_of_shadow_dir_dedups_by_realpath(
+    pathaudit_bin, tmp_path
+):
+    """Portability: distinct PATH text resolving to one shadow realpath → one row.
+
+    A symlink PATH component that canonicalizes to the same late directory as
+    an earlier non-winner must not invent a second identical SHADOWED tuple.
+    """
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    late_link = tmp_path / "late-link"
+    late_link.symlink_to(late.resolve())
+    cmd = "tool"
+    winner = install_executable(early, cmd)
+    shadow = install_executable(late, cmd)
+    early_s = str(early.resolve())
+    late_s = str(late.resolve())
+    # Absolute symlink PATH text (not followed) so the component bytes differ
+    # from late_s while realpath(link) == late.
+    link_s = str(late_link.absolute())
+    assert Path(link_s).resolve() == Path(late_s)
+    assert link_s != late_s
+    path_value = f"{early_s}:{late_s}:{link_s}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [], [(0, early_s), (1, late_s), (2, link_s)]
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
+    # Unique SHADOWED forces status 1 regardless of ownership findings.
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 1
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow)) == 1
+
+
+def test_path_mode_shadowing_many_basenames_bounded_winner_index(
+    pathaudit_bin, tmp_path
+):
+    """Bounded many-basename fixture for winner/shadow indexes + path ownership.
+
+    Exercises pathaudit-shadow-1 / pathaudit-shadow-2 functionally: many
+    distinct winners and one shadow each must complete with exact SHADOWED
+    output, first-PATH winners, basename-byte ordering, status 1, and empty
+    stderr. Assertions are exact output and counts — not wall-clock timing.
+    Completing with short canonical paths also pins that retained winner and
+    shadow strings remain usable through emission (right-sized ownership).
+    """
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    # Bound large enough to stress indexed winner/shadow lookup and many
+    # retained canonical strings, small enough for ordinary and Valgrind runs.
+    basename_count = 192
+    commands = [f"cmd-{index:03d}" for index in range(basename_count)]
+    # Install out of sort order so emission order cannot follow creation.
+    install_order = list(reversed(commands))
+    winners: dict[str, Path] = {}
+    shadows: dict[str, Path] = {}
+    for name in install_order:
+        winners[name] = install_executable(early, name)
+        shadows[name] = install_executable(late, name)
+
+    path_value = f"{early.resolve()}:{late.resolve()}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [], [(0, early.resolve()), (1, late.resolve())]
+    )
+    # Shadow rows sort by raw command-basename bytes, then PATH position.
+    ordered_items = [
+        (name, winners[name], shadows[name]) for name in sorted(commands)
+    ]
+    expected = owned + shadowing_stdout(ordered_items)
+    # Unique SHADOWED rows force status 1 regardless of ownership findings.
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == basename_count
+    # Retained paths in output are the short resolved fixture paths (not
+    # padded scratch); each winner remains the early PATH hit.
+    for name in commands:
+        assert shadowed_line(name, winners[name], shadows[name]) in result.stdout
+        assert shadowed_line(name, shadows[name], winners[name]) not in result.stdout
+        assert os.fsencode(os.fspath(winners[name])) in result.stdout
+        assert os.fsencode(os.fspath(shadows[name])) in result.stdout
+
+
+def test_command_mode_repeated_later_match_keeps_match_not_shadowed(
+    pathaudit_bin, tmp_path
+):
+    """`--command` keeps PATH-ordered MATCH rows; never invents SHADOWED.
+
+    Compatibility baseline outside the --path duplicate-tuple repair: a
+    winner:shadow:shadow layout still reports MATCH lines (including the
+    repeated later hit) and leaves stderr empty under the shared ownership
+    status rules.
+    """
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    cmd = "tool"
+    first = install_executable(early, cmd)
+    second = install_executable(late, cmd)
+    early_s = str(early.resolve())
+    late_s = str(late.resolve())
+    result = run_pathaudit_command_mode(
+        pathaudit_bin, cmd, f"{early_s}:{late_s}:{late_s}"
+    )
+    code, expected = expect_command_query(
+        [first, second, second],
+        [],
+        [(0, early_s), (1, late_s), (2, late_s)],
+    )
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert b"SHADOWED\t" not in result.stdout
+    assert result.stdout.count(b"MATCH\t") == 3
+    assert result.stdout.startswith(match_line(first))
+
+
+def test_path_mode_shadow_repair_preserves_reject_closed_path_unset_diagnostic(
+    pathaudit_bin,
+):
+    """Diagnostics isolation: unset PATH still exits 2 with PATH_UNSET only.
+
+    The shadow uniqueness repair must not soften reject-closed environment
+    failures into a hazard (1) or success (0) path, invent SHADOWED/MATCH
+    rows, or leave stdout non-empty.
+    """
+
+    result = run_pathaudit_path_mode(pathaudit_bin, None)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_lines("PATH_UNSET")
+    assert b"SHADOWED\t" not in result.stdout
+    assert b"MATCH\t" not in result.stdout
+    assert b"usage:" not in result.stderr
+
+
 def test_path_mode_shadowing_no_shadow_single_hit_exits_zero(
     pathaudit_bin, tmp_path
 ):
@@ -3964,6 +4221,49 @@ def test_path_mode_shadowing_directory_hazards_precede_shadowed_lines(
     assert finding_line("WORLD_WRITABLE", shadow) not in result.stdout
 
 
+def test_path_mode_shadowing_duplicate_with_hazard_keeps_status_one_empty_stderr(
+    pathaudit_bin, fixture_tree
+):
+    """PATH=private:world:world → hazards + one SHADOWED; status 1; empty stderr.
+
+    Exit-status and diagnostics pin for pathaudit-shadow-3: after exact-tuple
+    suppression the run remains a completed hazard path (status 1, empty
+    stderr). Shared-taxonomy lines still precede the unique shadow row, and the
+    repeated late component must not invent a second SHADOWED line or soften
+    the status to 0.
+    """
+
+    cmd = "tool"
+    winner = install_executable(
+        fixture_tree.private, cmd, mode=MODE_EXE_TRUSTED
+    )
+    shadow = install_executable(
+        fixture_tree.world_w, cmd, mode=MODE_EXE_TRUSTED
+    )
+    private = str(fixture_tree.private)
+    world = str(fixture_tree.world_w)
+    path_value = f"{private}:{world}:{world}"
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value)
+    code, owned = expect_path_findings(
+        [
+            (1, world, "WORLD_WRITABLE"),
+            (2, world, "WORLD_WRITABLE"),
+        ],
+        [(0, private), (1, world), (2, world)],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
+    assert code == 1
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 1
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow)) == 1
+    world_at = result.stdout.find(b"WORLD_WRITABLE\t")
+    shadow_at = result.stdout.find(b"SHADOWED\t")
+    assert world_at != -1 and shadow_at != -1
+    assert world_at < shadow_at
+
+
 def test_explicit_roots_do_not_emit_shadowed_for_colliding_executables(
     pathaudit_bin, tmp_path
 ):
@@ -4031,6 +4331,14 @@ def test_shadowed_line_helper_contract():
         b'SHADOWED\t"tool"\t"/a/tool"\t"/b/tool"\n'
         b'SHADOWED\t"tool"\t"/a/tool"\t"/c/tool"\n'
     )
+    # Unit pin for uniqueness: one exact (command, winner, shadow) tuple is
+    # one expected line. Distinct later realpaths remain two lines.
+    once = shadowing_stdout([("tool", "/a/tool", "/b/tool")])
+    assert once.count(b"SHADOWED\t") == 1
+    two_distinct = shadowing_stdout(
+        [("tool", "/a/tool", "/b/tool"), ("tool", "/a/tool", "/c/tool")]
+    )
+    assert two_distinct.count(b"SHADOWED\t") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -4038,11 +4346,12 @@ def test_shadowed_line_helper_contract():
 #
 # Narrow security-sensitive corpus for adversarial PATH shapes the utility
 # already supports: empty colon fields, nonexistent directories, duplicate
-# components, and deterministic bytewise finding order. Every fixture tree is
-# isolated under pytest tmp paths. Attacker-controlled plants are regular +x
-# files whose bodies would create a marker file if ever executed; after each
-# scan the marker must remain absent so coverage cannot accidentally run
-# fixture content.
+# components (including repeated non-winner shadow realpaths that must emit
+# one SHADOWED tuple), and deterministic bytewise finding order. Every fixture
+# tree is isolated under pytest tmp paths. Attacker-controlled plants are
+# regular +x files whose bodies would create a marker file if ever executed;
+# after each scan the marker must remain absent so coverage cannot accidentally
+# run fixture content.
 #
 # Terminal-diagnostic pins additionally feed PATH components that embed LF,
 # TAB, ESC/CSI sequences, non-UTF-8 bytes, quotes, and forged diagnostic tokens
@@ -4292,6 +4601,63 @@ def test_hostile_path_shadow_observation_does_not_execute_attacker_plants(
     assert result.stdout.count(b"SHADOWED\t") == 1
     assert result.stdout.count(b"EMPTY_ROOT\t") == 2
     assert result.stdout.count(b"MISSING_ROOT\t") == 1
+
+
+def test_hostile_path_repeated_shadow_component_dedups_without_executing_plants(
+    pathaudit_bin, tmp_path
+):
+    """Hostile PATH=.:early:missing:late:late:. keeps one SHADOWED; plants idle.
+
+    Empty and missing components stay classified; the repeated later directory
+    must not append a duplicate SHADOWED tuple or execute either plant. Exit
+    status remains 1 with empty stderr after dedup.
+    """
+
+    os.chmod(tmp_path, MODE_PRIVATE)
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker_early = probe_dir / "executed-early-dup"
+    marker_late = probe_dir / "executed-late-dup"
+
+    early, late = _private_path_dirs(tmp_path, ("early", "late"))
+    missing = tmp_path / "missing-between-dup"
+    assert not missing.exists()
+    cmd = "collide-dup"
+    winner = _plant_execution_probe(early, cmd, marker_early)
+    shadow = _plant_execution_probe(late, cmd, marker_late)
+
+    early_s = str(early.resolve())
+    late_s = str(late.resolve())
+    missing_s = str(missing)
+    # Empty : early : missing : late : late : empty — exact duplicate shadow
+    # realpath appears twice after a missing gap.
+    path_value = f":{early_s}:{missing_s}:{late_s}:{late_s}:"
+
+    assert not marker_early.exists()
+    assert not marker_late.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, path_value, cwd=tmp_path)
+    _assert_probe_not_executed(marker_early)
+    _assert_probe_not_executed(marker_late)
+
+    code, owned = expect_path_findings(
+        [
+            (0, b"", "EMPTY_ROOT"),
+            (5, b"", "EMPTY_ROOT"),
+            (2, missing_s, "MISSING_ROOT"),
+        ],
+        [(1, early_s), (3, late_s), (4, late_s)],
+    )
+    expected = owned + shadowing_stdout([(cmd, winner, shadow)])
+    assert code == 1
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert result.stdout.count(b"SHADOWED\t") == 1
+    assert result.stdout.count(shadowed_line(cmd, winner, shadow)) == 1
+    assert result.stdout.count(b"EMPTY_ROOT\t") == 2
+    assert result.stdout.count(b"MISSING_ROOT\t") == 1
+    assert_no_raw_unsafe_bytes(result.stdout)
 
 
 def test_hostile_path_control_and_csi_bytes_escaped_in_stdout_findings(

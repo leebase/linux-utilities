@@ -106,6 +106,20 @@ changed-line presentation, Ubuntu-focused CI, source-first packaging without a
 `.deb`/`.rpm` (Make `install`/`uninstall` staging is present), and
 explicit-snapshot-only comparison scope.
 
+### pathaudit Maintenance Repairs
+
+Candidate recovery of the dirty `pathaudit` maintenance work from failed
+governed run `6ca4cebc8527` (not a passed delivery): right-size retained
+`realpath` copies (`pathaudit-shadow-1`), bounded basename winner index plus
+bounded `(command, shadow)` duplicate index (`pathaudit-shadow-2`), and emit
+each exact `(command, winner, shadow)` `SHADOWED` tuple once
+(`pathaudit-shadow-3`). `--path` still keeps first-PATH winners, one row per
+distinct later realpath, status `1` when any unique shadow remains,
+directory/ancestor `UNSAFE_OWNER` under the existing trust rule, shared
+finding order, stderr diagnostics, and exits `0`/`1`/`2`. Non-goals: no new
+detector, packaging, release claim, or unrelated backlog closure. Closure of
+the three IDs still requires fresh verification and independent review.
+
 ## 0.1.0 — 2026-07-10
 
 Initial public release candidate of `sysdiff`.

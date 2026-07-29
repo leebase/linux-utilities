@@ -72,10 +72,16 @@ struct WinnerEntry {
   char *path;    /* owned realpath */
 };
 
+/*
+ * Winner table plus open-addressing index by command basename. Empty index
+ * slots hold SIZE_MAX. index_cap is 0 or a power of two so probes can mask.
+ */
 struct WinnerBuffer {
   struct WinnerEntry *items;
   size_t len;
   size_t cap;
+  size_t *index_slots;
+  size_t index_cap;
 };
 
 /* One shadowed executable against a first-PATH winner. */
@@ -86,10 +92,21 @@ struct ShadowRecord {
   size_t shadow_index;
 };
 
+/*
+ * Shadow table plus open-addressing index by (command, shadow) bytes. Empty
+ * slots hold SIZE_MAX. index_cap is 0 or a power of two so probes can mask.
+ * Winner is fixed once a basename is won, so (command, shadow) uniquely
+ * identifies an exact (command, winner, shadow) tuple for duplicate checks.
+ * index_slots store positional indices into items; they become stale if items
+ * are reordered and must be invalidated before any such permutation. After
+ * invalidation, no further appends that rely on the index are permitted.
+ */
 struct ShadowBuffer {
   struct ShadowRecord *items;
   size_t len;
   size_t cap;
+  size_t *index_slots;
+  size_t index_cap;
 };
 
 struct PathComponents {
@@ -198,6 +215,53 @@ static char *owned_strdup(const char *text) {
   }
   memcpy(copy, text, len + 1);
   return copy;
+}
+
+/*
+ * FNV-1a over unsigned basename bytes for the winner/shadow indexes.
+ * Use width-correct constants so LP64 builds get FNV-1a-64 avalanche.
+ */
+static size_t hash_command_bytes(const char *text) {
+  size_t hash;
+  size_t prime;
+  if (SIZE_MAX > 0xffffffffu) {
+    hash = (size_t)14695981039346656037ull;
+    prime = (size_t)1099511628211ull;
+  } else {
+    hash = (size_t)2166136261u;
+    prime = (size_t)16777619u;
+  }
+  const unsigned char *p = (const unsigned char *)text;
+  while (*p != '\0') {
+    hash ^= (size_t)*p;
+    hash *= prime;
+    p++;
+  }
+  return hash;
+}
+
+/* Mix two C strings into one index key (command then shadow realpath). */
+static size_t hash_command_shadow_pair(const char *command,
+                                       const char *shadow) {
+  size_t hash = hash_command_bytes(command);
+  /* Domain separator so ("ab","c") and ("a","bc") do not collide by concat. */
+  hash ^= (size_t)0x1fu;
+  if (SIZE_MAX > 0xffffffffu) {
+    hash *= (size_t)1099511628211ull;
+  } else {
+    hash *= (size_t)16777619u;
+  }
+  const unsigned char *p = (const unsigned char *)shadow;
+  while (*p != '\0') {
+    hash ^= (size_t)*p;
+    if (SIZE_MAX > 0xffffffffu) {
+      hash *= (size_t)1099511628211ull;
+    } else {
+      hash *= (size_t)16777619u;
+    }
+    p++;
+  }
+  return hash;
 }
 
 static void findings_free(struct FindingBuffer *buffer) {
@@ -417,9 +481,100 @@ static void winners_free(struct WinnerBuffer *buffer) {
     }
   }
   free(buffer->items);
+  free(buffer->index_slots);
   buffer->items = NULL;
+  buffer->index_slots = NULL;
   buffer->len = 0;
   buffer->cap = 0;
+  buffer->index_cap = 0;
+}
+
+static bool winners_index_rehash(struct WinnerBuffer *buffer, size_t new_cap) {
+  if (new_cap == 0 || (new_cap & (new_cap - 1)) != 0 ||
+      new_cap > SIZE_MAX / sizeof(size_t)) {
+    return false;
+  }
+
+  size_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    return false;
+  }
+  for (size_t i = 0; i < new_cap; i++) {
+    slots[i] = SIZE_MAX;
+  }
+
+  const size_t mask = new_cap - 1;
+  for (size_t i = 0; i < buffer->len; i++) {
+    size_t slot = hash_command_bytes(buffer->items[i].command) & mask;
+    while (slots[slot] != SIZE_MAX) {
+      slot = (slot + 1) & mask;
+    }
+    slots[slot] = i;
+  }
+
+  free(buffer->index_slots);
+  buffer->index_slots = slots;
+  buffer->index_cap = new_cap;
+  return true;
+}
+
+/*
+ * Insert the newest tail entry (items[len - 1]) into the winner index.
+ * Caller must increment len before calling so growth-path rehash covers it.
+ */
+static bool winners_index_insert_tail(struct WinnerBuffer *buffer) {
+  if (buffer->len == 0) {
+    return false;
+  }
+  const size_t item_index = buffer->len - 1;
+
+  /* Grow before load exceeds half the power-of-two table (overflow-safe). */
+  if (buffer->index_cap == 0 || buffer->len > buffer->index_cap / 2) {
+    size_t new_cap;
+    if (buffer->index_cap == 0) {
+      new_cap = (size_t)16;
+    } else if (buffer->index_cap > SIZE_MAX / 2) {
+      /* Reject before index_cap * 2 wraps; a wrapped 0 would spin forever. */
+      return false;
+    } else {
+      new_cap = buffer->index_cap * 2;
+    }
+    while (new_cap / 2 < buffer->len) {
+      if (new_cap > SIZE_MAX / 2) {
+        return false;
+      }
+      new_cap *= 2;
+    }
+    return winners_index_rehash(buffer, new_cap);
+  }
+
+  const size_t mask = buffer->index_cap - 1;
+  size_t slot = hash_command_bytes(buffer->items[item_index].command) & mask;
+  while (buffer->index_slots[slot] != SIZE_MAX) {
+    slot = (slot + 1) & mask;
+  }
+  buffer->index_slots[slot] = item_index;
+  return true;
+}
+
+static const struct WinnerEntry *winners_find(const struct WinnerBuffer *buffer,
+                                              const char *command) {
+  if (buffer->index_cap == 0 || buffer->index_slots == NULL) {
+    return NULL;
+  }
+
+  const size_t mask = buffer->index_cap - 1;
+  size_t slot = hash_command_bytes(command) & mask;
+  for (;;) {
+    const size_t idx = buffer->index_slots[slot];
+    if (idx == SIZE_MAX) {
+      return NULL;
+    }
+    if (cmp_unsigned_bytes(buffer->items[idx].command, command) == 0) {
+      return &buffer->items[idx];
+    }
+    slot = (slot + 1) & mask;
+  }
 }
 
 static bool winners_append(struct WinnerBuffer *buffer, char *owned_command,
@@ -439,9 +594,16 @@ static bool winners_append(struct WinnerBuffer *buffer, char *owned_command,
     buffer->cap = new_cap;
   }
 
-  buffer->items[buffer->len].command = owned_command;
-  buffer->items[buffer->len].path = owned_path;
+  const size_t new_index = buffer->len;
+  buffer->items[new_index].command = owned_command;
+  buffer->items[new_index].path = owned_path;
   buffer->len++;
+  if (!winners_index_insert_tail(buffer)) {
+    buffer->len--;
+    buffer->items[new_index].command = NULL;
+    buffer->items[new_index].path = NULL;
+    return false;
+  }
   return true;
 }
 
@@ -457,9 +619,94 @@ static void shadows_free(struct ShadowBuffer *buffer) {
     }
   }
   free(buffer->items);
+  free(buffer->index_slots);
   buffer->items = NULL;
+  buffer->index_slots = NULL;
   buffer->len = 0;
   buffer->cap = 0;
+  buffer->index_cap = 0;
+}
+
+static bool shadows_index_rehash(struct ShadowBuffer *buffer, size_t new_cap) {
+  if (new_cap == 0 || (new_cap & (new_cap - 1)) != 0 ||
+      new_cap > SIZE_MAX / sizeof(size_t)) {
+    return false;
+  }
+
+  size_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    return false;
+  }
+  for (size_t i = 0; i < new_cap; i++) {
+    slots[i] = SIZE_MAX;
+  }
+
+  const size_t mask = new_cap - 1;
+  for (size_t i = 0; i < buffer->len; i++) {
+    size_t slot = hash_command_shadow_pair(buffer->items[i].command,
+                                           buffer->items[i].shadow) &
+                  mask;
+    while (slots[slot] != SIZE_MAX) {
+      slot = (slot + 1) & mask;
+    }
+    slots[slot] = i;
+  }
+
+  free(buffer->index_slots);
+  buffer->index_slots = slots;
+  buffer->index_cap = new_cap;
+  return true;
+}
+
+/*
+ * Drop the positional (command, shadow) index. Required before reordering
+ * items (qsort): slots name insertion positions and do not survive permute.
+ * After this call, shadow_tuple_recorded returns false; do not append more
+ * shadows that rely on duplicate suppression for the remainder of the run.
+ */
+static void shadows_index_invalidate(struct ShadowBuffer *buffer) {
+  free(buffer->index_slots);
+  buffer->index_slots = NULL;
+  buffer->index_cap = 0;
+}
+
+/*
+ * Insert the newest tail entry (items[len - 1]) into the shadow index.
+ * Caller must increment len before calling so growth-path rehash covers it.
+ */
+static bool shadows_index_insert_tail(struct ShadowBuffer *buffer) {
+  if (buffer->len == 0) {
+    return false;
+  }
+  const size_t item_index = buffer->len - 1;
+
+  if (buffer->index_cap == 0 || buffer->len > buffer->index_cap / 2) {
+    size_t new_cap;
+    if (buffer->index_cap == 0) {
+      new_cap = (size_t)16;
+    } else if (buffer->index_cap > SIZE_MAX / 2) {
+      return false;
+    } else {
+      new_cap = buffer->index_cap * 2;
+    }
+    while (new_cap / 2 < buffer->len) {
+      if (new_cap > SIZE_MAX / 2) {
+        return false;
+      }
+      new_cap *= 2;
+    }
+    return shadows_index_rehash(buffer, new_cap);
+  }
+
+  const size_t mask = buffer->index_cap - 1;
+  size_t slot = hash_command_shadow_pair(buffer->items[item_index].command,
+                                         buffer->items[item_index].shadow) &
+                mask;
+  while (buffer->index_slots[slot] != SIZE_MAX) {
+    slot = (slot + 1) & mask;
+  }
+  buffer->index_slots[slot] = item_index;
+  return true;
 }
 
 static bool shadows_append(struct ShadowBuffer *buffer, char *owned_command,
@@ -480,11 +727,19 @@ static bool shadows_append(struct ShadowBuffer *buffer, char *owned_command,
     buffer->cap = new_cap;
   }
 
-  buffer->items[buffer->len].command = owned_command;
-  buffer->items[buffer->len].winner = owned_winner;
-  buffer->items[buffer->len].shadow = owned_shadow;
-  buffer->items[buffer->len].shadow_index = shadow_index;
+  const size_t new_index = buffer->len;
+  buffer->items[new_index].command = owned_command;
+  buffer->items[new_index].winner = owned_winner;
+  buffer->items[new_index].shadow = owned_shadow;
+  buffer->items[new_index].shadow_index = shadow_index;
   buffer->len++;
+  if (!shadows_index_insert_tail(buffer)) {
+    buffer->len--;
+    buffer->items[new_index].command = NULL;
+    buffer->items[new_index].winner = NULL;
+    buffer->items[new_index].shadow = NULL;
+    return false;
+  }
   return true;
 }
 
@@ -1200,7 +1455,18 @@ static int try_command_match(const struct Root *root, const char *command,
   }
   free(candidate);
 
-  *match_out = resolved_buf;
+  /*
+   * realpath requires PATHAUDIT_MAX_ROOT_LENGTH+1 scratch; retain only the
+   * exact canonical text (strlen + 1) as winner/shadow/MATCH ownership.
+   */
+  char *owned_resolved = owned_strdup(resolved_buf);
+  free(resolved_buf);
+  if (owned_resolved == NULL) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+
+  *match_out = owned_resolved;
   *mode_out = st.st_mode;
   *uid_out = st.st_uid;
   return 0;
@@ -1267,22 +1533,54 @@ static int append_executable_trust_findings(const char *resolved, size_t index,
 }
 
 /*
+ * True when an exact (command, winner, shadow) tuple is already recorded.
+ * Repeated PATH components that resolve to the same non-winner realpath must
+ * not append a duplicate SHADOWED row. Lookup is O(1) amortized via the
+ * (command, shadow) open-addressing index; winner is confirmed on hit.
+ */
+static bool shadow_tuple_recorded(const struct ShadowBuffer *shadows,
+                                  const char *command, const char *winner,
+                                  const char *shadow) {
+  if (shadows->index_cap == 0 || shadows->index_slots == NULL) {
+    return false;
+  }
+
+  const size_t mask = shadows->index_cap - 1;
+  size_t slot = hash_command_shadow_pair(command, shadow) & mask;
+  for (;;) {
+    const size_t idx = shadows->index_slots[slot];
+    if (idx == SIZE_MAX) {
+      return false;
+    }
+    const struct ShadowRecord *item = &shadows->items[idx];
+    if (cmp_unsigned_bytes(item->command, command) == 0 &&
+        cmp_unsigned_bytes(item->shadow, shadow) == 0 &&
+        cmp_unsigned_bytes(item->winner, winner) == 0) {
+      return true;
+    }
+    slot = (slot + 1) & mask;
+  }
+}
+
+/*
  * Record one regular executable discovered under a PATH component.
  * First PATH-order hit for a basename becomes the winner; later hits with a
- * distinct realpath are shadowed. Identical realpaths (repeated components)
- * do not self-shadow.
+ * distinct realpath are shadowed once each. Identical winner realpaths
+ * (repeated components) do not self-shadow. Exact duplicate
+ * (command, winner, shadow) tuples are suppressed.
  */
 static int record_executable_hit(const char *command, char *owned_resolved,
                                  size_t path_index,
                                  struct WinnerBuffer *winners,
                                  struct ShadowBuffer *shadows) {
-  for (size_t i = 0; i < winners->len; i++) {
-    const struct WinnerEntry *winner = &winners->items[i];
-    if (cmp_unsigned_bytes(winner->command, command) != 0) {
-      continue;
+  const struct WinnerEntry *winner = winners_find(winners, command);
+  if (winner != NULL) {
+    if (cmp_unsigned_bytes(winner->path, owned_resolved) == 0) {
+      free(owned_resolved);
+      return 0;
     }
 
-    if (cmp_unsigned_bytes(winner->path, owned_resolved) == 0) {
+    if (shadow_tuple_recorded(shadows, command, winner->path, owned_resolved)) {
       free(owned_resolved);
       return 0;
     }
@@ -1489,6 +1787,8 @@ static int run_path_mode(void) {
           compare_findings);
   }
   if (shadows.len > 1) {
+    /* Positional index_slots do not survive reordering; scanning is done. */
+    shadows_index_invalidate(&shadows);
     qsort(shadows.items, shadows.len, sizeof(shadows.items[0]),
           compare_shadows);
   }

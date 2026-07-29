@@ -1,5 +1,55 @@
 # Where Am I
 
+## pathaudit Governed Run `6ca4cebc8527` Recovery
+
+Governed recovery run `4ae7a820b0a3` (`repair_governed_run_6ca4cebc8527`)
+reconciled the dirty pathaudit maintenance candidate left by failed run
+`6ca4cebc8527` and passed independent review. Focused pathaudit pytest:
+151 passed / 15 skipped. Step-5 static gates on `src/pathaudit.c` all
+exited 0. Step-6 ASan+UBSan and Valgrind pathaudit routes each
+151 passed / 15 skipped. Step-7 complete suite: 343 passed / 15 skipped
+(scratch writable gitdir). Smoke start/check 0 with empty blockers;
+check.log `340 passed, 18 skipped in 22.01s`. Verdict
+`code-reviews/review-pathaudit-governed-run-6ca4cebc8527.verdict.json`
+is `pass` and closes `pathaudit-shadow-1/2/3`. Remaining: Medium
+PA-6CA-4 (review-worker complete-suite/`git worktree` EROFS note) and
+Low PA-6CA-1/2/3. Failed origin `6ca4cebc8527` is still not a passed
+delivery; this does not release pathaudit or close unrelated backlogs.
+
+## Fifth Utility Mission
+
+The reviewed fifth-suite mission is `shebangcheck`: a future small ISO C17
+command-line utility for read-only preflight of explicitly named scripts
+against a closed direct-absolute-interpreter shebang subset. Its bounded first
+vertical slice would accept only explicit regular-file operands, read a fixed
+maximum first-line prefix, reject or classify malformed and unsupported
+headers, inspect the directly named interpreter without launching it or
+searching PATH, and emit deterministic escaped findings. `/usr/bin/env`
+resolution, shell parsing, recursion, monitoring, remediation, persistence,
+networking, installation, packaging, and release are outside that slice. A
+later normative contract must still define the exact CLI, output bytes,
+finding taxonomy, limits, diagnostics, signal behavior, and exit statuses.
+
+Governed run `e5f6740c1571` selected the mission and passed independent review
+with no Critical or High findings, Medium FUM5-M1/FUM5-M2, and Low
+FUM5-L1–FUM5-L4. The Mediums preserve uncertainty in the comparison matrix
+and the usefulness rating for a slice that excludes common env-launcher
+shebangs; the Lows preserve an arithmetic error, a traceability omission, an
+ambiguous heading-count contract clause, and an unexplained security score.
+No `shebangcheck` source, tests, manual, Make wiring, smoke identity, package,
+tag, or release was produced or verified. The suite still has three
+implemented utilities, while fourth mission `inodealias` and fifth mission
+`shebangcheck` remain planning commitments.
+
+Next action is not feature implementation yet: complete bounded repair and
+fresh independent review of permguard Medium PG-DOC-501/502, PG-TEST-503,
+PG-PORT-505, and PG-DOC-512, keep recovery findings Medium PA-6CA-4 and Low
+PA-6CA-1/2/3 visible after run `4ae7a820b0a3`, and clear any other applicable
+Medium-or-higher expansion gate. Only then should Agent-Orch generate a
+separate governed `shebangcheck` implementation playbook beginning with its
+normative contract and continuing through fixtures, implementation,
+documentation, dedicated smoke, quality evidence, and independent review.
+
 ## Bootstrap permguard (`51100a584ac9`)
 
 The suite now has a reviewed third-utility bootstrap under the live contract
@@ -95,7 +145,8 @@ allowlisted pathaudit pytest → 143 passed, 15 skipped. This does
 **not** claim that `pathaudit` is released or that the sysdiff smoke
 oracle covers directory-ownership `--path` / `--command` detection.
 Next: keep Low `path-dir-ownership-1` visible; prefer Detect writable
-ancestors of PATH directories as next genuine capability.
+ancestors of PATH directories as next genuine capability; Medium
+pathaudit-shadow-1 is closed by later recovery `4ae7a820b0a3`.
 
 ## Detect executables with unsafe ownership
 
@@ -116,8 +167,9 @@ is `pass` (0 Critical/High/Medium/Low formal findings); allowlisted
 full pytest → 271 passed, 14 skipped. This does **not** claim that
 `pathaudit` is released or that the sysdiff smoke oracle covers an
 ownership-specific `--path` / `--command` user flow. Next: keep
-informational ownership notes visible; prefer repairing Medium
-pathaudit-shadow-1 or resume prior Medium backlog.
+informational ownership notes visible; Medium pathaudit-shadow-1 is
+closed by later recovery `4ae7a820b0a3`; resume prior Medium backlog
+other than the closed shadow IDs.
 
 ## Detect writable resolved-executables through PATH
 
@@ -139,8 +191,9 @@ is `pass` (0 Critical/High/Medium, 2 Low PA-W1/PA-W2); allowlisted
 full pytest → 269 passed, 1 skipped. This does **not** claim that
 `pathaudit` is released or that the sysdiff smoke oracle covers
 writable-executable `--path` / `--command` detection. Next: keep Low
-PA-W1/PA-W2 visible; prefer repairing Medium pathaudit-shadow-1 or
-resume prior Medium backlog.
+PA-W1/PA-W2 visible; Medium pathaudit-shadow-1 is closed by later
+recovery `4ae7a820b0a3`; resume prior Medium backlog other than the
+closed shadow IDs.
 
 ## Detect executable shadowing across PATH entries
 
@@ -160,9 +213,8 @@ Exact smoke (`artifacts/user-smoke/result.json`): `app_started: true`,
 pathaudit-shadow-2/3); allowlisted full pytest → 247 passed, 1
 skipped. This does **not** claim that `pathaudit` is released or that
 the sysdiff smoke oracle covers executable-shadowing `--path`
-detection. Next: keep Medium pathaudit-shadow-1 and Low
-pathaudit-shadow-2/3 visible; prefer repairing pathaudit-shadow-1 or
-resume prior Medium backlog.
+detection. Later recovery `4ae7a820b0a3` closed pathaudit-shadow-1/2/3;
+keep that historical Medium/Low record visible as prior evidence only.
 
 ## Detect non-directory PATH entries
 
@@ -406,21 +458,26 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone is the completed and independently reviewed permguard
-bootstrap from run `51100a584ac9` under `docs/permguard-bootstrap-contract.md`.
-It advances the Future Mission Discovery selection into an implemented
-four-code explicit-path slice (`GROUP_WRITABLE` / `OTHER_WRITABLE` /
-`SET_USER_ID` / `SET_GROUP_ID`, symlink rejection, streaming continue-after-
-error), but it is not a release or a finding-free closure. Independent verdict
-is `pass` with Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512 and
-Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. Next is bounded
-repair of those Mediums plus fresh review, not feature expansion. This
-milestone does not change the separately prepared unpublished `sysdiff` 0.1.0
-package from run `580b0f6ff811`; prior pathaudit work remains historical
-capability evidence.
+The current milestone is the reviewed pathaudit maintenance recovery from
+run `4ae7a820b0a3` for failed origin `6ca4cebc8527`. It closes
+`pathaudit-shadow-1/2/3` under independent verdict `pass` while leaving
+Medium PA-6CA-4 and Low PA-6CA-1/2/3 visible, and it does not claim that
+the failed origin run passed or that pathaudit is released. The separately
+reviewed permguard bootstrap from run `51100a584ac9` remains live under
+`docs/permguard-bootstrap-contract.md` with Medium
+PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512 still open. This
+milestone does not change the separately prepared unpublished `sysdiff`
+0.1.0 package from run `580b0f6ff811`.
 
 ## Milestone state
 
+- Run `4ae7a820b0a3` recovered and reviewed the dirty pathaudit
+  maintenance candidate from failed `6ca4cebc8527`: focused pytest
+  151/15; static gates exit 0; ASan+UBSan and Valgrind pathaudit
+  151/15 each; complete suite 343/15 (writable gitdir); smoke
+  start/check 0 with check.log 340/18; verdict `pass` closing
+  pathaudit-shadow-1/2/3 with remaining Medium PA-6CA-4 and Low
+  PA-6CA-1/2/3. Origin `6ca4cebc8527` is still not a passed delivery.
 - Run `51100a584ac9` delivered and reviewed the live `permguard` bootstrap:
   bootstrap contract/plan/source/man/tests/Makefile wiring; focused pytest
   52/0 (review allowlisted, 0.43s); step-5 full 332/18 plus static gates and
@@ -463,6 +520,7 @@ capability evidence.
   pathaudit-shadow-1 and Low pathaudit-shadow-2/3; allowlisted full
   pytest 247 passed, 1 skipped. Not a pathaudit release; smoke oracle
   does not directly exercise executable-shadowing `--path` detection.
+  Later recovery `4ae7a820b0a3` closed those three shadow IDs.
 - Run `35116f657f35` delivered and reviewed Detect non-directory PATH
   entries: step-3 Clang `-fsyntax-only` + cppcheck exit 0; full pytest
   234/1; smoke start/check 0; review `pass` with Low nondir-1/2 only;
@@ -674,6 +732,7 @@ PG-DOC-501 (architecture taxonomy mismatch), remaining PG-DOC-502 draft
 markers, PG-TEST-503 (`STDOUT_WRITE`/SIGPIPE coverage), PG-PORT-505
 (hand-declared `lstat`), and PG-DOC-512 (QUALITY/TESTING silence), followed by
 fresh independent review before feature expansion. Keep Low
-PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, evaluation Lows, and
-prior pathaudit/sysdiff backlogs visible. Do not claim permguard or pathaudit
-released, and preserve the unpublished sysdiff candidate from `580b0f6ff811`.
+PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, recovery Medium
+PA-6CA-4 and Low PA-6CA-1/2/3, evaluation Lows, and prior pathaudit/sysdiff
+backlogs visible. Do not claim permguard or pathaudit released, and preserve
+the unpublished sysdiff candidate from `580b0f6ff811`.

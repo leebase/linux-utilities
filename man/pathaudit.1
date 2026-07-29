@@ -93,8 +93,23 @@ executable trust model;
 applies that same trust model to each
 .B MATCH
 target.
-None of the modes walk nested directory trees, examine ancestor directories, or
-remediate anything.
+None of the modes walk nested directory trees or remediate anything.
+Under
+.B \-\-path
+and
+.BR \-\-command ,
+usable directory components may also emit
+.B UNSAFE_OWNER
+for the component
+.B realpath
+and each canonical ancestor through
+.B /
+when the directory owner is neither UID 0 nor the invoking real UID;
+under
+.B \-\-command
+that directory/ancestor walk is subject to the same match\-or\-plant\-risk
+applicability gate as directory permission codes.
+Shared offending ancestors keep the lowest PATH index.
 One root or one PATH component is one inspection input; duplicates remain
 distinct.
 Inspection is read\-only and requires no special privilege.
@@ -111,13 +126,15 @@ Ordering and escaping are byte\-oriented and locale\-independent.
 .P
 This narrow slice does not inspect packages, processes, services, capabilities,
 ACLs, or mount options.
-The only ownership rule is the narrow
+Ownership uses the shared
 .B UNSAFE_OWNER
-check on executable targets resolved by
+trust rule (UID 0 or the invoking real UID) on executable targets resolved by
 .B \-\-path
 and
-.BR \-\-command
-(final\-target owner must be UID 0 or the invoking real UID).
+.BR \-\-command ,
+and on usable PATH\-directory
+.B realpath
+chains under those modes as described above.
 It performs no remediation, networking, persistence, monitoring, or daemon work.
 Filesystem state can change concurrently, so a result describes metadata
 observed during that invocation and is not a security lock.
@@ -271,22 +288,35 @@ when that target has
 set.
 .TP
 .B UNSAFE_OWNER
-Emitted only for executable targets resolved by
+Emitted under
 .B \-\-path
-or
+and
 .BR \-\-command
-when the final followed\-target owner
-.RB ( st_uid )
-is neither UID 0 nor the invoking real UID from
+when a trusted\-owner check fails.
+Trusted owners are UID 0 and the invoking real UID from
 .BR getuid (2) .
-The finding names the executable
-.BR realpath ,
-not the PATH directory component.
-Symlink candidates follow the final target for ownership metadata.
-Trusted owners are root and the invoking user only.
-Explicit\-root mode never searches executables and never emits
+For resolved executable targets the finding names the executable
+.BR realpath
+(symlink candidates use final\-target ownership).
+For usable PATH directories under
+.BR \-\-path ,
+and for applicable components under
+.BR \-\-command ,
+the same trust rule also walks the directory
+.B realpath
+and each canonical ancestor through
+.BR / ;
+shared offending ancestors keep the lowest PATH index.
+.B \-\-path
+does not audit the process working directory for empty PATH fields;
+under
+.B \-\-command
+an empty PATH field may audit the cwd chain
+.RB ( "." )
+when the applicability gate holds.
+Explicit\-root mode never searches executables, never walks ancestors, and
+never emits
 .BR UNSAFE_OWNER .
-Directory ownership is not classified.
 .P
 Lookup follows symbolic links like
 .BR stat (2) ;
@@ -312,15 +342,25 @@ shared\-taxonomy findings (including
 .BR UNSAFE_OWNER )
 precede all
 .B SHADOWED
-lines
-.RI ( SHADOWED
-reports a later distinct executable
+lines.
+.B SHADOWED
+names a later distinct executable
 .B realpath
 for a basename already won earlier in
-.BR PATH ).
-Emitting
+.BR PATH .
+Uniqueness is by
+.RI ( command , winner realpath , shadow realpath ) :
+exact duplicate tuples emit once, so repeated non\-winner components that
+resolve to the same shadow
+.B realpath
+produce one row; genuinely distinct later realpaths still produce one row
+each.
+The first PATH\-order hit remains the winner.
+A unique
+.B SHADOWED
+or
 .B UNSAFE_OWNER
-completes inspection with exit status
+finding completes inspection with exit status
 .B 1
 and empty stderr on the successful hazard path.
 To remediate, replace foreign\-owned PATH executables with root\-owned or
@@ -351,6 +391,16 @@ and to writable directories that still precede the first
 a writable absolute directory after the winner with no match for
 .I NAME
 is not reported.
+The directory
+.B realpath
+and ancestor\-chain
+.B UNSAFE_OWNER
+walk uses that same match\-or\-plant\-risk gate.
+An empty PATH field audits the process working directory chain
+.RB ( "." )
+under that gate
+.RB ( \-\-path
+does not).
 Each
 .B MATCH
 target also receives executable writability codes and may receive
@@ -478,8 +528,13 @@ as one
 .BR EMPTY_ROOT ,
 an existing non\-directory component as
 .BR NON_DIRECTORY_ROOT ,
+.BR UNSAFE_OWNER ,
 or
-.BR UNSAFE_OWNER ).
+.BR SHADOWED ).
+Suppressing a duplicate
+.B SHADOWED
+copy never turns a run that still has a unique shadow into status
+.BR 0 .
 .TP
 .B 2
 Usage error, unset
