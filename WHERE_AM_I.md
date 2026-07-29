@@ -1,5 +1,60 @@
 # Where Am I
 
+## Bootstrap permguard (`51100a584ac9`)
+
+The suite now has a reviewed third-utility bootstrap under the live contract
+`docs/permguard-bootstrap-contract.md`. Governed run `51100a584ac9` delivered
+`permguard`, a small ISO C17 read-only scanner for explicit operands:
+`permguard [--] PATH...`, plus sole-argument `--help` and `--version`. It
+performs one `lstat` per operand and reports the closed four-code taxonomy
+`GROUP_WRITABLE`, `OTHER_WRITABLE`, `SET_USER_ID`, and `SET_GROUP_ID` from each
+named object's own mode bits without file-type heuristics. Final symlinks are
+status-2 rejections; findings stream per operand; mixed runs continue after
+errors with operational precedence. It does not recurse, read PATH, mutate
+permissions, install, package, or publish the utility.
+
+Independent review allowlisted focused pytest at 52 passed / 0 skipped in
+0.43s. That command transitively compiled permguard with strict C17 warning
+flags into a temp tree; review did not freshly run Make, full pytest,
+sanitizers, Valgrind, or static analyzers as gate results. Step-5 quality-floor
+validation recorded static gates, ASan+UBSan/Valgrind `--help` probes, full
+pytest 332 passed / 18 skipped, and shell fixtures passing. Smoke passed
+start/check 0, empty blockers, and check.log pytest
+`332 passed, 18 skipped in 19.78s`; that pinned sysdiff-named oracle reaches
+permguard transitively through `make test` but is not a permguard-specific
+end-to-end flow.
+
+Verdict is `pass`, not finding-free: Medium PG-DOC-501 (architecture taxonomy
+mismatch), PG-DOC-502 (superseded draft residue), PG-TEST-503 (`STDOUT_WRITE`
+/SIGPIPE coverage gap), PG-PORT-505 (hand-declared `lstat`), and PG-DOC-512
+(QUALITY/TESTING silence) plus Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508,
+PG-MAKE-509/510/511 remain. One-code vertical-slice drafts are superseded
+non-authority. Next action is a bounded governed repair of the five Mediums
+and a fresh independent review before feature expansion. This is not evidence
+for broader permission auditing, recursion, remediation, release readiness, or
+a published release.
+
+## Prior — Permguard First Vertical Slice (`f742c10135e5`)
+
+Run `f742c10135e5` delivered and reviewed a one-code `WORLD_WRITABLE_FILE`
+slice under `docs/permguard-first-vertical-slice-contract.md`. Focused review
+pytest was 67 passed / 0 skipped; verdict `pass` with Medium PG-REV-301/302
+and Low PG-REV-202/203/205/206/303/304. Current run `51100a584ac9` supersedes
+that product authority.
+
+## Prior — Permguard Delivery (`629d1f459446`)
+
+Run `629d1f459446` delivered and reviewed an earlier one-code slice after
+repairing High PG-DOC-101. Its focused review check was 66 passed / 0 skipped,
+and its pass verdict retained Medium PG-REV-201 plus Low PG-REV-202–207.
+Superseded by later cycles.
+
+## Prior — Permguard Bootstrap (`a8341dfae9f2`)
+
+Historical four-code bootstrap from run `a8341dfae9f2` (world-writable
+directories and set-ID executables also hazardous; verdict `pass` with
+PG-DOC-001/PG-TEST-002). Superseded by `629d1f459446`.
+
 ## Next Utility Evaluation
 
 Product orientation after reviewed Future Mission Discovery: pathaudit is
@@ -11,10 +66,12 @@ hazard taxonomy and suite-aligned exits; non-goals include recursion,
 PATH reading, remediation, and any release claim. Review outcome:
 `pass` with unresolved Low `permguard-writability-overlap` and
 `first-slice-scope-breadth` only; review evidence was plan verification,
-not a new-utility smoke or release gate. Next executable action: launch
-governed work to deliver that permguard bootstrap slice. Do not treat
-this handoff as implementation or release of permguard, pathaudit, or
-sysdiff; prior Medium/Low repair backlogs remain separately visible.
+not a new-utility smoke or release gate. Its historical next action was to
+launch governed work for that permguard bootstrap slice; run `51100a584ac9`
+has now completed it under `docs/permguard-bootstrap-contract.md`. Do not
+treat the selection handoff itself as implementation or release of
+permguard, pathaudit, or sysdiff; prior Medium/Low repair backlogs remain
+separately visible.
 
 ## Detect unsafe ownership of PATH directories
 
@@ -349,19 +406,38 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone is the reviewed Future Mission Discovery selection:
-pathaudit is at its v1 capability-completion boundary, and the chosen
-next mission is bootstrap `permguard` (first vertical slice: explicit-
-root permission scanner). Independent evaluation review
-`code-reviews/review-next-linux-utility-evaluation.verdict.json` =
-`pass` (2 Low findings only; plan-evidence checks, not product smoke).
-This is **not** implementation or release of permguard or pathaudit and
-does not change the separately prepared unpublished `sysdiff` 0.1.0
-package from run `580b0f6ff811`. Prior pathaudit directory-ownership
-work from `50c0b4936d50` remains historical capability evidence.
+The current milestone is the completed and independently reviewed permguard
+bootstrap from run `51100a584ac9` under `docs/permguard-bootstrap-contract.md`.
+It advances the Future Mission Discovery selection into an implemented
+four-code explicit-path slice (`GROUP_WRITABLE` / `OTHER_WRITABLE` /
+`SET_USER_ID` / `SET_GROUP_ID`, symlink rejection, streaming continue-after-
+error), but it is not a release or a finding-free closure. Independent verdict
+is `pass` with Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512 and
+Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. Next is bounded
+repair of those Mediums plus fresh review, not feature expansion. This
+milestone does not change the separately prepared unpublished `sysdiff` 0.1.0
+package from run `580b0f6ff811`; prior pathaudit work remains historical
+capability evidence.
 
 ## Milestone state
 
+- Run `51100a584ac9` delivered and reviewed the live `permguard` bootstrap:
+  bootstrap contract/plan/source/man/tests/Makefile wiring; focused pytest
+  52/0 (review allowlisted, 0.43s); step-5 full 332/18 plus static gates and
+  ASan/Valgrind `--help` probes; smoke start/check 0 and check.log 332/18.
+  Review `pass` with Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505,
+  PG-DOC-512 and Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511.
+  Not installed, packaged, released, recursive, or remedial.
+- Run `f742c10135e5` is prior one-code evidence under
+  `docs/permguard-first-vertical-slice-contract.md`: focused review pytest
+  67/0; verdict `pass` with Medium PG-REV-301/302. Superseded as product
+  authority by `51100a584ac9`.
+- Run `629d1f459446` is prior one-code evidence: focused review pytest 66/0;
+  High PG-DOC-101 repaired; verdict `pass` with Medium PG-REV-201 and Low
+  PG-REV-202–207. Superseded by later cycles.
+- Run `a8341dfae9f2` historically delivered a four-code `permguard`
+  bootstrap (verdict `pass` with PG-DOC-001/PG-TEST-002); historical relative
+  to the restored live bootstrap authority in `51100a584ac9`.
 - Run `50c0b4936d50` delivered and reviewed Detect unsafe ownership of
   PATH directories: step-2 `make clean && make` exit 0; full pytest
   280/18 in 26.84s; smoke start/check 0; review `pass` with Low
@@ -593,15 +669,11 @@ work from `50c0b4936d50` remains historical capability evidence.
 
 ## Next milestone
 
-Next executable action: governed bootstrap of the `permguard` explicit-
-root vertical slice (contract, `src/permguard.c`, man page, pytest,
-Makefile wiring) under existing strict quality gates. Keep evaluation
-Low findings `permguard-writability-overlap` and
-`first-slice-scope-breadth` visible. Keep prior pathaudit Medium/Low
-(including `path-dir-ownership-1`, pathaudit-shadow-1, PA-M leftovers)
-and sysdiff packaging Mediums visible as ordinary repair—not blockers
-for starting permguard, and not closed by this selection. Writable-
-ancestor pathaudit work remains deferred/enhancement per the completion
-boundary. Do not claim pathaudit or permguard released; do not renew
-`sysdiff` release work (`v0.1.0` exists). Preserve the unpublished
-`sysdiff` 0.1.0 candidate from `580b0f6ff811`.
+Next executable action: a bounded governed repair of permguard Medium
+PG-DOC-501 (architecture taxonomy mismatch), remaining PG-DOC-502 draft
+markers, PG-TEST-503 (`STDOUT_WRITE`/SIGPIPE coverage), PG-PORT-505
+(hand-declared `lstat`), and PG-DOC-512 (QUALITY/TESTING silence), followed by
+fresh independent review before feature expansion. Keep Low
+PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, evaluation Lows, and
+prior pathaudit/sysdiff backlogs visible. Do not claim permguard or pathaudit
+released, and preserve the unpublished sysdiff candidate from `580b0f6ff811`.

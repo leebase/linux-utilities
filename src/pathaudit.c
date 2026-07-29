@@ -506,7 +506,8 @@ static void path_components_free(struct PathComponents *components) {
  * lookups and pure-ENOENT joins stay split to preserve ordinary PATH semantics.
  * Empty fields are never crossed. Mutates owned storage only.
  */
-static void coalesce_inspection_path_fragments(struct PathComponents *components) {
+static void
+coalesce_inspection_path_fragments(struct PathComponents *components) {
   struct Root *roots = components->roots;
   size_t n = components->count;
   size_t out = 0;

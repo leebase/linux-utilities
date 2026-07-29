@@ -265,3 +265,106 @@ review check `python3 -m pytest -p no:cacheprovider
 tests/test_pathaudit.py -q` → 94 passed, 1 skipped in ~1.9s. This cycle
 does not claim that `pathaudit` is released, installable via
 `make install`, or that a product release was published.
+
+## 2026-07-29 — Bootstrap permguard (`51100a584ac9`)
+
+Governed run `51100a584ac9` (`bootstrap_permguard_first_vertical_slice`)
+delivered the live `permguard` bootstrap under
+`docs/permguard-bootstrap-contract.md` and
+`plans/permguard-bootstrap-implementation-plan.md`, with `src/permguard.c`,
+`tests/test_permguard.py`, `man/permguard.1`, README/CHANGELOG documentation,
+and additive Makefile quality/sanitizer/Valgrind wiring. The read-only
+`permguard [--] PATH...` scanner performs one `lstat` per operand, does not
+follow the final symlink, streams findings per operand, continues after
+per-operand errors, and reports the closed four-code taxonomy
+`GROUP_WRITABLE`, `OTHER_WRITABLE`, `SET_USER_ID`, and `SET_GROUP_ID` from each
+named object's own mode bits without file-type heuristics. Final symlinks are
+status-2 rejections; display bytes are escaped; exits are 0/1/2 with
+operational-error precedence over hazards.
+
+Failed experiment then recovered: review attempt 1 failed the verdict gate on
+High PG-DOC-401 because mutually exclusive one-code and four-code contracts
+were both present without clear supersession and AgentFlow still named the
+one-code draft. Repair loop (step_05 attempt 2) declared
+`docs/permguard-bootstrap-contract.md` the sole live authority with an
+explicit Authority section, mirrored that in the bootstrap plan, README, and
+CHANGELOG, and tightened contract regression tests; AgentFlow closeout in
+step_08 records the same authority. Superseded one-code drafts remain on disk
+as non-authority (Medium PG-DOC-502 residue).
+
+Independent review allowlisted only
+`python3 -m pytest -p no:cacheprovider tests/test_permguard.py -q` → exit 0,
+52 passed in 0.43s, zero skipped. Review did not rerun compilers, Make,
+sanitizers, Valgrind, full pytest, or smoke as gate results. Step-5
+quality-floor validation recorded GCC/Clang strict syntax, clang-format,
+clang-tidy, cppcheck, Clang analyzer, ASan+UBSan `--help` and Valgrind
+`--help` probes, full pytest `332 passed, 18 skipped`, and both shell fixture
+suites exiting 0. Smoke `artifacts/user-smoke/result.json` recorded
+start/check 0 with empty blocking errors; check.log pytest
+`332 passed, 18 skipped in 19.78s` (sysdiff-named oracle reaches permguard
+transitively via `make test`).
+
+Independent review `code-reviews/review-permguard-bootstrap.md` /
+`.verdict.json` is `pass`: no Critical or High findings, five Medium
+(PG-DOC-501 architecture taxonomy mismatch; PG-DOC-502 draft residue;
+PG-TEST-503 untested `STDOUT_WRITE`/SIGPIPE; PG-PORT-505 hand-declared
+`lstat`; PG-DOC-512 QUALITY/TESTING silence), and six Low
+(PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511). Next is bounded
+repair of those Mediums and fresh independent review before feature expansion.
+This history entry does not claim installation, packaging, publication,
+recursion, PATH scanning, remediation, or a finding-free quality closure.
+
+## 2026-07-29 — permguard first vertical-slice bootstrap (`629d1f459446`)
+
+Governed run `629d1f459446` (`bootstrap_permguard_first_vertical_slice`)
+delivered the live first `permguard` vertical slice under
+`docs/permguard-first-vertical-slice-contract.md` and
+`plans/permguard-first-vertical-slice-plan.md`, with `src/permguard.c`,
+`tests/test_permguard.py`, `man/permguard.1`, README/CHANGELOG documentation,
+and additive Makefile quality/sanitizer/Valgrind wiring. The read-only
+`permguard [--] PATH...` scanner performs one `lstat` per operand, does not
+follow the final symlink, and reports only world-writable regular files as
+`WORLD_WRITABLE_FILE`. Directories, set-user-ID/set-group-ID executables, and
+other non-regular objects are outside the closed taxonomy and remain clean.
+Inspection is reject-closed before stdout; display bytes are escaped; exits
+are 0/1/2.
+
+Failed experiment then recovered: review attempt 1 failed the verdict gate on
+High PG-DOC-101 because superseded four-code `docs/permguard-contract.md` and
+`plans/permguard-implementation-plan.md` still claimed normative precedence
+beside the new contract. Repair deleted both stale files, widened
+`test_regression_permguard_markdown_has_no_live_former_codes`, added at-limit
+and seam coverage, and review attempt 2 passed.
+
+Independent review allowlisted only
+`python3 -m pytest tests/test_permguard.py -q -p no:cacheprovider` → exit 0,
+66 passed in 0.70s, zero skipped. Review did not rerun compilers, Make,
+sanitizers, Valgrind, full pytest, or smoke. Repair quality-floor summary
+reported focused 66 passed; full/ASan/UBSan/Valgrind 349 passed / 15 skipped;
+static gates and `/tmp` probes ok. Step gate pytest recorded 346 passed /
+18 skipped. Smoke `artifacts/user-smoke/result.json` recorded start/check 0
+with empty blocking errors; check.log pytest `346 passed, 18 skipped in
+20.06s` (sysdiff-named oracle reaches permguard transitively via `make test`).
+
+Independent review `code-reviews/review-permguard-first-vertical-slice.md` /
+`.verdict.json` is `pass`: no Critical or High findings, one Medium
+(PG-REV-201 release pathspec vs docs/plans test coupling), and six Low
+(PG-REV-202–207). Prior High PG-DOC-101 is resolved. Next is bounded repair of
+PG-REV-201 and fresh independent review before feature expansion. This history
+entry does not claim installation, packaging, publication, recursion, PATH
+scanning, remediation, or a finding-free quality closure.
+
+## 2026-07-28 — permguard first vertical-slice bootstrap
+
+Governed run `a8341dfae9f2` (`bootstrap_permguard_first_vertical_slice`)
+delivered an earlier four-code ISO C17 bootstrap:
+`docs/permguard-contract.md`, `plans/permguard-implementation-plan.md`,
+`src/permguard.c`, `tests/test_permguard.py`, `man/permguard.1`,
+README/CHANGELOG documentation, and additive Makefile quality, sanitizer, and
+Valgrind wiring. That taxonomy also reported world-writable directories and
+set-user-ID/set-group-ID executable regular files. Independent review
+`code-reviews/review-permguard-bootstrap.verdict.json` was `pass` with Medium
+PG-DOC-001/PG-TEST-002 and Low PG-DIAG-003/PG-PORT-004/PG-CLI-005. Those
+contract/plan documents were deleted during `629d1f459446` High PG-DOC-101
+repair and must not be treated as live authority; retain this entry as
+historical engineering record only.

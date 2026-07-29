@@ -849,8 +849,8 @@ def _build_dist(epoch=DIST_EPOCH):
 def scrubbed_nested_dist_env(base_env=None):
     """Drop outer binary-routing overrides before nested extract make/test.
 
-    PAC-M2: nested dist extracts must not inherit SYSDIFF_* or PATHAUDIT_*
-    routing from an outer sanitizer/Valgrind gate.
+    PAC-M2: nested dist extracts must not inherit SYSDIFF_*, PATHAUDIT_*, or
+    PERMGUARD_* routing from an outer sanitizer/Valgrind gate.
     """
 
     nested_env = dict(os.environ if base_env is None else base_env)
@@ -859,6 +859,8 @@ def scrubbed_nested_dist_env(base_env=None):
         "SYSDIFF_UNDER_VALGRIND",
         "PATHAUDIT_BIN",
         "PATHAUDIT_UNDER_VALGRIND",
+        "PERMGUARD_BIN",
+        "PERMGUARD_UNDER_VALGRIND",
     ):
         nested_env.pop(key, None)
     return nested_env
@@ -993,9 +995,10 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
         # Nested extract must not inherit workspace/memory-gate binary routing;
         # otherwise test-shell packaging compares against the wrong ORDINARY_BIN
         # and silently skips DESTDIR install/reinstall/uninstall coverage.
-        # Scrub every per-utility routing variable (sysdiff and pathaudit) so a
-        # nested make test under an outer sanitizer/Valgrind gate compiles and
-        # exercises the extracted sources rather than the outer mktemp binaries.
+        # Scrub every per-utility routing variable (sysdiff, pathaudit, and
+        # permguard) so a nested make test under an outer sanitizer/Valgrind
+        # gate compiles and exercises the extracted sources rather than the
+        # outer mktemp binaries.
         nested_env = scrubbed_nested_dist_env()
         build = subprocess.run(
             ["make", "-C", str(sourcedir)],
@@ -1023,7 +1026,7 @@ def test_dist_extracts_builds_and_tests_outside_workspace():
 
 
 def test_dist_nested_env_scrubs_pathaudit_routing_vars():
-    """PAC-M2: nested extract env must drop PATHAUDIT_* beside SYSDIFF_*."""
+    """PAC-M2: nested extract env must drop PATHAUDIT_* / PERMGUARD_* beside SYSDIFF_*."""
 
     source = (ROOT / "tests" / "test_sysdiff.py").read_text(encoding="utf-8")
     # Production call site must use the shared scrub helper.
@@ -1043,6 +1046,8 @@ def test_dist_nested_env_scrubs_pathaudit_routing_vars():
         "SYSDIFF_UNDER_VALGRIND",
         "PATHAUDIT_BIN",
         "PATHAUDIT_UNDER_VALGRIND",
+        "PERMGUARD_BIN",
+        "PERMGUARD_UNDER_VALGRIND",
     ):
         assert f'"{key}"' in helper_window
 
@@ -1055,6 +1060,8 @@ def test_dist_nested_env_scrub_drops_outer_pathaudit_override(tmp_path, monkeypa
     outer.chmod(0o755)
     monkeypatch.setenv("PATHAUDIT_BIN", str(outer))
     monkeypatch.setenv("PATHAUDIT_UNDER_VALGRIND", "1")
+    monkeypatch.setenv("PERMGUARD_BIN", str(tmp_path / "outer-permguard"))
+    monkeypatch.setenv("PERMGUARD_UNDER_VALGRIND", "1")
     monkeypatch.setenv("SYSDIFF_BIN", str(tmp_path / "outer-sysdiff"))
     monkeypatch.setenv("SYSDIFF_UNDER_VALGRIND", "1")
 
@@ -1062,6 +1069,8 @@ def test_dist_nested_env_scrub_drops_outer_pathaudit_override(tmp_path, monkeypa
 
     assert "PATHAUDIT_BIN" not in nested_env
     assert "PATHAUDIT_UNDER_VALGRIND" not in nested_env
+    assert "PERMGUARD_BIN" not in nested_env
+    assert "PERMGUARD_UNDER_VALGRIND" not in nested_env
     assert "SYSDIFF_BIN" not in nested_env
     assert "SYSDIFF_UNDER_VALGRIND" not in nested_env
 
@@ -1072,6 +1081,10 @@ def test_dist_nested_env_scrub_drops_outer_pathaudit_override(tmp_path, monkeypa
         "\"$PATHAUDIT_BIN\"; exit 1; fi\n"
         "if [ -n \"${PATHAUDIT_UNDER_VALGRIND+x}\" ]; then "
         "printf 'PATHAUDIT_UNDER_VALGRIND set\\n'; exit 1; fi\n"
+        "if [ -n \"${PERMGUARD_BIN+x}\" ]; then printf 'PERMGUARD_BIN=%s\\n' "
+        "\"$PERMGUARD_BIN\"; exit 1; fi\n"
+        "if [ -n \"${PERMGUARD_UNDER_VALGRIND+x}\" ]; then "
+        "printf 'PERMGUARD_UNDER_VALGRIND set\\n'; exit 1; fi\n"
         "printf 'scrubbed\\n'\n",
         encoding="utf-8",
     )

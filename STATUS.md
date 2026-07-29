@@ -1,6 +1,7 @@
 # Current Status
 
-The suite now contains two small C utilities. `sysdiff` 0.1.0 implements
+The suite now contains two established small C utilities plus a reviewed
+third-utility bootstrap. `sysdiff` 0.1.0 implements
 explicit snapshot comparison in C17: users run
 `sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT` (plus `--help` / `--version`)
 against plain-text format-1 files. The command validates keys, duplicates, NULs,
@@ -28,14 +29,60 @@ mode still does not search executables. Pathaudit has no install target in
 these slices (`make pathaudit` verifies under mktemp only) and is **not**
 released. The repository includes Makefile quality targets, shell and pytest
 coverage (including `tests/test_pathaudit.py`), sanitizer and Valgrind wiring,
-Ubuntu CI configuration, and man pages for both utilities. A curated public
+Ubuntu CI configuration, and man pages for the established utilities.
+
+Governed run `51100a584ac9` is the live `permguard` bootstrap under
+`docs/permguard-bootstrap-contract.md`: `permguard [--] PATH...` is a
+read-only ISO C17 explicit-path scanner using one `lstat` per operand. It
+reports the closed four-code taxonomy `GROUP_WRITABLE`, `OTHER_WRITABLE`,
+`SET_USER_ID`, and `SET_GROUP_ID` from each named object's own mode bits
+without file-type heuristics; final symlinks are status-2 rejections; findings
+stream per operand; mixed runs continue after errors with operational
+precedence. Findings are escaped and deterministic, and exits are 0 clean, 1
+hazards-only, or 2 error. Bootstrap contract/plan, source, tests, man page,
+README/CHANGELOG text, and additive quality/memory wiring exist. Independent
+review is `pass` with 5 Medium and 6 Low findings; this is not an installed,
+packaged, or released utility. One-code drafts
+`docs/permguard-first-vertical-slice-contract.md` /
+`plans/permguard-first-vertical-slice-plan.md` are superseded non-authority.
+The existing sysdiff smoke oracle reaches permguard transitively via
+`make test` but is not a dedicated permguard user-flow smoke.
+
+A curated public
 repository `https://github.com/leebase/linux-utilities` exists; AgentFlow notes
 record a successful Ubuntu `make quality` CI run on commit `fbdf071` and a
 GitHub `v0.1.0` tag/release aimed at that curated commit for `sysdiff`. Make
 `install`/`uninstall` DESTDIR staging remains sysdiff-only. Accepted Low
 limitations (changed-line delimiter ambiguity, Ubuntu-only CI, no packaged
 `.deb`/`.rpm`, explicit-snapshot-only sysdiff scope) remain in force. The
-existing sysdiff smoke oracle does not directly exercise pathaudit.
+existing sysdiff smoke oracle does not install pathaudit or permguard.
+
+## Permguard Review Status
+
+Independent review for run `51100a584ac9` freshly ran only
+`python3 -m pytest -p no:cacheprovider tests/test_permguard.py -q`: exit 0,
+52 passed in 0.43s, zero skipped. Review did not rerun compilers, Make,
+sanitizers, Valgrind, full pytest, or smoke as gate results. Step-5
+quality-floor validation recorded GCC/Clang strict syntax, clang-format,
+clang-tidy, cppcheck, Clang analyzer, ASan+UBSan `--help` and Valgrind
+`--help` probes, full pytest `332 passed, 18 skipped`, and both shell fixture
+suites exiting 0. Smoke start/check exited 0 with no blocking errors;
+check.log pytest `332 passed, 18 skipped in 19.78s`.
+
+`code-reviews/review-permguard-bootstrap.verdict.json` is `pass` with Medium
+PG-DOC-501 (architecture.md describes a sticky-bit / file-type-conditioned
+taxonomy and buffer-until-complete emission the slice does not ship),
+PG-DOC-502 (superseded one-code drafts still lack in-file markers),
+PG-TEST-503 (no `STDOUT_WRITE`/SIGPIPE regression), PG-PORT-505 (hand-declared
+`lstat` vs LFS redirection), PG-DOC-512 (QUALITY.md/TESTING.md never mention
+permguard), and Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511.
+Prior High PG-DOC-401 from review attempt 1 is resolved by explicit Authority
+supersession in the bootstrap contract, plan, README, and CHANGELOG, plus this
+AgentFlow closeout. Next recommended action is bounded Medium repair
+(architecture accuracy, draft markers, stdout-failure tests, POSIX prototype
+flags, quality/testing docs) and review before feature expansion. Permguard
+remains explicit-path-only, non-recursive, PATH-blind, read-only, uninstalled,
+unpackaged, and unreleased.
 
 ## Release Status
 

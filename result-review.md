@@ -1,5 +1,87 @@
 # Result Review
 
+## Bootstrap permguard
+
+Objective: deliver and independently review the `permguard` bootstrap as a
+small ISO C17 read-only explicit-path scanner without recursion, PATH lookup,
+remediation, install/package wiring, or any release claim. Governed run
+`51100a584ac9` (`bootstrap_permguard_first_vertical_slice`) is the authoritative
+cycle for live contract `docs/permguard-bootstrap-contract.md`: classify each
+named object's own mode bits into the closed four-code taxonomy
+(`GROUP_WRITABLE`, `OTHER_WRITABLE`, `SET_USER_ID`, `SET_GROUP_ID`) via exactly
+one `lstat` per operand, reject final symlinks as status 2, stream findings per
+operand while continuing after errors, and reduce exits to 0/1/2 with
+operational-error precedence. Implementation delivered the bootstrap contract
+and plan, `src/permguard.c`, `tests/test_permguard.py` (52 contract cases),
+`man/permguard.1`, README/CHANGELOG documentation, and additive Makefile
+quality/sanitizer/Valgrind wiring; review attempt 1 failed on High PG-DOC-401
+(dual-contract ambiguity), and the repair loop added explicit Authority
+supersession in the bootstrap contract, plan, README, and CHANGELOG before
+attempt 2 passed. Test and quality results by provenance: independent review
+allowlisted only `python3 -m pytest -p no:cacheprovider tests/test_permguard.py
+-q` → exit 0, 52 passed in 0.43s, zero skipped (session fixture also compiled
+under C17 strict warnings into a temp tree); review did not freshly run Make,
+full pytest, sanitizers, Valgrind, or static analyzers as gate results.
+Step-5 quality-floor validation recorded GCC/Clang `-fsyntax-only` strict,
+clang-format, clang-tidy, cppcheck, Clang analyzer, ASan+UBSan `--help` and
+Valgrind `--help` probes, full pytest `332 passed, 18 skipped`, and both shell
+fixture suites exiting 0. Smoke `artifacts/user-smoke/result.json` records
+`app_started` true, `core_flow_completed` true, start/check exit 0, empty
+`blocking_errors`; check.log pytest `332 passed, 18 skipped in 19.78s` through
+`make test`, not a permguard-specific end-to-end flow. Review outcome:
+`code-reviews/review-permguard-bootstrap.md` / `.verdict.json` = `pass` (0
+Critical/High; Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512;
+Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511). Remaining
+non-blocking risks: architecture.md still describes a sticky-bit /
+file-type-conditioned taxonomy and buffer-until-complete emission the slice
+does not ship (PG-DOC-501); superseded one-code drafts still lack in-file
+markers beside a false removal claim (PG-DOC-502 residue); no
+`STDOUT_WRITE`/SIGPIPE regression (PG-TEST-503); hand-declared `lstat` vs
+LFS redirection (PG-PORT-505); QUALITY.md/TESTING.md never mention permguard
+(PG-DOC-512); plus the six Lows. Next recommended capability: bounded
+governed repair of those five Medium findings (architecture accuracy,
+draft markers, stdout-failure tests, POSIX prototype flags, quality/testing
+docs) and fresh independent review before feature expansion. Do not claim
+install, package, publication, recursion, remediation, or release readiness.
+
+## Prior — Permguard First Vertical Slice (`f742c10135e5`)
+
+Run `f742c10135e5` delivered and reviewed a one-code `WORLD_WRITABLE_FILE`
+slice under `docs/permguard-first-vertical-slice-contract.md`. Independent
+allowlisted focused pytest was 67 passed / 0 skipped; quality worker reported
+full and each ASan/UBSan/Valgrind route 350/15; step validation recorded
+focused 67 and full 347/18; smoke start/check 0 with check.log 347/18.
+Verdict `pass` with Medium PG-REV-301/302 and Low
+PG-REV-202/203/205/206/303/304. Run `51100a584ac9` supersedes that product
+authority with the four-code bootstrap contract; retain this section as
+historical closeout evidence only.
+
+## Prior — Permguard Delivery (`629d1f459446`)
+
+Run `629d1f459446` delivered and reviewed the live single-code slice after
+repairing High PG-DOC-101 by deleting stale four-code normative documents and
+widening the former-code scan. Its review ran focused pytest at 66 passed /
+0 skipped and passed with Medium PG-REV-201 plus Low PG-REV-202–207. Current
+run `f742c10135e5` supersedes its closeout evidence, confirms
+PG-REV-201/204/207 resolved, and establishes the current risk set above.
+
+## Prior — Permguard Bootstrap Result (`a8341dfae9f2`)
+
+Objective: deliver and independently review an earlier four-code `permguard`
+bootstrap without recursion, PATH lookup, remediation, install/package wiring,
+or a release claim. Governed run `a8341dfae9f2`
+(`bootstrap_permguard_first_vertical_slice`) delivered
+`docs/permguard-contract.md`, `plans/permguard-implementation-plan.md`,
+`src/permguard.c`, `tests/test_permguard.py`, `man/permguard.1`,
+README/CHANGELOG documentation, and additive Makefile quality, sanitizer, and
+Valgrind wiring under a taxonomy that also reported world-writable directories
+and set-user-ID/set-group-ID executables. Independent verdict
+`code-reviews/review-permguard-bootstrap.verdict.json` was `pass` with Medium
+PG-DOC-001/PG-TEST-002 and Low PG-DIAG-003/PG-PORT-004/PG-CLI-005. That
+contract/plan pair and four-code taxonomy are superseded by run `629d1f459446`
+and were deleted during its High PG-DOC-101 repair; retain this section as
+historical evidence only.
+
 ## Next Utility Evaluation
 
 Future Mission Discovery plan
@@ -18,9 +100,10 @@ PATH read, remediation, or release claim. Review checks were
 plan-evidence only (`compileall`, `git tag -l`, `wc -l`, taxonomy grep)—
 not product smoke for a new binary. Unresolved: those two Low findings
 plus prior pathaudit/sysdiff Medium/Low backlogs kept visible as ordinary
-repair. Next executable action: governed bootstrap of the permguard
-vertical slice. This selection handoff does not implement or release a
-utility.
+repair. Its historical next action was governed bootstrap of the permguard
+vertical slice; run `51100a584ac9` has now completed that action under
+`docs/permguard-bootstrap-contract.md`. The selection handoff itself did not
+implement or release a utility.
 
 ## Detect unsafe ownership of PATH directories
 
