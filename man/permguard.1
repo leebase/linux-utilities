@@ -1,0 +1,309 @@
+.\" Copyright (c) 2026 Lee Harrington
+.\" SPDX-License-Identifier: MIT
+.TH PERMGUARD 1 "2026-07-29" "permguard 0.1.0" "User Commands"
+.SH NAME
+permguard \(em report permission\-bit hazards on explicit paths
+.SH SYNOPSIS
+.B permguard
+.RI [ \-\- ]
+.I PATH...
+.br
+.B permguard \-\-help
+.br
+.B permguard \-\-version
+.SH DESCRIPTION
+.B permguard
+is a small read\-only ISO C17 command\-line utility that inspects permission
+bits on filesystem objects named explicitly by the operator.
+The bootstrap slice answers whether any named non\-symbolic entry carries one
+or more of four closed mode\-bit hazards: group\-writable, other\-writable,
+set\-user\-ID, or set\-group\-ID.
+There is no enabling flag, policy file, or process
+.B PATH
+lookup.
+.P
+At least one
+.I PATH
+operand is required.
+Before
+.BR \-\- ,
+a token beginning with
+.B \-
+is treated as an option;
+.B \-\-
+ends option processing so operands such as
+.B \-artifact
+may be inspected.
+The only informational forms are sole\-argument
+.B \-\-help
+and
+.BR \-\-version ;
+each writes fixed stdout, leaves stderr empty, and exits
+.BR 0 .
+A bare
+.BR \-\- ,
+no operands, an unknown option, or an informational option with extra
+arguments writes a stable stderr diagnostic, leaves
+stdout empty, and exits with status
+.BR 2 .
+.P
+Each operand is inspected once with
+.BR lstat (2).
+The metadata belongs to the directory entry named by the operand, so a final
+symbolic link is never followed and hazards on a link target are never
+transferred to the link operand.
+A final symbolic link is an operational rejection
+.RB ( SYMBOLIC_LINK ,
+status
+.BR 2 ),
+whether its target is safe, hazardous, missing, or inaccessible.
+Dangling final symbolic links are likewise rejected as symbolic links, not as
+missing\-target errors.
+Failure to resolve an intermediate pathname component remains an inspection
+error.
+.P
+The closed hazard taxonomy contains exactly four independent predicates,
+evaluated against a successful
+.B lstat
+result for a non\-symbolic operand with no file\-type heuristics:
+.BR GROUP_WRITABLE
+.RB ( S_IWGRP ),
+.BR OTHER_WRITABLE
+.RB ( S_IWOTH ),
+.BR SET_USER_ID
+.RB ( S_ISUID ),
+and
+.BR SET_GROUP_ID
+.RB ( S_ISGID ).
+One operand may emit up to four stdout lines in that fixed rank.
+Owner writability, read bits, execute bits, the sticky bit, UID, GID,
+filename, extension, and effective access neither create nor suppress a
+finding.
+Classification uses mode macros from the successful
+.B lstat
+result only; it does not call
+.BR access (2),
+open the object, read file contents, or consult ownership trust, ACLs,
+capabilities, or mount policy.
+.P
+Missing paths
+.RB ( ENOENT )
+report
+.BR MISSING ;
+inaccessible paths
+.RB ( EACCES )
+report
+.BR INACCESSIBLE ;
+other
+.B lstat
+failures report
+.BR INSPECTION_ERROR_N
+with the captured decimal
+.BR errno .
+An empty\-string operand is always
+.B INSPECTION_ERROR_N
+even when the host reports
+.BR ENOENT ,
+so it stays distinct from a non\-empty missing path.
+After valid CLI parsing, every operand is attempted even after an operational
+error; successful findings and error diagnostics are retained, and the final
+status is
+.B 2
+whenever any operational error occurred.
+.P
+.B Non\-goals.
+This bootstrap does not recurse into directories, follow final symbolic links,
+canonicalize or deduplicate operands, read or analyze the process
+.BR PATH ,
+resolve command names, remediate permissions, change credentials, open
+inspected file contents, elevate or drop privileges, run as a daemon, use
+networking, persist results, or claim that a reported object is exploitable.
+Ownership policy, ACL interpretation, Linux capabilities, extended attributes,
+mount flags, package inventory, and service inspection are outside this slice.
+This manual does not claim that
+.B permguard
+is released, packaged, or installed.
+.SH OPTIONS
+.TP
+.B \-\-help
+Write the fixed two\-line usage synopsis to stdout and exit
+.BR 0 .
+Must be the sole argument.
+.TP
+.B \-\-version
+Write
+.B permguard 0.1.0
+followed by a newline to stdout and exit
+.BR 0 .
+Must be the sole argument.
+.TP
+.B \-\-
+End option processing; every following argument is a path operand, including
+another literal
+.BR \-\- .
+.SH OUTPUT
+Every hazard is one stdout record:
+.P
+.RS
+.nf
+HAZARD<TAB>"ESCAPED_PATH"
+.fi
+.RE
+.P
+.B <TAB>
+is byte
+.BR 0x09 .
+.B HAZARD
+is one of
+.BR GROUP_WRITABLE ,
+.BR OTHER_WRITABLE ,
+.BR SET_USER_ID ,
+or
+.BR SET_GROUP_ID .
+Inside the quotes, printable ASCII bytes
+.B 0x20
+through
+.B 0x7e
+are literal except
+.B \&"
+and
+.BR \e ,
+which are written as
+.B \e"
+and
+.BR \e\e ;
+every other byte is uppercase
+.BR \exHH .
+Paths are not canonicalized, normalized, or replaced by a symlink target.
+Findings appear in command\-line operand order, then taxonomy rank for each
+operand, including duplicate operands.
+A completed clean scan writes nothing to stdout.
+.P
+Diagnostics go only to stderr as fixed ASCII tokens, never
+.BR strerror (3)
+text.
+A path\-specific diagnostic has the form
+.BI "permguard: " REASON ": \"" ESCAPED_PATH "\""
+using the same escaping as stdout.
+A non\-path diagnostic is
+.BI "permguard: " REASON .
+Stable reasons include
+.BR USAGE ,
+.BR UNKNOWN_OPTION ,
+.BR MISSING ,
+.BR INACCESSIBLE ,
+.BR SYMBOLIC_LINK ,
+.BR INSPECTION_ERROR_N ,
+and
+.BR STDOUT_WRITE .
+Usage and unknown\-option errors are followed by exactly
+.BR "usage: permguard [\-\-] PATH..." .
+The process ignores
+.B SIGPIPE
+so a closed stdout pipe becomes a checked stdio failure reporting
+.B STDOUT_WRITE
+rather than asynchronous signal termination.
+No portable total order is promised between stdout and stderr after a caller
+merges the streams.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful sole\-argument
+.B \-\-help
+or
+.BR \-\-version ,
+or CLI parsing succeeded, every operand was inspected by
+.BR lstat ,
+no operand was a symbolic link, and none of the four defined hazards was
+present.
+For an operational scan both stdout and stderr are empty; informational forms
+write their fixed stdout and leave stderr empty.
+.TP
+.B 1
+Parsing and all operand inspections succeeded, no operand was a symbolic link,
+and at least one defined hazard was found.
+Stdout contains all findings in deterministic order; stderr is empty.
+.TP
+.B 2
+Usage error, or at least one operational operand error (missing, inaccessible,
+final symbolic link, or other
+.B lstat
+failure), or an internal failure such as a stdout write/flush error.
+For a valid mixed invocation,
+.B permguard
+continues inspecting later operands, emits findings for successfully inspected
+hazardous operands, emits one stderr diagnostic per failed or symbolic\-link
+operand, and returns
+.BR 2 .
+Operational error precedence therefore overrides a simultaneous hazard that
+would otherwise yield status
+.BR 1 .
+A usage error prevents all inspection and leaves stdout empty.
+.SH SECURITY CONSIDERATIONS
+.B permguard
+is read\-only and requires no special privilege.
+It never changes ownership, mode, or contents, never opens inspected objects for
+I/O, never executes them, and never follows the final symbolic\-link component of
+an operand.
+UID and GID from
+.B lstat
+do not influence the hazard decision.
+.P
+Operand bytes are untrusted.
+Finding paths and diagnostic paths are rendered with the quoted\-byte escaping
+described in
+.BR OUTPUT ,
+so hostile ESC, control, DEL, and non\-ASCII bytes cannot create forged records
+or raw terminal\-control sequences on stdout or stderr.
+.P
+Results are a point\-in\-time metadata observation of
+.B st_mode
+bits.
+Filesystem state may change before or after the single
+.B lstat
+per operand; a clean result is neither a lock, an authorization decision, nor a
+general safety claim.
+.SH EXAMPLES
+Inspect a private regular file (clean; exit status
+.BR 0 ,
+empty stdout):
+.P
+.RS
+.nf
+permguard /tmp/private\-file
+.fi
+.RE
+.P
+Inspect a leading\-dash operand after ending option processing:
+.P
+.RS
+.nf
+permguard \-\- \-artifact
+.fi
+.RE
+.P
+Inspect several named paths; group\-writable and other\-writable objects emit
+taxonomy lines and the process exits
+.B 1
+when at least one hazard matches and every operand was successfully inspected.
+A symlink named alone is rejected with status
+.BR 2 :
+.P
+.RS
+.nf
+permguard /tmp/clean /tmp/group\-writable\-file
+permguard /tmp/link\-to\-other\-writable\-file
+.fi
+.RE
+.SH SEE ALSO
+.BR lstat (2),
+.BR pathaudit (1),
+.BR sysdiff (1)
+.SH AUTHOR
+Lee Harrington
+.SH COPYRIGHT
+Copyright \(co 2026 Lee Harrington.
+.B permguard
+is released under the MIT License.
+.SH VERSION
+permguard 0.1.0 (2026\-07\-29)

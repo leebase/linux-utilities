@@ -1,536 +1,104 @@
-# sysdiff
+# Linux Utilities
 
-`sysdiff` 0.1.0 is a small, auditable C17 command-line utility for comparing
-explicit system snapshot files. It reads two user-provided plain-text
-`key=value` snapshots, validates them fully, and prints a deterministic diff
-sorted by key.
+Small, auditable command-line tools for Linux. Each utility is written in one
+C17 source file, has no runtime dependencies, performs no networking or
+telemetry, and does not run a background service.
 
-This slice is intentionally narrow. It compares only explicit snapshot files in
-the supported format; it is not a replacement for `diff(1)`, does not scan
-directories, does not persist snapshots, and does not perform live system
-capture.
+| Utility | Purpose | Status |
+| --- | --- | --- |
+| [`sysdiff`](docs/sysdiff.md) | Compare two explicit `key=value` system snapshots | Released: v0.1.0 |
+| [`pathaudit`](docs/pathaudit.md) | Find risky, missing, or shadowed entries in command search paths | Preview |
+| [`permguard`](docs/permguard.md) | Report dangerous permission bits on explicitly named paths | Preview |
 
-## Usage
+The preview tools are available as reviewed source with tests and manual
+pages. They are intentionally not included in the `sysdiff` installation or
+release package yet.
 
-Show help or version information:
+## Quick start
+
+Clone the repository and compile all three tools:
+
+```sh
+git clone https://github.com/leebase/linux-utilities.git
+cd linux-utilities
+mkdir -p build
+
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -o build/sysdiff src/sysdiff.c
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -o build/pathaudit src/pathaudit.c
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -o build/permguard src/permguard.c
+```
+
+Try the built-in help:
 
 ```sh
 ./build/sysdiff --help
-./build/sysdiff --version
+./build/pathaudit --help
+./build/permguard --help
 ```
 
-Compare two snapshot fixture files:
-
-```sh
-./build/sysdiff compare BEFORE_SNAPSHOT AFTER_SNAPSHOT
-```
-
-The compare command exits with:
-
-- `0` when the command succeeds and no differences are found.
-- `1` when the command succeeds and at least one difference is found.
-- `2` for usage, file I/O, parse, duplicate-key, allocation, resource-limit,
-  stdout write failure, or other runtime errors.
-
-Diagnostics are written to stderr. Diff output and the `no changes` result are
-written to stdout. Validation failures leave stdout empty. A stdout write or
-flush failure on compare or informational output (`--help`, `--version`, or
-no-argument usage) returns `2` with a `stdout write error: <strerror>`
-diagnostic (using `EIO` when errno is unset) and may leave partial stdout.
-At startup, `SIGPIPE` is ignored (POSIX) so a closed stdout pipe becomes an
-`EPIPE` stdio failure on that same path instead of terminating the process.
-Supported runtime and CI focus is Linux (Ubuntu).
-
-## Build and verify
-
-Build the executable with the default target:
+`make` remains the supported build and installation path for the released
+`sysdiff` utility:
 
 ```sh
 make
+sudo make install
 ```
 
-`make sysdiff` is an alias for the same build. The executable is written to
-`build/sysdiff`. The default compiler is `cc`; set `CC` to select another C
-compiler.
+The default installation prefix is `/usr/local`. Use `DESTDIR` and `prefix`
+for staged or custom installations.
 
-Run the functional test suite:
+## Learn each utility
+
+- [sysdiff guide](docs/sysdiff.md) — snapshot format, examples, output, exit
+  statuses, installation, and source.
+- [pathaudit guide](docs/pathaudit.md) — explicit-root, full-PATH, and
+  command-specific audits with examples.
+- [permguard guide](docs/permguard.md) — permission checks, symlink behavior,
+  examples, and limitations.
+
+Traditional section-1 manual pages are also included:
+
+```sh
+man -l man/sysdiff.1
+man -l man/pathaudit.1
+man -l man/permguard.1
+```
+
+## Test and inspect
+
+The ordinary test suite compiles temporary binaries and exercises all three
+utilities:
 
 ```sh
 make test
 ```
 
-Run the canonical full release quality gate:
+The complete Linux quality gate adds strict GCC and Clang builds, formatting,
+static analysis, manual-page linting, sanitizers, Valgrind, regression tests,
+and the `sysdiff` benchmark:
 
 ```sh
 make quality
 ```
 
-`make check` is an alias for `make quality`. The quality gate cleans, then runs
-strict GCC and Clang link builds (`-Wall -Wextra -Wpedantic -Werror`),
-clang-format, clang-tidy, cppcheck (findings fail the build), the Clang static
-analyzer (`clang --analyze` with analyzer findings as errors), man-page lint via
-`make man-check`, the shell and pytest suites (unit, integration, regression,
-fixture, malformed-input fuzz, and benchmark contract tests), deterministic
-benchmark validation (`benchmark-check`, temp-dir JSON only), AddressSanitizer,
-UndefinedBehaviorSanitizer, and Valgrind with a reserved error status that
-cannot collide with sysdiff exit codes `0`, `1`, or `2`. Ubuntu CI runs exactly
-`make quality`.
-
-View the section-1 manual page locally:
-
-```sh
-man -l man/sysdiff.1
-```
-
-The source is [man/sysdiff.1](man/sysdiff.1). `make man-check` runs groff with
-all warnings enabled, fails if groff exits nonzero or emits any warning, prints
-captured diagnostics on failure, and does not write tracked output.
-
-For individual functional checks:
-
-```sh
-python3 -m pytest tests/ -q
-bash tests/test_sysdiff_fixture.sh
-./scripts/smoke.sh
-```
-
-## Performance Benchmarks
-
-Run the deterministic Linux performance and resource harness with:
-
-```sh
-make benchmark
-```
-
-That target creates `artifacts/performance/` if needed and invokes
-`python3 scripts/benchmark_sysdiff.py --output artifacts/performance/sysdiff-benchmark.json`.
-The harness compiles `src/sysdiff.c` in a temporary directory (never the
-workspace `build/`), writes fixed before/after snapshots, then samples the
-metrics below. Compile and fixture setup are excluded from timed samples.
-`SYSDIFF_BIN` and similar environment hints are ignored. Every measured child
-must exit with an expected status (`--help` → 0; `compare` → 0 or 1); unexpected
-exits fail the harness instead of recording a deceptively fast sample.
-
-**Spawn baseline** (`baseline_ms_median`) is the median milliseconds of
-`/bin/true` under the same spawn path, so startup and fixture medians can be
-read net of Python fork/exec cost. **Startup time** (`startup_ms_median`) is
-the median wall time, in milliseconds, of running the built binary with
-`--help`, measured with a monotonic clock around the child only.
-**Controlled-fixture runtime** (`fixture_ms_median`) is the median milliseconds
-for `compare BEFORE AFTER` against a fixed 8000-entry deterministic snapshot
-pair (mix of added, removed, changed, and unchanged `bench.kNNNNNN` keys),
-sized so compare work exceeds the spawn floor. **Peak RSS** (`peak_rss_kib`) is
-the per-run peak resident set size in kibibytes during that same compare; the
-reported value is the maximum across samples. Measurement prefers GNU
-`/usr/bin/time -f %M`, then a tiny C fork/exec wrapper that writes RSS and
-child exit status to a dedicated report file while redirecting the measured
-child's stdout/stderr to `/dev/null` (so compare/`--help` output cannot
-collide with the report), so Python's fork-before-exec does not inflate
-`ru_maxrss` to interpreter size.
-
-Sampling is fixed: one untimed warmup of baseline, startup, and compare, then
-five timed samples (odd count so the median is a single middle value). Release
-thresholds fail the run when any gated measurement exceeds its inclusive limit:
-`startup_ms_median` ≤ 200 ms, `fixture_ms_median` ≤ 100 ms, and
-`peak_rss_kib` ≤ 32768 KiB (32 MiB). The JSON report uses schema version 1
-with sorted keys and includes `measurements`, `thresholds`, `samples`,
-`metadata` (including `work_dir_kind=tempdir`, not a host path), `passed`, and
-`schema_version`. Exit status is 0 when `passed` is true and nonzero on
-threshold failure or harness error.
-
-Expect a Linux host with a C compiler (`cc`, `gcc`, or `clang`), Python 3,
-and GNU `/usr/bin/time` on `PATH`. Results can vary with CPU load, thermal
-throttling, cgroup memory limits, and scheduler noise; treat thresholds as
-conservative release guardrails, not microbenchmark claims. If
-`make benchmark` fails a threshold, inspect
-`artifacts/performance/sysdiff-benchmark.json`: compare each measurement to
-its threshold, subtract `baseline_ms_median` when judging startup/fixture
-drift, review the raw `samples` lists for outliers, rerun on an idle machine,
-and investigate recent changes that could inflate `--help` latency, compare
-work, or peak memory before loosening limits.
-
-## Installation and uninstallation
-
-After `make` builds `build/sysdiff`, stage the executable and section-1 manual
-page with optional `DESTDIR` and a configurable `prefix` (default
-`/usr/local`):
-
-```sh
-make install DESTDIR=/path/to/stage prefix=/usr/local
-```
-
-That writes regular files `$(DESTDIR)$(prefix)/bin/sysdiff` mode `755` and
-`$(DESTDIR)$(prefix)/share/man/man1/sysdiff.1` mode `644`. Re-running
-`make install` with the same `DESTDIR` and `prefix` replaces those paths and,
-when the build inputs are unchanged, leaves their installed bytes identical.
-Remove only those installed files with:
-
-```sh
-make uninstall DESTDIR=/path/to/stage prefix=/usr/local
-```
-
-`make test` runs this install, documented `--help`/`--version`/`compare`
-checks, idempotent reinstall, and byte-clean uninstall round trip inside a
-temporary workspace `DESTDIR`. This is source Make staging only; the tree does
-not produce `.deb`, `.rpm`, or other package-manager formats.
-
-## Source releases
-
-Create a deterministic source archive with `make dist` from the git work-tree
-root. It writes `dist/sysdiff-source.tar.gz` and
-`dist/sysdiff-source.tar.gz.sha256` from tracked release inputs only (source,
-tests, Makefile metadata, docs, and license files) under a single `sysdiff/`
-prefix, with sorted members and normalized timestamps, ownership, permissions,
-and gzip headers. Untracked workspace state is never packaged. Nested copies
-inside another repository (for example a disposable quality-floor tree under
-scratch `TMPDIR`) are not a dist root; the suite skips those `make dist`
-regressions there instead of treating the parent work tree as the package
-source. Set `SOURCE_DATE_EPOCH` to a non-negative integer for bit-stable
-rebuilds. Verify with `make distcheck`, which rebuilds at a fixed epoch,
-compares digests, extracts outside the workspace, and runs `make` plus
-`make test` on the clean tree. Inspect members with
-`tar -tzf dist/sysdiff-source.tar.gz` or `sha256sum -c
-dist/sysdiff-source.tar.gz.sha256` from `dist/`. Remove the artifact with
-`rm -f dist/sysdiff-source.tar.gz dist/sysdiff-source.tar.gz.sha256` (or
-`rm -rf dist`).
-
-For a release-candidate package under `artifacts/` (distinct from `make dist`),
-run `make release`. Like `make dist`, it selects tracked files only via
-`git ls-files` over `RELEASE_PATHSPECS` (untracked scratch under `src/`,
-`tests/`, or `scripts/` cannot ship), stages them under `/tmp`, writes
-`artifacts/sysdiff-release.tar.gz` with a single `sysdiff-release/` archive
-root, and records `artifacts/sysdiff-release.tar.gz.sha256` in standard
-`sha256sum` form (archive basename beside the tarball; nested basename-only
-checksums verified from another directory failed governed run
-`c847e01d15fe`). Ordinary `make clean` removes only `build/` and does not
-delete those release artifacts. Verify with
-`(cd artifacts && sha256sum -c sysdiff-release.tar.gz.sha256)`, then extract
-under `/tmp` and run `make -C …/sysdiff-release clean test`. This prepares an
-unpublished candidate; it does not create a GitHub release or `.deb`/`.rpm`.
-The release archive ships source, Makefile, license, root user docs, man page,
-scripts, and tests; the deeper `docs/` contract tree and AgentFlow status
-files remain repository-only. Packaged CLI behavior is documented in
-`man/sysdiff.1` and the README summary below.
-
-## Snapshot Format
-
-The durable snapshot-format contract for the initial `sysdiff` vertical slice
-is [docs/sysdiff-snapshot-format-and-scope.md](docs/sysdiff-snapshot-format-and-scope.md)
-in the full git repository. Treat that document as the implementation source
-of truth for snapshot syntax, deterministic comparison output, exit statuses,
-resource scope, non-goals, security constraints, compatibility rules, and
-acceptance checks. Recipients of `sysdiff-release.tar.gz` should use the
-packaged man page and this README summary for CLI behavior; the `docs/` tree
-is not a release-archive member. This README is only a quick usage summary of
-the current fixture-backed behavior.
-
-Snapshot fixtures are plain text files using one `key=value` entry per line:
-
-```text
-# optional comment
-entry.name=value
-another.entry=some value
-empty.value=
-```
-
-Blank lines, including lines made only of spaces and tabs, and lines whose first
-non-space character is `#` are ignored.
-Keys are compared byte-for-byte and are not trimmed. Format-1 keys use only
-`A–Z`, `a–z`, `0–9`, `.`, `_`, `-`, and `/`; they must contain at least one `.`,
-must not contain consecutive dots (`..`), must not begin with `/`, and must not
-end with `.`. Values are compared byte-for-byte after the trailing line ending
-is removed. Duplicate keys in one snapshot are errors. When a total-byte limit
-overflow coincides with a NUL byte, the byte-limit error is reported first.
-
-Resource limits per snapshot input are 65,536 bytes per line, 65,536 entries,
-and 16 MiB total bytes read (including newlines, comments, and blank lines).
-
-For changed snapshots, output is deterministic and sorted by key across both
-files:
-
-```text
-- removed.key=old value
-+ added.key=new value
-~ changed.key: old value -> new value
-```
-
-Snapshot bytes remain opaque for comparison. Diff keys render unchanged. Diff
-values and user-controlled paths or command arguments in diagnostics render as
-printable ASCII: bytes `0x20`–`0x7e` except backslash are literal, backslash is
-`\\`, and every other byte is uppercase `\xNN`.
-
-For identical snapshots, stdout is exactly:
-
-```text
-no changes
-```
-
-## pathaudit
-
-`pathaudit` 0.1.0 is a small ISO C17 scanner for hazards in PATH directory
-roots. It has three exclusive modes. Explicit-root mode is
-`pathaudit [--] ROOT...`: every inspection root is a command-line operand, and
-the process `PATH` environment variable is ignored. Opt-in `pathaudit --path`
-reads `PATH` once, splits on ASCII `:`, classifies each component with the
-same hazard rules, and additionally detects executable shadowing across those
-directories (see Executable Shadowing below) while applying the shared
-executable trust model (writability plus `UNSAFE_OWNER`). Opt-in
-`pathaudit --command NAME` reads `PATH` the same way but walks components in
-resolution order for one basename only (see Command-specific PATH risk
-inspection below), including that same trust model on each `MATCH` target.
-Explicit-root mode does not search for executables and remains ownership-blind.
-Under `--path` / `--command`, usable PATH directories also walk ancestor
-ownership through `/` under the same trust policy (see PATH Directory
-Ownership below). None of the modes remediate anything. Lookup follows
-symbolic links like `stat(2)`.
-
-Findings use a closed taxonomy (`EMPTY_ROOT`, `RELATIVE_ROOT`, `MISSING_ROOT`,
-`NON_DIRECTORY_ROOT`, `GROUP_WRITABLE`, `WORLD_WRITABLE`, `UNSAFE_OWNER`) with
-deterministic bytewise ordering. Empty PATH components (leading, trailing, or
-consecutive colons, or an explicitly empty `PATH`) are retained and report
-`EMPTY_ROOT`; they are not translated to the current directory. Relative
-components (not starting with `/`, including `.` and `..`) report
-`RELATIVE_ROOT` and are still looked up against the process working directory.
-An existing component that is not a directory (regular file, symlink-to-file,
-or `ENOTDIR` through a non-directory component) reports `NON_DIRECTORY_ROOT`
-and is distinct from both a usable directory and a missing entry.
-Writable-directory findings use only the final directory target's `S_IWGRP` /
-`S_IWOTH` bits. Under `--path` / `--command`, resolved regular executables
-reuse those writability codes on the executable `realpath`, and emit
-`UNSAFE_OWNER` when the final-target owner is neither UID 0 nor the invoking
-real UID. The same ownership trust policy also audits usable PATH directories
-and their ancestors (see Unsafe executable ownership and PATH Directory
-Ownership below).
-
-Exit status `0` means every root or PATH component was inspected with no
-hazard. Status `1` means inspection completed and at least one hazard was
-emitted (including empty `PATH` → one `EMPTY_ROOT`, an existing non-directory
-component → `NON_DIRECTORY_ROOT`, a `SHADOWED` executable under `--path`, or
-`UNSAFE_OWNER` on an executable, PATH directory, or ancestor). Status `2`
-means usage error, unset `PATH` in `--path` or `--command` mode (`PATH_UNSET`
-on stderr, empty stdout), invalid `--command` name (`INVALID_COMMAND`), limit
-violation, operational metadata error, allocation failure, or stdout
-write/flush failure (reject-closed). `--path` and `--command` accept no root
-operands and no other options; mixing them with roots or with each other is a
-usage error.
-
-Limitations: this is a metadata snapshot, not a security lock; filesystem
-state can change concurrently. The taxonomy does not cover packages, processes,
-services, capabilities, ACLs, or mount options. Ownership findings under
-`--path` / `--command` reuse one narrow `UNSAFE_OWNER` rule for executable
-targets, usable PATH directories, and ancestors through `/`; explicit-root
-mode stays ownership-blind. `--path` scans only top-level regular executables
-in each PATH directory (no nested recursion); `--command` searches only the
-queried basename. Symlink loops and permission denials are status `2`, not new
-hazard codes. There is no install target for `pathaudit` yet, and this README
-does not claim that `pathaudit` is released.
-
-The contract is [docs/pathaudit-contract.md](docs/pathaudit-contract.md); the
-manual page is [man/pathaudit.1](man/pathaudit.1). Compile without writing a
-workspace binary via `make pathaudit` (mktemp only), or let pytest build into
-its temporary directory.
-
-Examples:
-
-```sh
-pathaudit /tmp
-pathaudit -- -dash-root
-pathaudit --path
-pathaudit --command ls
-env -u PATH pathaudit --path   # reject-closed: PATH_UNSET, exit 2
-PATH=/safe:/tmp:/safe pathaudit --path
-```
-
-### Non-directory PATH entries
-
-A PATH component that exists but is not a directory cannot participate in
-normal command lookup. `pathaudit --path` (and explicit-root mode) reports
-`NON_DIRECTORY_ROOT` for a regular file, a symlink whose final target is not
-a directory, or an `ENOTDIR` lookup where a path component prevents directory
-resolution. That finding is a completed hazard (exit status `1`, empty
-stderr), not an operational error and not a silent success. It is mutually
-exclusive with `MISSING_ROOT`. Usable private directories still produce no
-finding; missing entries still report `MISSING_ROOT`; empty fields and
-duplicates keep their established semantics and original PATH indices.
-
-Relative non-directory components also keep `RELATIVE_ROOT` and add
-`NON_DIRECTORY_ROOT` when the cwd-relative lookup finds a non-directory.
-Permission findings never attach to non-directory roots. Prefer replacing
-such components with absolute directory paths you intend to search;
-`pathaudit` does not edit `PATH`.
-
-### Working-Directory-Dependent PATH Entries
-
-Empty and relative PATH components make command lookup depend on the process
-current working directory. POSIX treats an empty colon field as `.`, so a
-leading, trailing, or consecutive `:` (or an empty `PATH`) searches the cwd
-for the named command. Any component that does not begin with `/`—including
-`.`, `..`, `./bin`, and bare names like `bin`—is likewise resolved against the
-cwd, so the same PATH bytes can find different directories after `cd`. Absolute
-components that start with `/` are not cwd-dependent under this rule.
-
-`pathaudit --path` retains empty fields as the empty string and reports
-`EMPTY_ROOT` without rewriting them to `.` or looking them up. Non-absolute
-components report `RELATIVE_ROOT` and are still looked up against the process
-cwd (so missing or writable relative targets can add further codes). Absolute
-entries keep their existing hazard classification only; they are never labeled
-`EMPTY_ROOT` or `RELATIVE_ROOT`.
-
-To remediate, remove empty fields (collapse `::`, drop leading/trailing `:`)
-and replace relative components with absolute directory paths you intend to
-search. Leave legitimate absolute entries unchanged. `pathaudit` itself does
-not edit `PATH`.
-
-### Writable PATH Directories
-
-`GROUP_WRITABLE` and `WORLD_WRITABLE` report when a resolved PATH directory
-target has group-write (`S_IWGRP`) or other-write (`S_IWOTH`) set. Both codes
-can appear for the same component. Sticky, set-ID, execute, read, owner, ACL,
-credential, and mount-policy bits neither suppress nor create these findings.
-Missing and non-directory roots receive no permission finding. Prefer private
-directory modes (for example `0700`) for trusted PATH entries, and treat
-writable PATH directories as a prompt to harden permissions rather than as a
-remediation performed by `pathaudit` itself.
-
-### Unsafe executable ownership
-
-Under `pathaudit --path` and `pathaudit --command`, each resolved regular
-executable target is checked for a narrow ownership rule. Trusted final-target
-owners are root UID 0 and the invoking real UID from `getuid()`; any other
-final-target `st_uid` emits one stdout finding:
-
-```text
-UNSAFE_OWNER<TAB>"ESCAPED_REALPATH"
-```
-
-Symlink candidates follow the final target: ownership uses followed-target
-metadata, and the finding names the executable `realpath`, not the symlink
-path and not the PATH directory component. `UNSAFE_OWNER` ranks after
-`GROUP_WRITABLE` / `WORLD_WRITABLE` for the same realpath; under `--path`,
-those shared-taxonomy lines (directory and executable) precede all `SHADOWED`
-lines. Emitting `UNSAFE_OWNER` exits status `1` with empty stderr on the
-successful hazard path. Explicit-root mode never searches executables and
-never emits `UNSAFE_OWNER`. Non-executable same-basename decoys are not
-candidates. The same trust policy also classifies usable PATH directories and
-ancestors; see PATH Directory Ownership.
-
-To remediate, replace foreign-owned PATH executables with root-owned or
-self-owned trusted binaries, or remove the untrusted PATH entry. `pathaudit`
-does not `chown` files or edit `PATH`.
-
-### PATH Directory Ownership
-
-Under `pathaudit --path` and `pathaudit --command`, every usable PATH
-directory consulted by the scan inherits the executable ownership trust
-policy: only root UID 0 and the invoking real UID from `getuid()` are
-trusted. Any other final-target `st_uid` emits `UNSAFE_OWNER` naming the
-canonical offending directory `realpath`. After resolving the PATH entry,
-`pathaudit` walks that realpath and each ancestor directory through `/`, so a
-trusted executable reached only through an untrusted PATH directory or
-untrusted parent still surfaces the directory ownership gap. Shared ancestor
-realpaths are deduplicated to the lowest PATH index that observed them.
-Missing, empty (except command-mode plant-risk audit of `.` when applicable),
-and non-directory components invent no ownership lines. Explicit-root mode
-stays ownership-blind and never emits directory or ancestor `UNSAFE_OWNER`.
-Diagnostics reuse the shared code-rank sort with writability findings; status
-`1` with empty stderr means inspection completed and at least one ownership
-(or other) hazard was reported. Treat findings as a metadata snapshot prompt
-to harden PATH entries or directory ownership—not as proof of active
-compromise, not as ACL/capability analysis, and not as remediation performed
-by `pathaudit` itself. Concurrent filesystem change can race `stat` /
-`realpath`; interpret results against a stable tree when possible.
-
-### Executable Shadowing
-
-When `pathaudit --path` walks the process `PATH` in left-to-right resolution
-order, the first regular executable (`S_ISREG` and `X_OK`) for a given
-basename is the winner. Any later PATH directory that also contains a regular
-executable with that same basename is an executable duplicate: the later hit
-is shadowed by the earlier winner. Each shadow is reported as one stdout line:
-
-```text
-SHADOWED<TAB>"COMMAND"<TAB>"WINNER_REALPATH"<TAB>"SHADOWED_REALPATH"
-```
-
-Fields are quote-escaped like other pathaudit output. The winner and shadowed
-locations are `realpath(3)` results, so symlink-resolved absolute paths appear
-rather than the raw PATH-component join. Shared-taxonomy directory hazard lines
-(when any) always precede `SHADOWED` lines. Multiple colliding basenames are
-ordered by command basename bytes, then by PATH index of each shadowed hit.
-Every later distinct realpath is reported against the same first-PATH winner;
-shadowing alone exits `1` with empty stderr.
-
-Important edge cases: non-executable same-basename files never win and never
-shadow; distinct command names never collide; repeating the same directory
-(identical realpath) does not self-shadow; empty, missing, non-directory, and
-unreadable PATH components are skipped for the scan without inventing shadows;
-the scan does not recurse into nested directories. Explicit-root mode does not
-emit `SHADOWED`.
-
-Example (two private directories both providing `tool`):
-
-```sh
-PATH=/opt/early:/opt/late pathaudit --path
-# SHADOWED	"tool"	"/opt/early/tool"	"/opt/late/tool"
-```
-
-### Command-specific PATH risk inspection
-
-Exclusive `pathaudit --command NAME` walks the process `PATH` in resolution
-order for one command basename. `NAME` must be nonempty and must not contain
-`/`; otherwise stderr reports `INVALID_COMMAND` with the escaped operand and
-the process exits `2` with empty stdout. Unset `PATH` is reject-closed
-(`PATH_UNSET`, exit `2`), matching `--path`. Extra operands, missing `NAME`,
-or mixing `--command` with roots or `--path` is a usage error (exit `2`).
-
-Stdout lists every regular executable match for that basename as
-`MATCH<TAB>"realpath"` lines in PATH order (including shadows and repeated
-components), then applicable hazard lines from the shared taxonomy. Empty and
-relative PATH fields always remain cwd-dependent hazards (`EMPTY_ROOT` /
-`RELATIVE_ROOT`, plus missing or non-directory findings when those relative
-lookups fail). Absolute `MISSING_ROOT` / `NON_DIRECTORY_ROOT` noise before a
-winner is omitted. `GROUP_WRITABLE` / `WORLD_WRITABLE` apply to directories
-that produced a `MATCH` and to writable absolute directories that still precede
-the first match (plant risk); a writable directory after the winner with no
-match for `NAME` is not reported. Each `MATCH` target also receives the shared
-executable trust model, so group/other-writable images reuse
-`GROUP_WRITABLE` / `WORLD_WRITABLE` on the executable realpath and foreign
-final-target owners emit `UNSAFE_OWNER` after those permission codes.
-Applicable PATH directories and ancestors receive that same ownership policy
-(see PATH Directory Ownership). Exit `0` means the query finished with no
-hazard lines (matches alone do not force status `1`); exit `1` means at least
-one hazard was emitted (including `UNSAFE_OWNER`); exit `2` covers usage,
-`INVALID_COMMAND`, `PATH_UNSET`, limits, inspection errors, allocation
-failure, and stdout write/flush failure.
-
-This is targeted risk inspection for one basename: other executables that
-happen to share a PATH directory are unrelated benign basename collisions and
-are never listed. Non-executable files and directories named like `NAME` are
-not matches. `pathaudit` still does not remediate `PATH` or rewrite entries.
-
-## Documentation
-
-Release and maintainer documentation lives at the repository root alongside the
-quick-start material above. Start with [STATUS.md](STATUS.md) for readiness and
-[docs/sysdiff-quality-floor-clean-checkout.md](docs/sysdiff-quality-floor-clean-checkout.md)
-for the declared `make quality` gate surface (Makefile order is the executable
-contract; that doc mirrors it). [TESTING.md](TESTING.md) covers how shell
-fixtures, pytest, smoke, sanitizers, and Valgrind compose.
-[HISTORY.md](HISTORY.md) and [DECISIONS.md](DECISIONS.md) record engineering
-timeline and durable product choices; [ROADMAP.md](ROADMAP.md) lists post-0.1.0
-ideas without expanding current scope. Architecture detail is in
-[architecture.md](architecture.md); user-facing CLI behavior is in
-[man/sysdiff.1](man/sysdiff.1). The durable snapshot-format contract remains
-[docs/sysdiff-snapshot-format-and-scope.md](docs/sysdiff-snapshot-format-and-scope.md).
-Also see [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md),
-[SECURITY.md](SECURITY.md), and [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md).
-When changing CLI semantics, key grammar, limits, exit statuses, or output
-lines, update the man page, CHANGELOG, contract docs, and these root files in
-the same change; do not leave README summaries or `man/sysdiff.1` behind the
-implementation. Ownership of parse buffers and portability notes for binary
-`fopen`, locale-independent sorting, and Linux-focused CI live in architecture
-and TESTING—follow those before claiming a host or packaging target is covered.
+See [TESTING.md](TESTING.md) and [QUALITY.md](QUALITY.md) for the full tool
+list and individual targets.
+
+## Design principles
+
+- One clear job per executable.
+- Small C source surfaces that people can audit.
+- Deterministic output and documented exit statuses.
+- Read-only inspection unless a future tool explicitly says otherwise.
+- No services, telemetry, hidden persistence, or network access.
+- Fail closed on malformed input and operational errors.
+
+Security reports should follow [SECURITY.md](SECURITY.md). Contributions are
+welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT License. Copyright (c) 2026 Lee Harrington. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
