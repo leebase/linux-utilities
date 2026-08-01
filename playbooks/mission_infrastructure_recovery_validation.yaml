@@ -1,0 +1,115 @@
+{
+  "playbook_id": "mission_infrastructure_recovery_validation",
+  "name": "Linux Utilities mission infrastructure recovery validation",
+  "authoring_notes": [
+    "Generated from the supported docs_only template and specialized for a read-only readiness audit.",
+    "This one-off playbook does not choose routing policy, enable scheduling, re-arm the mission, or modify source, tests, scripts, agent-orch, or auto-orch.",
+    "The human approval step is intentional: approval of the execution report is never implicit."
+  ],
+  "defaults": {
+    "worker": "codex_cli",
+    "retry_policy": {
+      "max_attempts": 2,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_validate_recovery_state",
+      "name": "Validate the recovery state",
+      "mission": "Read AGENTS.md, plans/mission-infrastructure-recovery-sprint.md, docs/mission-infrastructure-recovery.md, docs/repository-identity-protection.md, context.md, result-review.md, sprint-plan.md, and WHERE_AM_I.md. Inspect the repository identity, scratch, routing, and latest-run evidence named by those documents. Run the declared local verification commands. Write docs/mission-infrastructure-recovery-execution.md with exact headings Findings, Evidence, Local Verification, Open Platform Decisions, and Recommendation, with at least 100 non-whitespace characters under each heading. Report evidence faithfully: local identity detection and scratch cleanup may be complete, while immutable trusted-boundary enforcement, deterministic routing, and a successful current autonomous smoke run remain blockers. Do not modify any file outside docs/ and do not change mission routing, scheduling, source, tests, scripts, or either platform repository.",
+      "inputs": [
+        "AGENTS.md",
+        "plans/mission-infrastructure-recovery-sprint.md",
+        "docs/mission-infrastructure-recovery.md",
+        "docs/repository-identity-protection.md",
+        "context.md",
+        "result-review.md",
+        "sprint-plan.md",
+        "WHERE_AM_I.md",
+        "scripts/check_repository_identity.py",
+        "scripts/prune-agent-orch-scratch.sh",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+        "/home/lee/projects/auto-orch/config/crews.yaml",
+        "/home/lee/projects/auto-orch/src/auto_orch/routing.py"
+      ],
+      "allowed_paths": [
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/mission-infrastructure-recovery-execution.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/mission-infrastructure-recovery-execution.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/mission-infrastructure-recovery-execution.md",
+            "headings": [
+              "Findings",
+              "Evidence",
+              "Local Verification",
+              "Open Platform Decisions",
+              "Recommendation"
+            ],
+            "min_chars_under_heading": 100
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 600
+          },
+          {
+            "type": "command_succeeds",
+            "command": "python3 scripts/check_repository_identity.py --json",
+            "timeout_seconds": 120
+          },
+          {
+            "type": "command_succeeds",
+            "command": "bash -n scripts/prune-agent-orch-scratch.sh",
+            "timeout_seconds": 30
+          }
+        ],
+        "semantic": [
+          {
+            "type": "semantic_check",
+            "path": "docs/mission-infrastructure-recovery-execution.md",
+            "mode": "criterion",
+            "reference_path": "plans/mission-infrastructure-recovery-sprint.md",
+            "question": "Does the execution report accurately distinguish completed local controls from unresolved platform decisions, preserve the routing conflict without choosing an authority, and conclude Not ready unless immutable trusted-boundary identity enforcement, deterministic routing, and a successful current autonomous smoke run are all evidenced?",
+            "judge_harness": "pi_cli"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair only docs/mission-infrastructure-recovery-execution.md. Keep the five required headings substantive, reproduce the local verification commands, preserve the routing ambiguity, and keep the recommendation Not ready while any platform blocker lacks evidence.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_02_approve_recovery_report",
+      "type": "human_approval",
+      "name": "Approve the recovery report",
+      "mission": "Human gate: read docs/mission-infrastructure-recovery-execution.md and approve only if it faithfully records the local evidence, names the unresolved platform decisions, and does not claim that Linux Utilities is ready for re-arm. The run parks in WAITING_APPROVAL until the human explicitly approves this step and resumes the run.",
+      "inputs": [
+        "docs/mission-infrastructure-recovery-execution.md"
+      ]
+    }
+  ]
+}

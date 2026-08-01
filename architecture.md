@@ -220,3 +220,42 @@ dependent and hard to pin); applying ownership under explicit-root mode
 not claim that pathaudit ignores ownership policy wholesale. Foreign-owner
 fixtures may be host-limited. This decision does not add an install target or
 claim a `pathaudit` release.
+
+## 2026-07-28 — permguard explicit-path bootstrap
+
+**Decision:** Governed run `a8341dfae9f2` adds `permguard` as the suite's
+third small C17 utility with an explicit-operand-only interface:
+`permguard [--] PATH...`, plus informational `--help` and `--version`. The
+scanner performs exactly one `lstat` per operand and never follows symlinks.
+It classifies world-writable regular files, world-writable directories without
+the sticky bit, and executable regular files carrying set-user-ID or
+set-group-ID. Findings are retained until all operands have been inspected,
+then emitted in operand order and fixed hazard rank with printable-ASCII
+escaping. Exit status is 0 for a clean or informational run, 1 for completed
+hazard findings, and 2 for usage, resource limit, allocation, inspection, or
+stdout failure.
+
+**Rationale:** The first slice needs to prove a useful permission-audit
+contract without inheriting pathaudit's PATH traversal or expanding into a
+general filesystem crawler. One metadata lookup per explicit operand keeps the
+runtime and ownership model auditable. Validate-before-output sequencing
+prevents a later inspection failure from leaving apparently complete partial
+findings.
+
+**Alternatives rejected:** Recursion (unbounded traversal and policy
+questions); reading PATH (belongs to pathaudit); following or resolving
+symlinks (would change the named-object contract); ACL/capability/owner policy
+(outside the closed first-slice taxonomy); chmod/chown remediation (violates
+the read-only mission); install, release, or dist membership (not authorized
+for this bootstrap).
+
+**Consequences:** `src/permguard.c`, `tests/test_permguard.py`, and
+`man/permguard.1` join the strict compiler, formatting, static-analysis,
+manual, pytest, sanitizer, and Valgrind surfaces through additive Makefile
+wiring; dedicated build/memory recipes use temporary binaries. Existing
+sysdiff install/release/dist membership remains unchanged. Independent review
+`code-reviews/review-permguard-bootstrap.verdict.json` passed with Medium
+PG-DOC-001 and PG-TEST-002 plus three Low findings. This record addresses the
+architecture omission noted inside PG-DOC-001 only as a closeout edit; the
+finding remains open until stale QUALITY.md/TESTING.md are repaired and the
+combined change is independently reviewed.

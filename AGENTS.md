@@ -1,7 +1,7 @@
 # Agent Guide: linux-utilities
 
 This repository is operated by the `linux-utilities` auto-orch mission from
-`/home/lee/projects/agent-orch/missions/linux-utilities`.
+`/home/lee/projects/auto-orch/missions/linux-utilities`.
 
 This project uses AgentFlow: the markdown files in this repo are shared memory
 between humans, auto-orch, Agent-Orch, and worker agents. Treat updates to those
