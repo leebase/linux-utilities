@@ -6,6 +6,10 @@ SHELL := /bin/bash
 SRC := src/sysdiff.c
 PATHAUDIT_SRC := src/pathaudit.c
 PERMGUARD_SRC := src/permguard.c
+# Permguard-only POSIX feature-test flag. Keep as a dedicated := variable so
+# callers who replace CFLAGS cannot drop the platform-header lstat prototype
+# contract (PG-PORT-505). Applied on every permguard compile/analyze route.
+PERMGUARD_POSIX_CFLAGS := -D_POSIX_C_SOURCE=200809L
 # Ordinary product binary. Keep under build/ so .gitignore covers it; do not
 # emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
 # pathaudit and permguard have no workspace binary target; quality recipes
@@ -111,7 +115,7 @@ permguard:
 	@set -e; \
 	workdir=$$(mktemp -d /tmp/permguard-build.XXXXXXXXXX) || exit 1; \
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
-	$(CC) $(CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+	$(CC) $(CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 # install/uninstall remain sysdiff-only in this slice (PG-NG-3: packaging /
 # installation outside the vertical slice). pathaudit and permguard stay
@@ -156,7 +160,7 @@ gcc-strict:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
-	gcc $(STRICT_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+	gcc $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 clang-strict:
 	@set -e; \
@@ -168,12 +172,12 @@ clang-strict:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	clang $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
-	clang $(STRICT_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+	clang $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 clang-syntax:
 	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
 	clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC)
-	clang $(STRICT_WARNINGS) -fsyntax-only $(PERMGUARD_SRC)
+	clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC)
 
 format-check:
 	clang-format --dry-run --Werror $(ALL_SRCS)
@@ -181,10 +185,10 @@ format-check:
 clang-tidy-check:
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS)
-	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS)
+	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS)
 
 cppcheck-check:
-	cppcheck --quiet --enable=all --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
+	cppcheck --quiet --enable=all --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
 
 # Clang static analyzer via clang --analyze (no scan-build / report dir required).
 # analyzer-werror makes findings fail the gate; output stays under mktemp.
@@ -200,7 +204,7 @@ clang-analyzer-check:
 		-Xclang -analyzer-output=text -o "$$workdir/sysdiff" $(SRC); \
 	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
 		-Xclang -analyzer-output=text -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
-	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
+	clang --analyze $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -Xclang -analyzer-werror \
 		-Xclang -analyzer-output=text -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
 man-check:
@@ -263,7 +267,7 @@ test-asan:
 		printf 'error: AddressSanitizer pathaudit build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
-	if ! clang $(ASAN_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+	if ! clang $(ASAN_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
 		printf 'error: AddressSanitizer permguard build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
@@ -294,7 +298,7 @@ test-ubsan:
 		printf 'error: UndefinedBehaviorSanitizer pathaudit build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
-	if ! clang $(UBSAN_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+	if ! clang $(UBSAN_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer permguard build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
@@ -325,7 +329,7 @@ test-valgrind:
 		printf 'error: Valgrind pathaudit debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
-	if ! gcc $(VALGRIND_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
+	if ! gcc $(VALGRIND_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$permguard_bin" $(PERMGUARD_SRC); then \
 		printf 'error: Valgrind permguard debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
@@ -387,7 +391,7 @@ permguard-sanitize:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/permguard-sanitize"; \
 	fixture="$$workdir/clean"; \
-	if ! clang $(ASAN_CFLAGS) -fsanitize=undefined -o "$$tmpbin" $(PERMGUARD_SRC); then \
+	if ! clang $(ASAN_CFLAGS) -fsanitize=undefined $(PERMGUARD_POSIX_CFLAGS) -o "$$tmpbin" $(PERMGUARD_SRC); then \
 		printf 'error: permguard AddressSanitizer/UBSan build failed (clang or sanitizer runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
@@ -407,7 +411,7 @@ permguard-valgrind:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	tmpbin="$$workdir/permguard-valgrind"; \
 	fixture="$$workdir/clean"; \
-	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(PERMGUARD_SRC); then \
+	if ! gcc $(VALGRIND_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$tmpbin" $(PERMGUARD_SRC); then \
 		printf 'error: permguard Valgrind debug build failed\n' >&2; \
 		exit 1; \
 	fi; \

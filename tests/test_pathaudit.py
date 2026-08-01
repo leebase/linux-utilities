@@ -5202,10 +5202,123 @@ def test_path_mode_unreadable_symlink_target_is_inspection_error(
         os.chmod(blocked, MODE_PRIVATE)
 
 
+# ---------------------------------------------------------------------------
+# PA-W1: bounded self-basename ELOOP discriminator
+#
+# Closes docs/pathaudit-open-repairs-contract.md Low finding PA-W1. The helper
+# that distinguishes a bare self-basename loop (tool -> tool) from other ELOOP
+# shapes must not reserve a PATHAUDIT_MAX_ROOT_LENGTH automatic readlink
+# buffer; temporary storage is command-length + one truncation-detection byte,
+# heap-owned, and freed on every return. Bare self links stay reject-closed
+# (AC-2 / AC-3 below). Slash-bearing and byte-different loop targets must not
+# be reclassified as bare self-basename links, must not invent MATCH/SHADOWED,
+# and must never execute planted target content (AC-4).
+# ---------------------------------------------------------------------------
+
+
+def _extract_c_function_body(source: str, name: str) -> str:
+    """Return the outermost brace body of a C function definition named *name*."""
+
+    match = re.search(
+        rf"(?:^|\n)(?:static\s+)?(?:[\w\s\*]+?\s|\*){re.escape(name)}\s*\(",
+        source,
+    )
+    if match is None:
+        raise AssertionError(f"C function {name!r} not found in source")
+    param_open = source.find("(", match.start())
+    if param_open < 0:
+        raise AssertionError(f"C function {name!r}: missing parameter list")
+    depth = 0
+    i = param_open
+    while i < len(source):
+        ch = source[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                i += 1
+                break
+        i += 1
+    else:
+        raise AssertionError(f"C function {name!r}: unterminated parameter list")
+    while i < len(source) and source[i] in " \t\r\n":
+        i += 1
+    if i >= len(source) or source[i] != "{":
+        raise AssertionError(f"C function {name!r}: missing opening brace")
+    body_start = i
+    depth = 0
+    while i < len(source):
+        ch = source[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[body_start : i + 1]
+        i += 1
+    raise AssertionError(f"C function {name!r}: unterminated body")
+
+
+def test_paw1_self_basename_buffer_is_command_bounded_and_owned():
+    """AC-1: symlink_is_self_basename uses command-bounded heap storage, not a root-sized stack array."""
+
+    if not SRC.is_file():
+        pytest.fail(f"{SRC} is missing; PA-W1 regression requires the source")
+    source = SRC.read_text(encoding="utf-8")
+    body = _extract_c_function_body(source, "symlink_is_self_basename")
+
+    # Old PA-W1 blast radius: automatic readlink buffer sized by the root limit.
+    assert re.search(
+        r"\[\s*PATHAUDIT_MAX_ROOT_LENGTH(?:\s*\+\s*\d+)?\s*\]",
+        body,
+    ) is None, (
+        "symlink_is_self_basename must not declare an automatic buffer sized "
+        "by PATHAUDIT_MAX_ROOT_LENGTH (PA-W1)"
+    )
+    assert re.search(
+        r"\b(?:malloc|calloc)\s*\(\s*PATHAUDIT_MAX_ROOT_LENGTH",
+        body,
+    ) is None, (
+        "symlink_is_self_basename must not heap-allocate a root-length "
+        "readlink buffer (PA-W1)"
+    )
+    assert "PATHAUDIT_MAX_ROOT_LENGTH" not in body, (
+        "symlink_is_self_basename temporary storage must not be keyed off "
+        "PATHAUDIT_MAX_ROOT_LENGTH (PA-W1)"
+    )
+
+    assert re.search(r"\b(?:malloc|calloc)\s*\(", body), (
+        "symlink_is_self_basename must allocate temporary readlink storage"
+    )
+    assert re.search(r"\bstrlen\s*\(\s*command\s*\)", body), (
+        "symlink_is_self_basename buffer bound must derive from strlen(command)"
+    )
+    # Extra byte is the truncation / longer-payload detector (command_len + 1).
+    assert re.search(
+        r"(?:strlen\s*\(\s*command\s*\)|command_len|cmd_len).{0,120}?\+\s*1"
+        r"|size_add_ok\s*\(\s*(?:strlen\s*\(\s*command\s*\)|command_len|cmd_len)"
+        r"\s*,\s*1\b",
+        body,
+        flags=re.DOTALL,
+    ), (
+        "symlink_is_self_basename allocation must be command length plus one "
+        "detection byte (PA-W1)"
+    )
+    free_sites = re.findall(r"\bfree\s*\(", body)
+    assert len(free_sites) >= 2, (
+        "symlink_is_self_basename must free temporary storage on success, "
+        "mismatch, and readlink-failure paths (PA-W1)"
+    )
+    assert re.search(r"\breadlink\s*\(", body), (
+        "symlink_is_self_basename must call readlink without following the candidate"
+    )
+
+
 def test_path_mode_symlink_loop_executable_candidate_is_inspection_error(
     pathaudit_bin, tmp_path
 ):
-    """Symlink-loop executable candidates are unsafe inspection, not silent skips."""
+    """AC-2: bare self-basename loop under `--path` is unsafe inspection, not a silent skip."""
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
     cmd = "tool"
@@ -5226,7 +5339,7 @@ def test_path_mode_symlink_loop_executable_candidate_is_inspection_error(
 def test_command_mode_symlink_loop_executable_is_inspection_error(
     pathaudit_bin, tmp_path
 ):
-    """`--command` reject-closes when the queried basename resolves into a loop."""
+    """AC-3: bare self-basename loop under `--command` matches AC-2 status/stdout/stderr bytes."""
 
     (private,) = _private_path_dirs(tmp_path, ("private",))
     cmd = "tool"
@@ -5240,6 +5353,159 @@ def test_command_mode_symlink_loop_executable_is_inspection_error(
     reason = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
     assert result.stderr == diagnostic_lines(reason, candidate)
     assert_no_raw_unsafe_bytes(result.stderr)
+
+
+def test_paw1_path_mode_slash_bearing_loop_is_not_bare_self_basename(
+    pathaudit_bin, tmp_path
+):
+    """AC-4: `tool -> ./tool` is not bare self-basename; no MATCH/SHADOWED/exec."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+    plant = _plant_execution_probe(private, "plant", marker)
+
+    cmd = "tool"
+    private_root = str(private.resolve())
+    loop = private / cmd
+    loop.symlink_to("./tool")
+    candidate = f"{private_root}/{cmd}"
+    eloop = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+
+    assert not marker.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, private_root)
+    _assert_probe_not_executed(marker)
+
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert diagnostic_lines(eloop, candidate) not in result.stderr
+    assert eloop.encode("ascii") not in result.stderr
+    assert b"MATCH\t" not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+    assert escape_root(cmd) not in result.stdout
+    assert escape_root(plant) not in result.stdout
+    assert_no_raw_unsafe_bytes(result.stdout)
+
+
+def test_paw1_command_mode_slash_bearing_loop_is_not_bare_self_basename(
+    pathaudit_bin, tmp_path
+):
+    """AC-4: `--command` keeps `tool -> ./tool` as a non-self ELOOP non-match."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+    plant = _plant_execution_probe(private, "plant", marker)
+
+    cmd = "tool"
+    private_root = str(private.resolve())
+    loop = private / cmd
+    loop.symlink_to("./tool")
+    candidate = f"{private_root}/{cmd}"
+    eloop = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+
+    assert not marker.exists()
+    result = run_pathaudit_command_mode(pathaudit_bin, cmd, private_root)
+    _assert_probe_not_executed(marker)
+
+    code, expected = expect_command_query([], [], [(0, private.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert diagnostic_lines(eloop, candidate) not in result.stderr
+    assert eloop.encode("ascii") not in result.stderr
+    assert b"MATCH\t" not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+    assert escape_root(plant) not in result.stdout
+    assert_no_raw_unsafe_bytes(result.stdout)
+
+
+def test_paw1_path_mode_byte_different_mutual_loop_is_not_bare_self_basename(
+    pathaudit_bin, tmp_path
+):
+    """AC-4: mutual `alpha <-> bravo` loops stay non-candidates under `--path`."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+    plant = _plant_execution_probe(private, "plant", marker)
+
+    private_root = str(private.resolve())
+    alpha = private / "alpha"
+    bravo = private / "bravo"
+    # Byte-different targets (and unequal lengths) so neither is a bare
+    # self-basename payload of its own command name.
+    alpha.symlink_to("bravo")
+    bravo.symlink_to("alpha")
+    alpha_candidate = f"{private_root}/alpha"
+    bravo_candidate = f"{private_root}/bravo"
+    eloop = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+
+    assert not marker.exists()
+    result = run_pathaudit_path_mode(pathaudit_bin, private_root)
+    _assert_probe_not_executed(marker)
+
+    code, expected = expect_path_findings([], [(0, private.resolve())])
+    assert result.returncode == code
+    assert result.stderr == b""
+    assert result.stdout == expected
+    assert diagnostic_lines(eloop, alpha_candidate) not in result.stderr
+    assert diagnostic_lines(eloop, bravo_candidate) not in result.stderr
+    assert eloop.encode("ascii") not in result.stderr
+    assert b"MATCH\t" not in result.stdout
+    assert b"SHADOWED\t" not in result.stdout
+    assert escape_root("alpha") not in result.stdout
+    assert escape_root("bravo") not in result.stdout
+    assert escape_root(plant) not in result.stdout
+    assert_no_raw_unsafe_bytes(result.stdout)
+
+
+def test_paw1_command_mode_byte_different_mutual_loop_is_not_bare_self_basename(
+    pathaudit_bin, tmp_path
+):
+    """AC-4: `--command` does not reject-close or MATCH a mutual-loop basename."""
+
+    (private,) = _private_path_dirs(tmp_path, ("private",))
+    probe_dir = tmp_path / "probes"
+    probe_dir.mkdir()
+    os.chmod(probe_dir, MODE_PRIVATE)
+    marker = probe_dir / "executed"
+    plant = _plant_execution_probe(private, "plant", marker)
+
+    private_root = str(private.resolve())
+    alpha = private / "alpha"
+    bravo = private / "bravo"
+    alpha.symlink_to("bravo")
+    bravo.symlink_to("alpha")
+    alpha_candidate = f"{private_root}/alpha"
+    bravo_candidate = f"{private_root}/bravo"
+    eloop = f"INSPECTION_ERROR_{errno_mod.ELOOP}"
+
+    assert not marker.exists()
+    for cmd, candidate in (
+        ("alpha", alpha_candidate),
+        ("bravo", bravo_candidate),
+    ):
+        result = run_pathaudit_command_mode(pathaudit_bin, cmd, private_root)
+        _assert_probe_not_executed(marker)
+        code, expected = expect_command_query([], [], [(0, private.resolve())])
+        assert result.returncode == code
+        assert result.stderr == b""
+        assert result.stdout == expected
+        assert diagnostic_lines(eloop, candidate) not in result.stderr
+        assert eloop.encode("ascii") not in result.stderr
+        assert b"MATCH\t" not in result.stdout
+        assert b"SHADOWED\t" not in result.stdout
+        assert escape_root(plant) not in result.stdout
+        assert_no_raw_unsafe_bytes(result.stdout)
 
 
 # ---------------------------------------------------------------------------

@@ -106,19 +106,60 @@ changed-line presentation, Ubuntu-focused CI, source-first packaging without a
 `.deb`/`.rpm` (Make `install`/`uninstall` staging is present), and
 explicit-snapshot-only comparison scope.
 
+### Permguard Hostile Filesystem Fixtures
+
+Additive `tests/test_permguard.py` coverage under
+`docs/permguard-hostile-filesystem-fixtures-contract.md` pins the live
+bootstrap against hostile filesystem objects without changing the public CLI
+or taxonomy: dangling and final-loop links stay `SYMBOLIC_LINK` (status `2`);
+intermediate loops report `INSPECTION_ERROR_<ELOOP>`; mode-000 entries are
+metadata-classified without content I/O while non-searchable parents may yield
+`INACCESSIBLE` when unprivileged `EACCES` is obtainable; permission transitions
+are point-in-time; unusual bytes escape in findings and diagnostics; deep
+within-limit paths classify normally; FIFOs (and optional AF_UNIX sockets)
+apply the same four mode predicates without opening; and replacement races use
+a test-only `lstat` seam so classification matches the single captured
+`struct stat`. Exits remain `0`/`1`/`2`. Documentation in README,
+`man/permguard.1`, and `docs/permguard.md` records those diagnostics,
+portability skips, and non-goals without claiming a lock, race-free
+authorization, device-node coverage, install wiring, packaging, or release.
+
+### permguard Medium Repairs Recovery
+
+Governed recovery run `5035933ac7b4` (`repair_governed_run_ba6dc2fdd199`) of
+the dirty Medium-repairs candidate left by failed run `ba6dc2fdd199` (not a
+passed delivery): reconcile architecture to the shipped four-code streaming
+model (PG-DOC-501); mark the superseded one-code contract and plan with
+conspicuous non-authority pointers (PG-DOC-502); pin `STDOUT_WRITE` on
+`/dev/full` and closed-pipe ignored-`SIGPIPE` regressions (PG-TEST-503);
+obtain `lstat` from `<sys/stat.h>` under `-D_POSIX_C_SOURCE=200809L` on every
+Make and pytest permguard compile route without a hand-written prototype
+(PG-PORT-505); and name real permguard quality/testing routes in QUALITY.md
+and TESTING.md (PG-DOC-512). Independent review
+`code-reviews/review-governed-run-ba6dc2fdd199.verdict.json` is `pass` and
+closes those five Mediums; remaining notes are Low
+PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/PGR-TEST-709/PGR-DOC-710 plus
+bootstrap Lows. README, `docs/permguard.md`, `man/permguard.1`, STATUS,
+HISTORY, ROADMAP, and this Unreleased note now match the explicit-path CLI,
+four-code taxonomy, statuses `0`/`1`/`2`, and non-goals without treating the
+five Mediums as still-live architecture/QUALITY silence defects. This recovery
+does not install, package, tag, publish, or release `permguard`, and it does
+not claim that failed run `ba6dc2fdd199` passed.
+
 ### pathaudit Maintenance Repairs
 
-Candidate recovery of the dirty `pathaudit` maintenance work from failed
-governed run `6ca4cebc8527` (not a passed delivery): right-size retained
-`realpath` copies (`pathaudit-shadow-1`), bounded basename winner index plus
-bounded `(command, shadow)` duplicate index (`pathaudit-shadow-2`), and emit
-each exact `(command, winner, shadow)` `SHADOWED` tuple once
-(`pathaudit-shadow-3`). `--path` still keeps first-PATH winners, one row per
-distinct later realpath, status `1` when any unique shadow remains,
-directory/ancestor `UNSAFE_OWNER` under the existing trust rule, shared
-finding order, stderr diagnostics, and exits `0`/`1`/`2`. Non-goals: no new
-detector, packaging, release claim, or unrelated backlog closure. Closure of
-the three IDs still requires fresh verification and independent review.
+`pathaudit` closes Low `PA-W1` from `docs/pathaudit-open-repairs-contract.md`:
+the `ELOOP` self-basename helper no longer uses a root-sized automatic
+`readlink` buffer. Temporary storage is command-length plus one truncation
+byte, heap-owned, and freed on match, mismatch, and `readlink` failure. Bare
+`tool -> tool` remains status `2` with empty stdout and escaped
+`INSPECTION_ERROR_<ELOOP>`; slash-bearing and mutual-loop targets stay
+non-candidates without fabricated `MATCH`/`SHADOWED` rows; allocation failure
+stays `OUT_OF_MEMORY`/status `2`. Public CLI, hazard taxonomy, ownership
+trust, shadow uniqueness (`pathaudit-shadow-1/2/3`), and exits `0`/`1`/`2`
+are unchanged. Non-goals: no `PA-W2`, packaging, install, tag, publication, or
+release claim. README, `man/pathaudit.1`, QUALITY.md, and TESTING.md record
+the repaired diagnostics without widening the feature.
 
 ## 0.1.0 — 2026-07-10
 

@@ -16,6 +16,42 @@ leak-enabled ASan. A section-1 man page and warning-gated groff check joined
 the gate before the curated seed was published. This history is product
 evidence: append new cycles; do not erase prior engineering record.
 
+## 2026-07-31 — pathaudit PA-W1 open-repair maintenance (`c9e3de33f46b`)
+
+Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`) closed Low
+finding `PA-W1` under FRAME artifacts
+`docs/pathaudit-open-repairs-contract.md` and
+`plans/pathaudit-open-repairs-plan.md`. The slice replaced the 65,537-byte
+automatic `readlink` buffer in `symlink_is_self_basename` with a
+command-bounded heap allocation (`strlen(command) + 1`), split operational
+status from the boolean self-basename result so allocation failure becomes
+stderr-only `OUT_OF_MEMORY` status 2, preserved bare-self
+`INSPECTION_ERROR_<ELOOP>` reject-close behavior, and added structural plus
+functional regressions in `tests/test_pathaudit.py`. Bounded prose landed in
+README, CHANGELOG, `docs/pathaudit.md`, `man/pathaudit.1`, QUALITY.md, and
+TESTING.md without new options, hazard codes, packaging, or release claims.
+
+Failed experiment then recovered: step-5 first failed
+`clang-format --dry-run --Werror` on an `is_self` assignment line-break;
+one format repair restored the gate. Exact verification: focused pathaudit
+pytest 156 passed / 15 skipped; GCC/Clang strict, clang-format, clang-tidy,
+cppcheck, and Clang analyzer exit 0; focused ASan+UBSan and Valgrind each
+156/15; complete `make quality` exit 0 with ordinary / ASan / UBSan /
+Valgrind each 359 passed / 15 skipped (scratch writable gitdir). Smoke
+`artifacts/user-smoke/result.json` recorded start/check 0 with empty
+blocking errors; check.log pytest `356 passed, 18 skipped in 21.16s`
+(sysdiff-centered transitive evidence).
+
+Independent review `code-reviews/review-pathaudit-open-repairs.md` /
+`.verdict.json` is `pass`: no Critical or High findings; Medium
+`PAW1-DOC-901` (roff `\"` comment swallow in new DIAGNOSTICS form); Low
+`PAW1-DOC-902` (lone `.B "` drops the quote glyph), `PAW1-TEST-903`
+(truncation-boundary coverage gap), `PAW1-TEST-904` (unexercised
+`OUT_OF_MEMORY`), and `PAW1-SCOPE-905` (working tree interleaved with
+separately governed permguard Medium-repair edits). Historical Low `PA-W1`
+is closed on that evidence. This history entry does not claim installation,
+packaging, publication, release readiness, or invented polish work.
+
 ## Engineering Timeline
 
 - Snapshot-format and initial-scope contract authored for explicit
@@ -266,6 +302,26 @@ tests/test_pathaudit.py -q` → 94 passed, 1 skipped in ~1.9s. This cycle
 does not claim that `pathaudit` is released, installable via
 `make install`, or that a product release was published.
 
+## 2026-07-30 — permguard Medium documentation alignment
+
+Permguard-facing Markdown, manual, and maintainer docs were reconciled to the
+Medium-repairs acceptance surface encoded by
+`docs/permguard-medium-repairs-contract.md` and `tests/test_permguard.py`
+(PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512). `architecture.md`
+describes the shipped four-code streaming continue-after-error model;
+QUALITY.md and TESTING.md name real permguard gate membership, overrides,
+fixture oracle, and sanitizer/Valgrind routes; README, CHANGELOG,
+`docs/permguard.md`, and `man/permguard.1` match the explicit-path CLI,
+taxonomy, statuses `0`/`1`/`2`, `STDOUT_WRITE` / ignored-`SIGPIPE` behavior,
+and non-goals; the one-code contract opens with a conspicuous superseded
+pointer to the bootstrap contract. Recovery run `5035933ac7b4` closed those
+five Mediums under
+`code-reviews/review-governed-run-ba6dc2fdd199.verdict.json` (`pass`);
+remaining notes are Low PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/PGR-TEST-709/
+PGR-DOC-710 plus bootstrap Lows. This history entry does not claim that
+failed run `ba6dc2fdd199` passed, and it does not install, package, publish,
+or release `permguard`.
+
 ## 2026-07-29 — Bootstrap permguard (`51100a584ac9`)
 
 Governed run `51100a584ac9` (`bootstrap_permguard_first_vertical_slice`)
@@ -368,3 +424,42 @@ PG-DOC-001/PG-TEST-002 and Low PG-DIAG-003/PG-PORT-004/PG-CLI-005. Those
 contract/plan documents were deleted during `629d1f459446` High PG-DOC-101
 repair and must not be treated as live authority; retain this entry as
 historical engineering record only.
+
+## 2026-07-30 — Sixth utility mission discovery (`787b9bb3d830`)
+
+Governed run `787b9bb3d830`
+(`discover_and_evaluate_sixth_linux_utility`) committed exactly **Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting**.
+Its one-purpose planning scope is to report, for one explicit Linux PID, open
+descriptors whose followed target is a regular file with `st_nlink == 0`,
+without trusting procfs link suffixes, scanning all PIDs, reading target
+content, grouping inodes, estimating reclaimable storage, controlling the
+process, installing, packaging, publishing, or releasing.
+
+The proposed first vertical slice closes the CLI to `--help`, `--version`, or
+one PID; bounds and sorts canonical decimal entries from `/proc/PID/fd`; uses
+repeated directory-relative metadata to establish a stable zero-link regular
+target; emits deterministic escaped `OPEN_UNLINKED` findings while preserving
+stable evidence beside visible per-descriptor advisories; and requires a
+closed status/taxonomy contract, focused fixtures, a section-1 manual, strict
+C/static/memory gates, dedicated smoke, and independent review.
+
+Review attempt 1 found High `SIXTH-H1` and `SIXTH-H2`; the repair loop
+preserved stable findings through descriptor churn and restored the existing
+Medium-debt / repair-before-expansion gate. Final artifacts
+`plans/review-sixth-utility-mission.md` and
+`plans/review-sixth-utility-mission.verdict.json` record `pass` with no
+Critical or High findings. Remaining Mediums are `SIXTH2-M1` (descriptor-cap
+total suppression), `SIXTH2-M2` (filesystems that retain nonzero link count),
+and `SIXTH2-M3` (status-1 finding/advisory discrimination); remaining Lows are
+`SIXTH2-L1` (stderr-write handling), `SIXTH2-L2` (defensive size-range
+reachability), and `SIXTH2-L3` (stale live-step wording).
+
+Review allowlisted only Python byte-compilation of the three existing pytest
+modules, which exited 0. Separate sysdiff-centered smoke supplied aggregate
+portfolio evidence at 351 passed / 18 skipped. No `openunlink` source, tests,
+manual, binary, build, sanitizer, Valgrind, dedicated smoke, package, tag, or
+release was created or verified, and implementation did not begin. The next
+executable action for this mission is to clear the live
+repair-before-expansion gate under independent review, then generate a
+separate governed implementation playbook beginning with a normative contract
+that resolves `SIXTH2-M1`–`SIXTH2-M3` before CODE and retains the Low notes.

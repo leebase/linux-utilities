@@ -1275,25 +1275,52 @@ static int emit_inspection_error_on_path(int err, const char *path) {
 }
 
 /*
- * True when candidate is a symlink whose readlink target is the bare command
- * basename (self-loop such as tool -> tool). Mutual directory stub loops
- * (loop-a <-> loop-b) are not self-basename loops.
+ * Decide whether candidate is a symlink whose readlink target is the bare
+ * command basename (self-loop such as tool -> tool). Mutual directory stub
+ * loops (loop-a <-> loop-b) and slash-bearing payloads (tool -> ./tool) are
+ * not self-basename loops.
+ *
+ * Borrows candidate and command; owns only a temporary readlink buffer sized
+ * to strlen(command) + 1 (the extra byte detects truncation / longer
+ * payloads). Frees that buffer before every return and never exposes an
+ * interior pointer. Returns 0 with *is_self_out set, or 2 after emitting
+ * OUT_OF_MEMORY. Callers must keep their previously captured errno; this
+ * helper's metadata calls must not replace that authoritative value.
  */
-static bool symlink_is_self_basename(const char *candidate,
-                                     const char *command) {
+static int symlink_is_self_basename(const char *candidate, const char *command,
+                                    bool *is_self_out) {
+  *is_self_out = false;
+
   struct stat lst;
   if (lstat(candidate, &lst) != 0 || !S_ISLNK(lst.st_mode)) {
-    return false;
+    return 0;
   }
 
-  char target[PATHAUDIT_MAX_ROOT_LENGTH + 1];
-  ssize_t n = readlink(candidate, target, sizeof(target) - 1);
-  if (n < 0 || (size_t)n >= sizeof(target)) {
-    return false;
+  size_t command_len = strlen(command);
+  size_t buf_size;
+  if (!size_add_ok(command_len, 1, &buf_size)) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
   }
+
+  char *target = malloc(buf_size);
+  if (target == NULL) {
+    emit_diag_reason("OUT_OF_MEMORY");
+    return 2;
+  }
+
+  ssize_t n = readlink(candidate, target, buf_size);
+  if (n < 0 || (size_t)n != command_len) {
+    free(target);
+    return 0;
+  }
+  /* readlink does not append NUL; room for the terminator is the +1 byte. */
   target[n] = '\0';
-  return strchr(target, '/') == NULL &&
-         cmp_unsigned_bytes(target, command) == 0;
+  const bool is_self =
+      strchr(target, '/') == NULL && cmp_unsigned_bytes(target, command) == 0;
+  free(target);
+  *is_self_out = is_self;
+  return 0;
 }
 
 /* True when the PATH component itself fails lookup with err. */
@@ -1381,10 +1408,18 @@ static int try_command_match(const struct Root *root, const char *command,
       free(candidate);
       return 0;
     }
-    if (err == ELOOP && !symlink_is_self_basename(candidate, command)) {
-      /* Mutual symlink cycles discovered via readdir are not executables. */
-      free(candidate);
-      return 0;
+    if (err == ELOOP) {
+      bool is_self = false;
+      int check = symlink_is_self_basename(candidate, command, &is_self);
+      if (check != 0) {
+        free(candidate);
+        return check;
+      }
+      if (!is_self) {
+        /* Mutual symlink cycles discovered via readdir are not executables. */
+        free(candidate);
+        return 0;
+      }
     }
     int status = emit_inspection_error_on_path(err, candidate);
     free(candidate);
@@ -1407,9 +1442,17 @@ static int try_command_match(const struct Root *root, const char *command,
       free(candidate);
       return 0;
     }
-    if (image_err == ELOOP && !symlink_is_self_basename(candidate, command)) {
-      free(candidate);
-      return 0;
+    if (image_err == ELOOP) {
+      bool is_self = false;
+      int check = symlink_is_self_basename(candidate, command, &is_self);
+      if (check != 0) {
+        free(candidate);
+        return check;
+      }
+      if (!is_self) {
+        free(candidate);
+        return 0;
+      }
     }
     int status = emit_inspection_error_on_path(image_err, candidate);
     free(candidate);
@@ -1437,11 +1480,24 @@ static int try_command_match(const struct Root *root, const char *command,
       return 2;
     }
     if (err == EACCES || err == ELOOP) {
-      if (root_lookup_fails_with(root, err) ||
-          (err == ELOOP && !symlink_is_self_basename(candidate, command))) {
+      if (root_lookup_fails_with(root, err)) {
         free(candidate);
         free(resolved_buf);
         return 0;
+      }
+      if (err == ELOOP) {
+        bool is_self = false;
+        int check = symlink_is_self_basename(candidate, command, &is_self);
+        if (check != 0) {
+          free(candidate);
+          free(resolved_buf);
+          return check;
+        }
+        if (!is_self) {
+          free(candidate);
+          free(resolved_buf);
+          return 0;
+        }
       }
       int status = emit_inspection_error_on_path(err, candidate);
       free(candidate);

@@ -123,6 +123,11 @@ also probe executable candidates and may
 .BR realpath (3)
 matches).
 Ordering and escaping are byte\-oriented and locale\-independent.
+When an executable candidate yields
+.BR ELOOP ,
+a bounded self\-basename check distinguishes a bare self link from other
+loop shapes without executing link text; see
+.BR DIAGNOSTICS .
 .P
 This narrow slice does not inspect packages, processes, services, capabilities,
 ACLs, or mount options.
@@ -502,11 +507,93 @@ every other byte is uppercase
 .BR \exHH .
 An empty operand or empty PATH component is rendered as
 .BR \&"" .
-Diagnostics go only to stderr as
+Diagnostics go only to stderr; see
+.BR DIAGNOSTICS .
+.SH DIAGNOSTICS
+All diagnostics are written only to standard error as
 .B pathaudit: REASON
-optionally followed by a quoted root or command name.
+or
+.BI "pathaudit: " REASON ": \"" ESCAPED "\""
+optionally naming a root, candidate, or command.
+Inside the quotes, printable ASCII bytes
+.B 0x20
+through
+.B 0x7e
+are emitted literally except
+.B "
+and
+.B \e
+which become
+.B \e"
+and
+.BR \e\e ;
+every other byte is uppercase
+.BR \exHH .
+Successful status\-0 and status\-1 inspections leave stderr empty.
+.P
+Stable reasons include
+.B USAGE
+and
+.B UNKNOWN_OPTION
+(usage failures),
 .B PATH_UNSET
-does not append the usage synopsis.
+(unset
+.B PATH
+under
+.B \-\-path
+or
+.BR \-\-command ;
+no usage synopsis is appended),
+.B INVALID_COMMAND
+(empty or slash\-bearing
+.B \-\-command
+.IR NAME ,
+with the escaped operand),
+input\-limit reasons,
+.B OUT_OF_MEMORY
+(allocation failure, including the bounded
+.B ELOOP
+self\-basename discriminator),
+.B STDOUT_WRITE
+(stdout write or flush failure),
+and
+.BI INSPECTION_ERROR_ N
+for unsafe metadata inspection.
+.P
+Under
+.B \-\-path
+and
+.BR \-\-command ,
+a bare self\-basename symlink loop such as
+.B tool
+pointing at itself is unsafe inspection: stdout stays empty, the exit status
+is
+.BR 2 ,
+and stderr carries exactly one escaped
+.B INSPECTION_ERROR_<ELOOP>
+naming the candidate path.
+The discriminator that recognizes that bare self link allocates only
+command\-length temporary
+.BR readlink (2)
+storage plus one truncation\-detection byte; it never follows or executes
+the link text and frees that storage before returning.
+Slash\-bearing payloads such as
+.B ./tool
+and byte\-different mutual loops are not reclassified as bare self\-basename
+links, invent no
+.B MATCH
+or
+.B SHADOWED
+row, and do not execute planted target content.
+A failed best\-effort
+.B readlink
+during that check preserves the non\-match decision and invents no partial
+finding.
+If that temporary allocation fails, the process emits
+.B OUT_OF_MEMORY
+and returns
+.B 2
+rather than silently treating the failure as not a self link.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -549,8 +636,15 @@ invalid
 .B \-\-command
 .I NAME
 .RB ( INVALID_COMMAND ),
-limit violation, operational metadata error, allocation failure,
-or stdout write/flush failure.
+limit violation, operational metadata error
+(including a bare self\-basename
+.B ELOOP
+candidate reported as
+.BR INSPECTION_ERROR_<ELOOP> ),
+allocation failure
+.RB ( OUT_OF_MEMORY ),
+or stdout write/flush failure
+.RB ( STDOUT_WRITE ).
 .SH RESOURCE LIMITS
 .IP \(bu 3
 Maximum roots or PATH components: 65\|536.

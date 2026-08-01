@@ -6,27 +6,33 @@ runs the complete quality floor in this order:
 
 1. `make clean`
 2. `make gcc-strict` — GCC `-std=c17 -Wall -Wextra -Wpedantic -Werror -O2`
-   for `src/sysdiff.c` and `src/pathaudit.c` (mktemp binaries only)
-3. `make clang-strict` — Clang with the same strict flags (full link build;
-   standalone `clang-syntax` exists but is not part of `quality`)
-4. `make format-check` — `clang-format --dry-run --Werror` on both C sources
+   for `src/sysdiff.c`, `src/pathaudit.c`, and `src/permguard.c` (mktemp
+   binaries only)
+3. `make clang-strict` — Clang with the same strict flags for `src/sysdiff.c`,
+   `src/pathaudit.c`, and `src/permguard.c` (full link build; standalone
+   `clang-syntax` exists but is not part of `quality`)
+4. `make format-check` — `clang-format --dry-run --Werror` on all three C
+   sources (`$(ALL_SRCS)`)
 5. `make clang-tidy-check` — selected checks with `--warnings-as-errors='*'`
 6. `make cppcheck-check` — `--enable=all --error-exitcode=1`
 7. `make clang-analyzer-check` — `clang --analyze` with `-analyzer-werror`
-8. `make man-check` — groff `-man -Tutf8 -ww -z` for `man/sysdiff.1` and
-   `man/pathaudit.1`, fail on nonzero exit or any warning
+8. `make man-check` — groff `-man -Tutf8 -ww -z` for `man/sysdiff.1`,
+   `man/pathaudit.1`, and `man/permguard.1`, fail on nonzero exit or any
+   warning
 9. `make test-suite` — shell suite plus `python3 -m pytest tests/ -q` (unit,
    integration, regression, fixture, malformed-input fuzz, pathaudit contract,
-   and benchmark contract modules); pins `SYSDIFF_BIN` to `build/sysdiff` and
-   scrubs ambient `PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND`
+   permguard contract, and benchmark contract modules); pins `SYSDIFF_BIN` to
+   `build/sysdiff` and scrubs ambient `PATHAUDIT_BIN` /
+   `PATHAUDIT_UNDER_VALGRIND` and `PERMGUARD_BIN` / `PERMGUARD_UNDER_VALGRIND`
 10. `make benchmark-check` — `scripts/benchmark_sysdiff.py` with a temp-dir JSON
     report (thresholds must pass; does not write `artifacts/`)
 11. `make test-sanitize` — AddressSanitizer then UndefinedBehaviorSanitizer
-    (Clang instrumented binaries for sysdiff and pathaudit; leak-fatal ASan;
-    halt-on-error UBSan)
+    (Clang instrumented binaries for sysdiff, pathaudit, and permguard;
+    leak-fatal ASan; halt-on-error UBSan)
 12. `make test-valgrind` — GCC debug rebuild under Valgrind memcheck with
-    `--error-exitcode=99`, `SYSDIFF_UNDER_VALGRIND=1`, and
-    `PATHAUDIT_UNDER_VALGRIND=1` (see Valgrind Coverage)
+    `--error-exitcode=99`, `SYSDIFF_UNDER_VALGRIND=1`,
+    `PATHAUDIT_UNDER_VALGRIND=1`, and `PERMGUARD_UNDER_VALGRIND=1` (see
+    Valgrind Coverage)
 
 Pathaudit hermetic-gate regressions (PAC-M1 through PAC-M4) are pinned in the
 pytest suite: **PAC-M1** `make test-suite` scrubs ambient `PATHAUDIT_*`
@@ -36,6 +42,64 @@ pytest suite: **PAC-M1** `make test-suite` scrubs ambient `PATHAUDIT_*`
 allowlist-forward sanitizer options into the sealed child env
 (`tests/test_pathaudit.py`); **PAC-M4** hostile-byte stderr operand diagnostics
 (`test_inspection_error_escapes_hostile_bytes_on_stderr`).
+
+## pathaudit PA-W1 Quality Gates
+
+Low `PA-W1` (bounded `symlink_is_self_basename` `readlink` storage) is gated
+through the existing pathaudit quality surface rather than a new Makefile
+target. Strict GCC/Clang C17 warning-as-error syntax and link checks cover
+`src/pathaudit.c`; `make format-check`, `make clang-tidy-check`,
+`make cppcheck-check`, `make clang-analyzer-check`, and `make man-check`
+cover source and `man/pathaudit.1`. Focused functional coverage lives in
+`tests/test_pathaudit.py` (command-bounded allocation structure, bare
+self-link `INSPECTION_ERROR_<ELOOP>` under `--path`/`--command`, and
+slash-bearing / mutual-loop non-candidate cases). Ownership and failure
+cleanup are exercised by `make pathaudit-sanitize`, `make pathaudit-valgrind`,
+and the aggregate `make test-sanitize` / `make test-valgrind` /
+`make quality` routes when host tools are present. ASan retains leak
+detection; UBSan halts on error; Valgrind uses the non-sanitized debug
+binary with full leak checking. Unavailable tools must be reported as not
+run, never as PA-W1 success.
+
+Fresh verification for governed run `c9e3de33f46b` step 5
+(`pathaudit_open_repair_maintenance`): GCC/Clang
+`-std=c17 -Wall -Wextra -Wpedantic -Werror` syntax and `/tmp` link builds on
+`src/pathaudit.c` exited 0; `clang-format --dry-run --Werror`, clang-tidy
+warnings-as-errors, cppcheck `--error-exitcode=1`, and Clang `--analyze`
+with `-analyzer-werror` exited 0 (one clang-format line-break repair in
+`symlink_is_self_basename`). Focused
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/test_pathaudit.py -q` → **156 passed, 15 skipped**. Complete
+`make quality` exited 0; ordinary, ASan, UBSan, and Valgrind pytest routes
+each reported **359 passed, 15 skipped** (scratch writable gitdir remap for
+this host’s read-only git common dir; original `.git` gitfile restored).
+`make pathaudit-sanitize` and `make pathaudit-valgrind` exited 0. No
+required tool was absent on this host.
+
+## permguard Quality Gates
+
+`permguard` participates in the real GCC and Clang strict routes through
+`make gcc-strict` and `make clang-strict`, with the standalone Clang syntax
+route at `make clang-syntax`. Every Make and pytest permguard compile,
+syntax, analyzer, sanitizer, and Valgrind route supplies
+`-D_POSIX_C_SOURCE=200809L` via `PERMGUARD_POSIX_CFLAGS` (or the pytest
+`POSIX_C_SOURCE_FLAG`) so `<sys/stat.h>` owns `lstat` rather than a
+hand-written prototype. `make cppcheck-check` parses `$(ALL_SRCS)` without
+that flag and relies on the guarded in-source `_POSIX_C_SOURCE` fallback in
+`src/permguard.c`. Its source is covered by `make format-check`
+(`clang-format`), `make clang-tidy-check`, `make cppcheck-check`, and
+`make clang-analyzer-check`; its manual is covered by `make man-check`
+against `man/permguard.1`. Functional coverage runs in pytest through
+`tests/test_permguard.py` under `make test-suite` and the aggregate
+`make quality` route, including `/dev/full` and closed-pipe `STDOUT_WRITE`
+regressions where the host supports them. AddressSanitizer and
+UndefinedBehaviorSanitizer coverage is provided by `make test-asan`,
+`make test-ubsan`, and the focused combined `make permguard-sanitize` route.
+Valgrind coverage is provided by `make test-valgrind` and focused
+`make permguard-valgrind`, using `PERMGUARD_BIN` and
+`PERMGUARD_UNDER_VALGRIND=1` to select and wrap the temporary binary.
+Unavailable tools or host capabilities must be reported as not run or
+skipped, never as passing evidence.
 
 Standalone `make benchmark` still writes
 `artifacts/performance/sysdiff-benchmark.json` for local inspection. Default
@@ -70,9 +134,10 @@ floor with this cycle's fresh subset evidence.
 
 ## Valgrind Coverage
 
-`make test-valgrind` rebuilds `sysdiff` and `pathaudit` with GCC debug flags
-into mktemp binaries, sets `SYSDIFF_BIN` / `PATHAUDIT_BIN` to those paths and
-`SYSDIFF_UNDER_VALGRIND=1` / `PATHAUDIT_UNDER_VALGRIND=1`, then runs
+`make test-valgrind` rebuilds `sysdiff`, `pathaudit`, and `permguard` with GCC
+debug flags into mktemp binaries, sets `SYSDIFF_BIN` / `PATHAUDIT_BIN` /
+`PERMGUARD_BIN` to those paths and `SYSDIFF_UNDER_VALGRIND=1` /
+`PATHAUDIT_UNDER_VALGRIND=1` / `PERMGUARD_UNDER_VALGRIND=1`, then runs
 `./tests/test_sysdiff.sh` followed by `python3 -m pytest tests/ -q`.
 Memcheck is applied only where harness helpers honor the flag.
 

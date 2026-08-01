@@ -1,18 +1,31 @@
 """Contract tests for the permguard bootstrap slice.
 
-Encodes docs/permguard-bootstrap-contract.md. Builds src/permguard.c into a
-pytest-owned temporary directory, exercises only deterministic temporary
+Encodes docs/permguard-bootstrap-contract.md and the Medium-repairs acceptance
+contract in docs/permguard-medium-repairs-contract.md. Builds src/permguard.c
+into a pytest-owned temporary directory, exercises only deterministic temporary
 fixtures with lstat-visible mode bits, and never leaves binaries in the
 workspace. Child processes receive a sealed, locale-stable environment.
 Missing source fails closed; host-capability skips state the missing
 capability explicitly and are never reported as passes.
 
-Coverage maps to acceptance checks AC-01 through AC-09: CLI/usage, clean and
-hazardous file/directory fixtures, every closed taxonomy bit and combinations,
-multi-operand ordering with duplicates, missing/inaccessible/invalid operands,
-symlink non-follow for safe and hazardous targets, mixed-success precedence,
-exact statuses 0/1/2 with pinned stdout/stderr bytes, and a narrow lstat-only
-inspection surface.
+Coverage maps to bootstrap acceptance checks AC-01 through AC-09: CLI/usage,
+clean and hazardous file/directory fixtures, every closed taxonomy bit and
+combinations, multi-operand ordering with duplicates, missing/inaccessible/
+invalid operands, symlink non-follow for safe and hazardous targets,
+mixed-success precedence, exact statuses 0/1/2 with pinned stdout/stderr
+bytes, and a narrow lstat-only inspection surface.
+
+Medium-repairs coverage maps to PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and
+PG-DOC-512 (contract AC-01..AC-07): architecture and authority-document pins,
+STDOUT_WRITE / ignored-SIGPIPE regressions, header-owned POSIX lstat plus
+pytest/Make `_POSIX_C_SOURCE` flags, and QUALITY/TESTING gate membership.
+
+Hostile-filesystem fixture coverage maps to the additive contract in
+docs/permguard-hostile-filesystem-fixtures-contract.md (PGH_* taxonomy labels
+are test-plan only and must never appear in product stdout/stderr): dangling
+final links, final and intermediate symbolic-link loops, mode-000 versus
+EACCES inaccessibility, sequential permission transitions, unusual names,
+deep paths, FIFO/special files, and deterministic replacement-race seams.
 """
 
 from __future__ import annotations
@@ -21,6 +34,8 @@ import errno
 import os
 import re
 import shutil
+import signal
+import socket
 import stat as stat_mod
 import subprocess
 import sys
@@ -33,7 +48,36 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "permguard.c"
+MAKEFILE = ROOT / "Makefile"
 CONTRACT = ROOT / "docs" / "permguard-bootstrap-contract.md"
+HOSTILE_FIXTURES_CONTRACT = (
+    ROOT / "docs" / "permguard-hostile-filesystem-fixtures-contract.md"
+)
+MEDIUM_REPAIRS_CONTRACT = ROOT / "docs" / "permguard-medium-repairs-contract.md"
+ONE_CODE_CONTRACT = ROOT / "docs" / "permguard-first-vertical-slice-contract.md"
+ONE_CODE_PLAN = ROOT / "plans" / "permguard-first-vertical-slice-plan.md"
+ARCHITECTURE = ROOT / "architecture.md"
+QUALITY = ROOT / "QUALITY.md"
+TESTING = ROOT / "TESTING.md"
+SMOKE_MANIFEST = ROOT / "tests" / "smoke_manifest.json"
+SMOKE_SCRIPT = ROOT / "scripts" / "smoke.sh"
+
+# Bounded timeouts so an accidental FIFO open / loop follow fails the test
+# instead of hanging the suite (hostile-fixture contract).
+PERMGUARD_HOSTILE_TIMEOUT_SEC = 15.0
+
+HOSTILE_FIXTURE_HAZARDS = (
+    "PGH_DANGLING_SYMBOLIC_LINK",
+    "PGH_SYMBOLIC_LINK_LOOP",
+    "PGH_UNREADABLE_ENTRY",
+    "PGH_PERMISSION_CHANGE",
+    "PGH_UNUSUAL_FILENAME",
+    "PGH_DEEP_PATH",
+    "PGH_FIFO_OR_SPECIAL_FILE",
+    "PGH_REPLACEMENT_RACE",
+)
+
+MODE_UNREADABLE = 0o000
 
 STRICT_WARNING_FLAGS = (
     "-std=c17",
@@ -41,6 +85,39 @@ STRICT_WARNING_FLAGS = (
     "-Wextra",
     "-Wpedantic",
     "-Werror",
+)
+
+# Intended permguard compile contract (PG-PORT-505 / AC-03): libc owns lstat
+# via the platform header under an explicit POSIX feature-test flag.
+POSIX_C_SOURCE_FLAG = "-D_POSIX_C_SOURCE=200809L"
+
+MEDIUM_REPAIR_FINDING_IDS = (
+    "PG-DOC-501",
+    "PG-DOC-502",
+    "PG-TEST-503",
+    "PG-PORT-505",
+    "PG-DOC-512",
+)
+
+# Surfaces named in the Medium-repairs blast radius. A path being listed does
+# not require a textual edit in every repair; each must stay consistent.
+MEDIUM_REPAIR_BLAST_RADIUS = (
+    "src/permguard.c",
+    "Makefile",
+    "tests/test_permguard.py",
+    "tests/smoke_manifest.json",
+    "scripts/smoke.sh",
+    "README.md",
+    "man/permguard.1",
+    "CHANGELOG.md",
+    "architecture.md",
+    "QUALITY.md",
+    "TESTING.md",
+    "docs/permguard-bootstrap-contract.md",
+    "docs/permguard.md",
+    "docs/permguard-first-vertical-slice-contract.md",
+    "plans/permguard-bootstrap-implementation-plan.md",
+    "plans/permguard-first-vertical-slice-plan.md",
 )
 
 SANITIZER_ENV_KEYS = (
@@ -201,6 +278,12 @@ def diagnostic_inspection_error(
     return diagnostic_operand(f"INSPECTION_ERROR_{errno_value}", path)
 
 
+def diagnostic_stdout_write() -> bytes:
+    """Exact stderr for checked stdout write/flush failure (PG-TEST-503)."""
+
+    return b"permguard: STDOUT_WRITE\n"
+
+
 def _mode_bits(path: Path) -> int:
     return os.lstat(path).st_mode
 
@@ -325,6 +408,7 @@ def run_permguard(
     *args: bytes | str | os.PathLike[str],
     cwd: str | os.PathLike[str] | None = None,
     env: dict[str, str | None] | None = None,
+    timeout: float | None = None,
 ):
     """Run permguard with byte-preserving argv and a controlled environment."""
 
@@ -342,8 +426,136 @@ def run_permguard(
         check=False,
         cwd=None if cwd is None else os.fspath(cwd),
         env=_base_child_env(env),
+        timeout=timeout,
     )
     return _finish_valgrind(result, vg_log)
+
+
+def run_permguard_hostile(
+    binary: Path,
+    *args: bytes | str | os.PathLike[str],
+    cwd: str | os.PathLike[str] | None = None,
+    env: dict[str, str | None] | None = None,
+):
+    """Hostile-fixture runs always carry a bounded timeout."""
+
+    return run_permguard(
+        binary,
+        *args,
+        cwd=cwd,
+        env=env,
+        timeout=PERMGUARD_HOSTILE_TIMEOUT_SEC,
+    )
+
+
+def _argv_for_permguard(
+    binary: Path, *args: bytes | str | os.PathLike[str]
+) -> list[str]:
+    argv: list[str] = [str(binary)]
+    for arg in args:
+        if isinstance(arg, bytes):
+            argv.append(os.fsdecode(arg))
+        else:
+            argv.append(os.fspath(arg))
+    return argv
+
+
+def run_with_closed_stdout_pipe(
+    binary: Path,
+    *args: bytes | str | os.PathLike[str],
+    env: dict[str, str | None] | None = None,
+):
+    """Run permguard with stdout attached to a pipe whose reader is closed.
+
+    Descriptor ownership: the parent closes the read end before Popen, passes
+    only the write end as child stdout, then closes its own write-end copy so
+    the child alone holds the writer. No parent reader remains that could
+    accidentally drain or deadlock the pipe.
+    """
+
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    cmd, vg_log = _valgrind_command(_argv_for_permguard(binary, *args))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=write_fd,
+            stderr=subprocess.PIPE,
+            env=_base_child_env(env),
+        )
+    finally:
+        os.close(write_fd)
+    _, stderr = proc.communicate()
+    _finish_valgrind(types.SimpleNamespace(returncode=proc.returncode), vg_log)
+    return proc.returncode, stderr
+
+
+def run_with_stdout_to_dev_full(
+    binary: Path,
+    *args: bytes | str | os.PathLike[str],
+    env: dict[str, str | None] | None = None,
+):
+    """Run permguard with stdout redirected to /dev/full when the host allows.
+
+    Returns (status, stderr). Skips with an explicit host-capability reason
+    when /dev/full is absent or unsuitable — never counts as a pass.
+    """
+
+    full_path = Path("/dev/full")
+    if not full_path.exists():
+        pytest.skip(
+            "host lacks /dev/full; cannot exercise STDOUT_WRITE device failure"
+        )
+    try:
+        full_fd = os.open(full_path, os.O_WRONLY)
+    except OSError as exc:
+        pytest.skip(
+            f"host /dev/full is not usable for write "
+            f"(errno {exc.errno}); cannot exercise STDOUT_WRITE device failure"
+        )
+
+    # Suitability probe (PGR-TEST-705 / AC-04): character device that returns
+    # ENOSPC on write. A regular file or null-style sink must not be treated
+    # as a product regression when status 1 is returned instead of 2.
+    mode = os.fstat(full_fd).st_mode
+    if not stat_mod.S_ISCHR(mode):
+        os.close(full_fd)
+        pytest.skip(
+            "host /dev/full is not a character device "
+            f"(st_mode 0o{mode:o}); cannot exercise STDOUT_WRITE "
+            "device failure"
+        )
+    try:
+        os.write(full_fd, b"\0")
+    except OSError as exc:
+        if exc.errno != errno.ENOSPC:
+            os.close(full_fd)
+            pytest.skip(
+                "host /dev/full write failed with errno "
+                f"{exc.errno} rather than ENOSPC; cannot exercise "
+                "STDOUT_WRITE device failure"
+            )
+        # ENOSPC — suitable full device; keep full_fd for the child.
+    else:
+        os.close(full_fd)
+        pytest.skip(
+            "host /dev/full accepted a write without ENOSPC; "
+            "unsuitable for STDOUT_WRITE device failure"
+        )
+
+    cmd, vg_log = _valgrind_command(_argv_for_permguard(binary, *args))
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=full_fd,
+            stderr=subprocess.PIPE,
+            env=_base_child_env(env),
+        )
+    finally:
+        os.close(full_fd)
+    _, stderr = proc.communicate()
+    _finish_valgrind(types.SimpleNamespace(returncode=proc.returncode), vg_log)
+    return proc.returncode, stderr
 
 
 def resolve_permguard_override(env_bin: str) -> Path:
@@ -357,6 +569,11 @@ def resolve_permguard_override(env_bin: str) -> Path:
     return resolved
 
 
+# Last compile argv used by the session fixture when it builds from source.
+# Empty when PERMGUARD_BIN overrides compilation (PGR-TEST-703).
+_LAST_PERMGUARD_COMPILE_ARGV: list[str] = []
+
+
 @pytest.fixture(scope="session")
 def permguard_bin(tmp_path_factory):
     env_bin = os.environ.get("PERMGUARD_BIN")
@@ -364,6 +581,7 @@ def permguard_bin(tmp_path_factory):
         binary = resolve_permguard_override(env_bin)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             pytest.fail(f"PERMGUARD_BIN is not an executable file: {env_bin}")
+        _LAST_PERMGUARD_COMPILE_ARGV.clear()
         return binary
 
     if not SRC.is_file():
@@ -372,16 +590,20 @@ def permguard_bin(tmp_path_factory):
         )
 
     # Compile into pytest's session temp tree only — never build/ or the repo.
+    # PG-PORT-505: pass the POSIX feature-test flag on the compiler command
+    # line so <sys/stat.h> owns lstat (no hand-written prototype).
     build_dir = tmp_path_factory.mktemp("permguard-build")
     binary = build_dir / "permguard"
+    compile_argv = [
+        os.environ.get("CC", "cc"),
+        *STRICT_WARNING_FLAGS,
+        POSIX_C_SOURCE_FLAG,
+        "-o",
+        str(binary),
+        str(SRC),
+    ]
     compile_result = subprocess.run(
-        [
-            os.environ.get("CC", "cc"),
-            *STRICT_WARNING_FLAGS,
-            "-o",
-            str(binary),
-            str(SRC),
-        ],
+        compile_argv,
         capture_output=True,
         check=False,
     )
@@ -392,6 +614,7 @@ def permguard_bin(tmp_path_factory):
     assert os.access(binary, os.X_OK)
     assert binary.resolve() != (ROOT / "permguard").resolve()
     assert binary.resolve() != (ROOT / "build" / "permguard").resolve()
+    _LAST_PERMGUARD_COMPILE_ARGV[:] = list(compile_argv)
     return binary
 
 
@@ -1307,3 +1530,1584 @@ def test_regression_inherited_permguard_bin_decoy_fails_unless_scrubbed(tmp_path
 
     assert poisoned.returncode != 0, poisoned.stdout + poisoned.stderr
     assert "FAILED" in poisoned.stdout or "failed" in poisoned.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# Medium repairs regressions (PG-DOC-501/502, PG-TEST-503, PG-PORT-505,
+# PG-DOC-512). Encode docs/permguard-medium-repairs-contract.md intended
+# behavior, not the pre-repair implementation. Old-behavior blast radius:
+# src/permguard.c, Makefile, tests/test_permguard.py, tests/smoke_manifest.json,
+# scripts/smoke.sh, README.md, man/permguard.1, CHANGELOG.md, architecture.md,
+# QUALITY.md, TESTING.md, and the bootstrap / one-code docs and plans.
+# ---------------------------------------------------------------------------
+
+
+def _require_text_file(path: Path, *, label: str) -> str:
+    if not path.is_file():
+        pytest.fail(f"{label} is missing; Medium-repairs suite requires {path}")
+    return path.read_text(encoding="utf-8")
+
+
+# Development-checkout surfaces that `make dist` deliberately omits from the
+# source archive (root architecture/QUALITY/TESTING, plans/, and any still-
+# untracked Medium-repairs contract). Dist extracts still run product and
+# Makefile/POSIX regressions; these authority pins skip rather than fail.
+_DIST_OMITTED_MEDIUM_DOC_SURFACES = (
+    ARCHITECTURE,
+    QUALITY,
+    TESTING,
+    MEDIUM_REPAIRS_CONTRACT,
+    ONE_CODE_PLAN,
+    ROOT / "plans" / "permguard-bootstrap-implementation-plan.md",
+)
+
+
+def _skip_unless_dev_tree_medium_docs(*paths: Path) -> None:
+    """Skip Medium doc pins when a source-distribution extract omits them."""
+
+    missing = [path for path in paths if not path.is_file()]
+    if not missing:
+        return
+    rels = ", ".join(
+        str(path.relative_to(ROOT)) if path.is_absolute() else str(path)
+        for path in missing
+    )
+    pytest.skip(
+        "development-tree Medium-repair documentation surfaces absent "
+        f"({rels}); source-distribution extracts omit root architecture/"
+        "QUALITY/TESTING and plans/ under DIST_PATHSPECS, and untracked "
+        "contracts are not packaged by git ls-files"
+    )
+
+
+def _makefile_target_block(makefile: str, target: str) -> str:
+    """Return the header line plus tab-indented recipe for an exact target."""
+
+    header_re = re.compile(rf"^{re.escape(target)}\s*:")
+    lines = makefile.splitlines(keepends=True)
+    start = None
+    for index, line in enumerate(lines):
+        if header_re.match(line):
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"Makefile is missing Make target {target!r}")
+
+    collected = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.startswith("\t"):
+            collected.append(line)
+            continue
+        break
+    return "".join(collected)
+
+
+def _permguard_compile_lines(makefile: str) -> list[str]:
+    """Return recipe/command lines that compile or analyze PERMGUARD_SRC.
+
+    Backslash-continued Make recipe lines are joined so a flag on the first
+    physical line still covers $(PERMGUARD_SRC) on a continuation line.
+    """
+
+    physical = makefile.splitlines()
+    joined: list[str] = []
+    pending = ""
+    for line in physical:
+        if pending:
+            pending += " " + line.lstrip("\t")
+            if line.rstrip().endswith("\\"):
+                pending = pending.rstrip()[:-1].rstrip()
+                continue
+            joined.append(pending)
+            pending = ""
+            continue
+        if line.rstrip().endswith("\\"):
+            pending = line.rstrip()[:-1].rstrip()
+            continue
+        joined.append(line)
+    if pending:
+        joined.append(pending)
+
+    lines: list[str] = []
+    for line in joined:
+        if "PERMGUARD_SRC" in line or "src/permguard.c" in line:
+            # Variable-assignment lines that only name the source are not
+            # compile routes; require a compiler / analyzer invocation shape.
+            if re.search(
+                r"(gcc|clang|\$\(CC\)|clang-tidy|cppcheck|scan-build|"
+                r"-fsyntax-only|-o\s)",
+                line,
+            ):
+                lines.append(line)
+    return lines
+
+
+def test_medium_ac01_closed_finding_scope_and_authority():
+    """PG-DOC-502 / AC-01: Medium scope and live bootstrap authority."""
+
+    _skip_unless_dev_tree_medium_docs(MEDIUM_REPAIRS_CONTRACT)
+    medium = _require_text_file(
+        MEDIUM_REPAIRS_CONTRACT, label="medium-repairs contract"
+    )
+    for finding_id in MEDIUM_REPAIR_FINDING_IDS:
+        assert finding_id in medium, (
+            f"medium-repairs contract must name closed finding {finding_id}"
+        )
+    # Low findings are explicitly out of scope for this slice.
+    for low_id in (
+        "PG-CRAFT-506",
+        "PG-TEST-507",
+        "PG-CLI-508",
+        "PG-MAKE-509",
+        "PG-MAKE-510",
+        "PG-MAKE-511",
+    ):
+        assert low_id in medium, (
+            f"medium-repairs contract must list Non-Goals finding {low_id}"
+        )
+
+    bootstrap = _require_text_file(CONTRACT, label="bootstrap contract")
+    authority = re.search(
+        r"^## Authority\s*$(.*?)^## ",
+        bootstrap,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert authority is not None
+    authority_body = authority.group(1)
+    assert "sole live product contract" in authority_body
+    assert "permguard-bootstrap-contract.md" in medium
+    assert "sole live product" in medium.lower() or "sole live product authority" in medium.lower()
+
+
+def test_medium_ac01_one_code_contract_superseded_in_shipped_docs():
+    """PG-DOC-502: packaged one-code contract keeps a conspicuous superseded pin.
+
+    Runs in both development checkouts and source-distribution extracts:
+    docs/permguard-first-vertical-slice-contract.md is shipped; plans/ is not.
+    """
+
+    one_code = _require_text_file(
+        ONE_CODE_CONTRACT, label="first-vertical-slice contract"
+    )
+    one_code_head = one_code[:800].lower()
+    assert "superseded" in one_code_head, (
+        "docs/permguard-first-vertical-slice-contract.md must open with a "
+        "conspicuous superseded marker (PG-DOC-502)"
+    )
+    assert "permguard-bootstrap-contract.md" in one_code_head or (
+        "bootstrap" in one_code_head and "authority" in one_code_head
+    ), "superseded one-code contract must point readers to the bootstrap contract"
+
+
+def test_medium_ac01_one_code_plan_superseded_in_dev_tree():
+    """PG-DOC-502: development-tree one-code plan markers and false-removal ban."""
+
+    _skip_unless_dev_tree_medium_docs(ONE_CODE_PLAN)
+    one_plan = _require_text_file(
+        ONE_CODE_PLAN, label="first-vertical-slice plan"
+    )
+    one_plan_head = one_plan[:800].lower()
+    assert "superseded" in one_plan_head, (
+        "plans/permguard-first-vertical-slice-plan.md must open with a "
+        "conspicuous superseded marker (PG-DOC-502)"
+    )
+    assert "permguard-bootstrap-contract.md" in one_plan_head or (
+        "bootstrap" in one_plan_head and "authority" in one_plan_head
+    ), "superseded one-code plan must point readers to the bootstrap contract"
+
+    # Old false claim: bootstrap docs "are removed from docs/ and plans/".
+    assert not re.search(
+        r"are removed from\s+`?docs/`?\s+and\s+`?plans/`?",
+        one_plan,
+        flags=re.IGNORECASE,
+    ), (
+        "first-vertical-slice plan must not falsely claim bootstrap documents "
+        "were removed (PG-DOC-502 old-behavior blast radius)"
+    )
+
+
+def test_medium_ac02_architecture_describes_shipped_bootstrap_model():
+    """PG-DOC-501 / AC-02: architecture matches four-code streaming bootstrap."""
+
+    _skip_unless_dev_tree_medium_docs(ARCHITECTURE)
+    text = _require_text_file(ARCHITECTURE, label="architecture.md")
+    # Scope the permguard decision record; do not police pathaudit taxonomy.
+    # Keep the heading match line-local ([^\n]*): with DOTALL, greedy .* before
+    # $ would consume the rest of the document and leave group 1 empty.
+    section = re.search(
+        r"^## [^\n]*permguard[^\n]*$(.*?)(?=^## |\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    assert section is not None, "architecture.md must contain a permguard section"
+    body = section.group(1)
+
+    for code in HAZARD_RANK:
+        assert code in body, (
+            f"architecture.md permguard section must name shipped code {code}"
+        )
+
+    # Reject superseded one-code / draft predicates (old PG-DOC-501 blast).
+    assert "WORLD_WRITABLE_FILE" not in body
+    assert not re.search(
+        r"world-writable directories without\s+the sticky bit",
+        body,
+        flags=re.IGNORECASE,
+    ), "architecture must not describe sticky-bit-conditioned directory hazards"
+    assert not re.search(
+        r"Findings are retained until all operands have been inspected",
+        body,
+    ), "architecture must not claim buffer-until-complete emission"
+    assert not re.search(
+        r"resource limit,\s*allocation",
+        body,
+        flags=re.IGNORECASE,
+    ), "architecture must not invent allocation/resource-limit exit classes"
+
+    # Intended streaming / continue-after-error model.
+    assert re.search(r"stream|emit", body, flags=re.IGNORECASE)
+    assert re.search(
+        r"continu|does not stop|after (an )?error|operand error",
+        body,
+        flags=re.IGNORECASE,
+    ) or (
+        "continue" in body.lower() and "error" in body.lower()
+    ), "architecture must describe continue-after-error / streaming inspection"
+
+
+def test_medium_ac02_quality_and_testing_name_permguard_gates():
+    """PG-DOC-512 / AC-02: QUALITY.md and TESTING.md name real permguard routes."""
+
+    _skip_unless_dev_tree_medium_docs(QUALITY, TESTING)
+    quality = _require_text_file(QUALITY, label="QUALITY.md")
+    testing = _require_text_file(TESTING, label="TESTING.md")
+
+    for document, text in (("QUALITY.md", quality), ("TESTING.md", testing)):
+        assert re.search(r"\bpermguard\b", text, flags=re.IGNORECASE), (
+            f"{document} must mention permguard (PG-DOC-512)"
+        )
+        assert "tests/test_permguard.py" in text, (
+            f"{document} must name tests/test_permguard.py"
+        )
+
+    # PGR-DOC-701: the enumerated `make quality` floor itself must name
+    # permguard membership; an appended section alone must not satisfy this.
+    floor_match = re.search(
+        r"in this order:\s*(.*?)(?=^## |\Z)",
+        quality,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert floor_match is not None, (
+        "QUALITY.md must introduce the make quality floor with 'in this order:'"
+    )
+    floor = floor_match.group(1)
+    for token in (
+        "src/permguard.c",
+        "man/permguard.1",
+        "PERMGUARD_UNDER_VALGRIND",
+    ):
+        assert token in floor, (
+            "QUALITY.md enumerated make quality floor must name "
+            f"{token} (PGR-DOC-701 / PG-DOC-512); an appended section alone "
+            "is insufficient"
+        )
+
+    # Gate membership and override contract.
+    for token in (
+        "PERMGUARD_BIN",
+        "PERMGUARD_UNDER_VALGRIND",
+        "permguard-sanitize",
+        "permguard-valgrind",
+    ):
+        assert token in quality or token in testing, (
+            f"QUALITY.md or TESTING.md must document {token}"
+        )
+
+    combined = quality + "\n" + testing
+    assert re.search(r"lstat", combined, flags=re.IGNORECASE), (
+        "maintainer docs must describe the chmod-then-lstat fixture oracle"
+    )
+    assert re.search(
+        r"skip|capability",
+        combined,
+        flags=re.IGNORECASE,
+    ), "maintainer docs must describe honest host-capability skips"
+    assert re.search(
+        r"sanitiz|valgrind|AddressSanitizer|UndefinedBehaviorSanitizer",
+        combined,
+        flags=re.IGNORECASE,
+    ), "maintainer docs must name sanitizer/Valgrind routes for permguard"
+
+
+def test_medium_ac03_source_has_no_hand_declared_lstat():
+    """PG-PORT-505 / AC-03: <sys/stat.h> owns lstat; no hand-written prototype."""
+
+    text = _require_text_file(SRC, label="src/permguard.c")
+    # Call sites remain required; prototypes are forbidden.
+    assert re.search(r"(?<!\w)lstat\s*\(", text), (
+        "src/permguard.c must call lstat"
+    )
+    for line in text.splitlines():
+        stripped = line.strip()
+        if (
+            stripped.startswith("/*")
+            or stripped.startswith("*")
+            or stripped.startswith("//")
+        ):
+            continue
+        if re.match(r"int\s+lstat\s*\(.*\)\s*;\s*$", stripped):
+            raise AssertionError(
+                "src/permguard.c must not hand-declare int lstat(...); "
+                "pass -D_POSIX_C_SOURCE=200809L so the platform header "
+                "provides it (PG-PORT-505 old-behavior blast radius: "
+                "src/permguard.c)"
+            )
+    # Catch multi-line or oddly spaced prototypes as well.
+    assert re.search(r"(?<!\w)int\s+lstat\s*\(", text) is None, (
+        "src/permguard.c must not hand-declare lstat "
+        "(PG-PORT-505 old-behavior blast radius: src/permguard.c)"
+    )
+
+
+def test_medium_ac03_pytest_compile_supplies_posix_c_source(permguard_bin):
+    """PG-PORT-505 / AC-03: pytest-owned compile passes the POSIX feature flag."""
+
+    assert POSIX_C_SOURCE_FLAG == "-D_POSIX_C_SOURCE=200809L"
+    if os.environ.get("PERMGUARD_BIN"):
+        # Override path does not compile; the argv oracle is N/A.
+        assert not _LAST_PERMGUARD_COMPILE_ARGV
+        return
+    assert _LAST_PERMGUARD_COMPILE_ARGV, (
+        "permguard_bin fixture must record the compile argv it used"
+    )
+    assert POSIX_C_SOURCE_FLAG in _LAST_PERMGUARD_COMPILE_ARGV, (
+        "permguard_bin fixture compile argv must include "
+        f"{POSIX_C_SOURCE_FLAG} (PG-PORT-505 / PGR-TEST-703)"
+    )
+    assert any(
+        arg == str(SRC) or Path(arg).resolve() == SRC.resolve()
+        for arg in _LAST_PERMGUARD_COMPILE_ARGV
+    ), "recorded compile argv must mention src/permguard.c"
+    assert str(permguard_bin) in _LAST_PERMGUARD_COMPILE_ARGV
+
+
+def _makefile_permguard_posix_flag_ref(text: str) -> re.Match[str] | None:
+    """Match a load-bearing POSIX flag: literal or $(PERMGUARD_*CFLAGS|FLAGS).
+
+    $(PERMGUARD_SRC) alone must not satisfy this — that was PG-REV-601.
+    """
+
+    return re.search(
+        rf"{re.escape(POSIX_C_SOURCE_FLAG)}|"
+        r"\$\((PERMGUARD_[A-Z0-9_]*(?:CFLAGS|FLAGS))\)",
+        text,
+    )
+
+
+def _makefile_var_definition(makefile: str, name: str) -> str | None:
+    """Return the RHS of a simple or recursively expanded Make variable."""
+
+    match = re.search(
+        rf"^{re.escape(name)}\s*:?=\s*(.*)$",
+        makefile,
+        flags=re.MULTILINE,
+    )
+    return None if match is None else match.group(1)
+
+
+def _shell_commands_mentioning_permguard(recipe: str) -> list[str]:
+    """Split a Make recipe into shell commands that compile/analyze permguard.
+
+    Joined backslash-continuations are split on `;` so a POSIX flag on a
+    neighboring sysdiff/pathaudit command cannot satisfy the oracle
+    (PGR-TEST-702).
+    """
+
+    commands: list[str] = []
+    for chunk in recipe.split(";"):
+        command = chunk.strip()
+        if not command:
+            continue
+        if "$(PERMGUARD_SRC)" in command or "src/permguard.c" in command:
+            commands.append(command)
+    return commands
+
+
+def _join_make_recipe_lines(block: str) -> str:
+    """Join tabbed recipe lines, folding backslash continuations."""
+
+    joined_parts: list[str] = []
+    pending = ""
+    for line in block.splitlines():
+        if not line.startswith("\t"):
+            continue
+        body = line[1:]
+        if pending:
+            pending += " " + body.lstrip()
+            if body.rstrip().endswith("\\"):
+                pending = pending.rstrip()[:-1].rstrip()
+                continue
+            joined_parts.append(pending)
+            pending = ""
+            continue
+        if body.rstrip().endswith("\\"):
+            pending = body.rstrip()[:-1].rstrip()
+            continue
+        joined_parts.append(body)
+    if pending:
+        joined_parts.append(pending)
+    return " ; ".join(joined_parts)
+
+
+def test_medium_ac03_makefile_permguard_routes_supply_posix_c_source():
+    """PG-PORT-505 / AC-03: every Make permguard compile route sets the flag."""
+
+    makefile = _require_text_file(MAKEFILE, label="Makefile")
+    assert POSIX_C_SOURCE_FLAG in makefile, (
+        "Makefile must define or pass -D_POSIX_C_SOURCE=200809L for permguard"
+    )
+
+    # Prefer a dedicated Make *CFLAGS/*FLAGS variable over relying solely on
+    # overridable CFLAGS. $(PERMGUARD_SRC) alone must not satisfy the oracle.
+    var_match = re.search(
+        r"^(PERMGUARD_[A-Z0-9_]*(?:CFLAGS|FLAGS))\s*:?=\s*(.*)$",
+        makefile,
+        flags=re.MULTILINE,
+    )
+    assert var_match is not None, (
+        "Makefile must attach _POSIX_C_SOURCE=200809L via a permguard-specific "
+        "Make *CFLAGS/*FLAGS variable that callers cannot accidentally drop by "
+        "replacing CFLAGS"
+    )
+    posix_var = var_match.group(1)
+    assert POSIX_C_SOURCE_FLAG in var_match.group(2), (
+        f"$({posix_var}) definition must contain {POSIX_C_SOURCE_FLAG}"
+    )
+
+    compile_lines = _permguard_compile_lines(makefile)
+    assert compile_lines, "expected at least one Makefile permguard compile route"
+    for line in compile_lines:
+        for command in _shell_commands_mentioning_permguard(line):
+            match = _makefile_permguard_posix_flag_ref(command)
+            assert match is not None, (
+                "permguard compile/analyze command must pass the POSIX "
+                f"feature-test flag or $(PERMGUARD_*CFLAGS|FLAGS): {command!r}"
+            )
+            if match.group(0).startswith("$("):
+                ref_name = match.group(1)
+                defn = _makefile_var_definition(makefile, ref_name)
+                assert defn is not None and POSIX_C_SOURCE_FLAG in defn, (
+                    f"$({ref_name}) must be defined with {POSIX_C_SOURCE_FLAG}"
+                )
+
+    for target in (
+        "permguard",
+        "gcc-strict",
+        "clang-strict",
+        "clang-syntax",
+        "clang-tidy-check",
+        "clang-analyzer-check",
+        "test-asan",
+        "test-ubsan",
+        "test-valgrind",
+        "permguard-sanitize",
+        "permguard-valgrind",
+    ):
+        block = _makefile_target_block(makefile, target)
+        if "$(PERMGUARD_SRC)" not in block and "src/permguard.c" not in block:
+            raise AssertionError(
+                f"Make target {target!r} must compile $(PERMGUARD_SRC)"
+            )
+        commands = _shell_commands_mentioning_permguard(
+            _join_make_recipe_lines(block)
+        )
+        assert commands, (
+            f"Make target {target!r} must contain a permguard compile command"
+        )
+        for command in commands:
+            match = _makefile_permguard_posix_flag_ref(command)
+            assert match is not None, (
+                f"Make target {target!r} permguard command must supply "
+                f"_POSIX_C_SOURCE=200809L (PG-PORT-505): {command!r}"
+            )
+            if match.group(0).startswith("$("):
+                ref_name = match.group(1)
+                defn = _makefile_var_definition(makefile, ref_name)
+                assert defn is not None and POSIX_C_SOURCE_FLAG in defn, (
+                    f"Make target {target!r} references $({ref_name}) which "
+                    f"must define {POSIX_C_SOURCE_FLAG}"
+                )
+
+
+def test_stdout_write_failure_on_dev_full(permguard_bin, tmp_path):
+    """PG-TEST-503 / AC-04: /dev/full hazard scan -> status 2 + STDOUT_WRITE.
+
+    Old-behavior blast radius: src/permguard.c checked-stdio path, man page,
+    CHANGELOG, and bootstrap contract already promised STDOUT_WRITE but no
+    focused regression pinned the device-full failure.
+    """
+
+    path = write_regular(tmp_path / "full-hazard", MODE_OTHER_WRITABLE_FILE)
+    before = snapshot_entry(path)
+    status, stderr = run_with_stdout_to_dev_full(permguard_bin, path)
+    assert status == 2
+    assert stderr == diagnostic_stdout_write()
+    assert_no_raw_unsafe_bytes(stderr)
+    assert_unchanged(path, before)
+
+
+def test_closed_stdout_pipe_is_status_two_not_sigpipe(permguard_bin, tmp_path):
+    """PG-TEST-503 / AC-05: closed stdout pipe -> 2, not SIGPIPE / 141.
+
+    Old-behavior blast radius: ignored-SIGPIPE plus final fflush checking in
+    src/permguard.c; removing either regresses to negative signal status or
+    shell 141 instead of the contracted STDOUT_WRITE operational failure.
+    """
+
+    path = write_regular(tmp_path / "pipe-hazard", MODE_OTHER_WRITABLE_FILE)
+    before = snapshot_entry(path)
+    status, stderr = run_with_closed_stdout_pipe(permguard_bin, path)
+
+    assert status == 2
+    assert status != -signal.SIGPIPE
+    assert status != 141
+    assert status > 0
+    assert stderr == diagnostic_stdout_write()
+    assert_no_raw_unsafe_bytes(stderr)
+    assert_unchanged(path, before)
+
+    # Informational stdout must take the same checked path.
+    help_status, help_stderr = run_with_closed_stdout_pipe(
+        permguard_bin, "--help"
+    )
+    assert help_status == 2
+    assert help_status != -signal.SIGPIPE
+    assert help_status != 141
+    assert help_stderr == diagnostic_stdout_write()
+
+
+def test_medium_ac07_blast_radius_surfaces_and_smoke_route_exist():
+    """AC-07: named blast-radius surfaces exist; smoke still reaches make test.
+
+    Intentional no-change for tests/smoke_manifest.json and scripts/smoke.sh
+    is allowed when the transitive make test route remains intact.
+    """
+
+    # Always assert the archive-shipped blast-radius core + smoke route.
+    shipped_core = (
+        "src/permguard.c",
+        "Makefile",
+        "tests/test_permguard.py",
+        "tests/smoke_manifest.json",
+        "scripts/smoke.sh",
+        "README.md",
+        "man/permguard.1",
+        "CHANGELOG.md",
+        "docs/permguard-bootstrap-contract.md",
+        "docs/permguard.md",
+        "docs/permguard-first-vertical-slice-contract.md",
+    )
+    for relative in shipped_core:
+        path = ROOT / relative
+        assert path.exists(), f"blast-radius surface missing: {relative}"
+
+    manifest = _require_text_file(SMOKE_MANIFEST, label="smoke manifest")
+    script = _require_text_file(SMOKE_SCRIPT, label="smoke script")
+    assert "make test" in script, (
+        "scripts/smoke.sh must still transitively reach make test"
+    )
+    # Manifest remains the governed oracle; do not require permguard-specific
+    # smoke scenarios — only that the file stays present and parseable JSON.
+    stripped = manifest.lstrip()
+    assert stripped.startswith("{") or stripped.startswith("["), (
+        "tests/smoke_manifest.json must remain a JSON document"
+    )
+
+    # Development-tree-only surfaces (root maintainer docs + plans/) are
+    # omitted from DIST_PATHSPECS; require them only in a full checkout.
+    _skip_unless_dev_tree_medium_docs(*_DIST_OMITTED_MEDIUM_DOC_SURFACES)
+    for relative in MEDIUM_REPAIR_BLAST_RADIUS:
+        path = ROOT / relative
+        assert path.exists(), f"blast-radius surface missing: {relative}"
+
+
+# ---------------------------------------------------------------------------
+# Hostile filesystem fixtures
+# (docs/permguard-hostile-filesystem-fixtures-contract.md AC-01..AC-11)
+#
+# PGH_* labels organize tests only; they must never appear in product output.
+# Mandatory cases are rootless and deterministic. Capability-gated additions
+# skip with an explicit reason rather than pretending to pass.
+# ---------------------------------------------------------------------------
+
+
+_WRAP_LSTAT_C = r"""
+#define _POSIX_C_SOURCE 200809L
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+extern int __real_lstat(const char *path, struct stat *buf);
+
+static void write_proof(const char *proof_path) {
+  FILE *fp;
+  if (proof_path == NULL || proof_path[0] == '\0') {
+    return;
+  }
+  fp = fopen(proof_path, "w");
+  if (fp == NULL) {
+    return;
+  }
+  (void)fputs("1\n", fp);
+  (void)fclose(fp);
+}
+
+static int atomic_replace(const char *target, const char *aside,
+                          const char *fresh) {
+  if (target == NULL || aside == NULL || fresh == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (rename(target, aside) != 0) {
+    return -1;
+  }
+  if (rename(fresh, target) != 0) {
+    int saved = errno;
+    (void)rename(aside, target);
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
+static int path_matches_target(const char *path, const char *target) {
+  return path != NULL && target != NULL && strcmp(path, target) == 0;
+}
+
+/*
+ * GNU ld --wrap=lstat interposition for deterministic replacement races.
+ * PERMGUARD_WRAP_MODE=before|after selects the boundary; coordination paths
+ * come from the environment. Ordinary production builds never see this file.
+ */
+int __wrap_lstat(const char *path, struct stat *buf) {
+  const char *mode = getenv("PERMGUARD_WRAP_MODE");
+  const char *target = getenv("PERMGUARD_WRAP_TARGET");
+  const char *aside = getenv("PERMGUARD_WRAP_ASIDE");
+  const char *fresh = getenv("PERMGUARD_WRAP_FRESH");
+  const char *proof = getenv("PERMGUARD_WRAP_PROOF");
+
+  write_proof(proof);
+
+  if (mode != NULL && path_matches_target(path, target)) {
+    if (strcmp(mode, "before") == 0) {
+      if (atomic_replace(target, aside, fresh) != 0) {
+        return -1;
+      }
+      return __real_lstat(path, buf);
+    }
+    if (strcmp(mode, "after") == 0) {
+      int rc = __real_lstat(path, buf);
+      int saved = errno;
+      struct stat captured;
+      if (rc == 0) {
+        captured = *buf;
+        if (atomic_replace(target, aside, fresh) != 0) {
+          /* Keep the already-observed snapshot; surface replace failure via
+           * a non-zero return only when lstat itself failed. */
+        }
+        *buf = captured;
+      }
+      errno = saved;
+      return rc;
+    }
+  }
+  return __real_lstat(path, buf);
+}
+"""
+
+_SEAM_LSTAT_C = r"""
+#define _POSIX_C_SOURCE 200809L
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+static void write_proof(const char *proof_path) {
+  FILE *fp;
+  if (proof_path == NULL || proof_path[0] == '\0') {
+    return;
+  }
+  fp = fopen(proof_path, "w");
+  if (fp == NULL) {
+    return;
+  }
+  (void)fputs("1\n", fp);
+  (void)fclose(fp);
+}
+
+static int atomic_replace(const char *target, const char *aside,
+                          const char *fresh) {
+  if (target == NULL || aside == NULL || fresh == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (rename(target, aside) != 0) {
+    return -1;
+  }
+  if (rename(fresh, target) != 0) {
+    int saved = errno;
+    (void)rename(aside, target);
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
+/* Compile-time seam used only when --wrap=lstat cannot prove interposition. */
+int permguard_test_lstat(const char *path, struct stat *buf) {
+  const char *mode = getenv("PERMGUARD_WRAP_MODE");
+  const char *target = getenv("PERMGUARD_WRAP_TARGET");
+  const char *aside = getenv("PERMGUARD_WRAP_ASIDE");
+  const char *fresh = getenv("PERMGUARD_WRAP_FRESH");
+  const char *proof = getenv("PERMGUARD_WRAP_PROOF");
+
+  write_proof(proof);
+
+  if (mode != NULL && path != NULL && target != NULL &&
+      strcmp(path, target) == 0) {
+    if (strcmp(mode, "before") == 0) {
+      if (atomic_replace(target, aside, fresh) != 0) {
+        return -1;
+      }
+      return lstat(path, buf);
+    }
+    if (strcmp(mode, "after") == 0) {
+      int rc = lstat(path, buf);
+      int saved = errno;
+      struct stat captured;
+      if (rc == 0) {
+        captured = *buf;
+        (void)atomic_replace(target, aside, fresh);
+        *buf = captured;
+      }
+      errno = saved;
+      return rc;
+    }
+  }
+  return lstat(path, buf);
+}
+"""
+
+
+def _hostile_private_root(tmp_path_factory=None) -> Path:
+    """Create a mode-0700 private root under /tmp for short deep-path budgets."""
+
+    del tmp_path_factory  # reserved for future session reuse
+    root = Path(tempfile.mkdtemp(prefix="permguard-hostile-", dir="/tmp"))
+    os.chmod(root, MODE_CLEAN_DIR)
+    require_mode(root, MODE_CLEAN_DIR, label="hostile-private-root")
+    return root
+
+
+def _restore_tree_modes(root: Path) -> None:
+    """Best-effort chmod walk so mode-000 trees remain deletable."""
+
+    if not root.exists():
+        return
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames + dirnames:
+            path = Path(dirpath) / name
+            try:
+                os.chmod(path, MODE_CLEAN_DIR if path.is_dir() else MODE_CLEAN_FILE)
+            except OSError:
+                try:
+                    os.lchmod(path, MODE_CLEAN_FILE)  # type: ignore[attr-defined]
+                except (AttributeError, OSError):
+                    pass
+        try:
+            os.chmod(dirpath, MODE_CLEAN_DIR)
+        except OSError:
+            pass
+
+
+def make_self_loop_symlink(path: Path) -> Path:
+    path.symlink_to(path.name)
+    assert stat_mod.S_ISLNK(_mode_bits(path))
+    return path
+
+
+def make_two_link_loop(path_a: Path, path_b: Path) -> tuple[Path, Path]:
+    path_a.symlink_to(path_b.name)
+    path_b.symlink_to(path_a.name)
+    assert stat_mod.S_ISLNK(_mode_bits(path_a))
+    assert stat_mod.S_ISLNK(_mode_bits(path_b))
+    return path_a, path_b
+
+
+def make_fifo(path: Path, mode: int) -> Path:
+    os.mkfifo(path)
+    os.chmod(path, mode)
+    require_mode(path, mode, label="fifo")
+    assert stat_mod.S_ISFIFO(_mode_bits(path))
+    return path
+
+
+def make_unix_socket(path: Path, mode: int) -> tuple[Path, socket.socket]:
+    """Bind an AF_UNIX socket pathname; caller must close the socket."""
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.bind(os.fspath(path))
+    except OSError as exc:
+        sock.close()
+        pytest.skip(
+            f"host cannot bind AF_UNIX pathname fixture ({exc}); "
+            "optional special-file addition unavailable"
+        )
+    os.chmod(path, mode)
+    require_mode(path, mode, label="af-unix-socket")
+    assert stat_mod.S_ISSOCK(_mode_bits(path))
+    return path, sock
+
+
+def make_deep_existing_path(
+    root: Path,
+    *,
+    min_components: int = 64,
+    min_bytes: int = 1024,
+    leaf_mode: int = MODE_OTHER_WRITABLE_FILE,
+) -> Path:
+    """Build a real multi-component path under a short /tmp private root."""
+
+    cur = root
+    # Long-enough components so pathname bytes and component count both clear
+    # the contract floors while remaining under the host path limit.
+    component = "n" * 20
+    created = 0
+    while created < min_components:
+        cur = cur / f"d{created:02d}{component}"
+        try:
+            cur.mkdir()
+        except OSError as exc:
+            pytest.skip(
+                f"host cannot create deep path component {created + 1} "
+                f"under {root} (errno {exc.errno})"
+            )
+        created += 1
+
+    leaf = cur / f"leaf{component}"
+    try:
+        write_regular(leaf, leaf_mode)
+    except OSError as exc:
+        pytest.skip(
+            f"host cannot create deep path leaf under {root} (errno {exc.errno})"
+        )
+
+    encoded = os.fsencode(leaf)
+    components = len(leaf.relative_to(root).parts)
+    if components < min_components:
+        pytest.skip(
+            f"deep path only reached {components} components; "
+            f"need at least {min_components}"
+        )
+    if len(encoded) < min_bytes:
+        pytest.skip(
+            f"deep path only reached {len(encoded)} pathname bytes; "
+            f"need at least {min_bytes}"
+        )
+
+    try:
+        limit = os.pathconf(root, "PC_PATH_MAX")
+    except (OSError, ValueError):
+        limit = None
+    if limit is not None and len(encoded) >= int(limit):
+        pytest.skip(
+            f"constructed deep path length {len(encoded)} is not below "
+            f"host PC_PATH_MAX {limit}"
+        )
+    return leaf
+
+
+def _host_path_max(root: Path) -> int | None:
+    try:
+        return int(os.pathconf(root, "PC_PATH_MAX"))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _compile_argv_base(output: Path, *sources: Path) -> list[str]:
+    return [
+        os.environ.get("CC", "cc"),
+        *STRICT_WARNING_FLAGS,
+        POSIX_C_SOURCE_FLAG,
+        "-o",
+        str(output),
+        *[str(src) for src in sources],
+    ]
+
+
+def _write_proof_probe_env(proof: Path) -> dict[str, str | None]:
+    return {
+        "PERMGUARD_WRAP_MODE": None,
+        "PERMGUARD_WRAP_TARGET": None,
+        "PERMGUARD_WRAP_ASIDE": None,
+        "PERMGUARD_WRAP_FRESH": None,
+        "PERMGUARD_WRAP_PROOF": str(proof),
+    }
+
+
+def _build_wrapped_permguard(build_dir: Path) -> Path:
+    """Build a pytest-owned interposed binary; prove the seam was invoked."""
+
+    if not SRC.is_file():
+        pytest.fail(f"{SRC} is missing; hostile replacement seam requires source")
+
+    wrap_c = build_dir / "permguard_wrap_lstat.c"
+    wrap_c.write_text(_WRAP_LSTAT_C, encoding="utf-8")
+    binary = build_dir / "permguard-wrap"
+    compile_argv = _compile_argv_base(binary, SRC, wrap_c) + [
+        "-Wl,--wrap=lstat",
+    ]
+    compiled = subprocess.run(compile_argv, capture_output=True, check=False)
+    if compiled.returncode == 0 and binary.is_file():
+        proof = build_dir / "wrap-proof-probe"
+        if proof.exists():
+            proof.unlink()
+        probe_target = build_dir / "probe-clean"
+        write_regular(probe_target, MODE_CLEAN_FILE)
+        probe = run_permguard_hostile(
+            binary,
+            probe_target,
+            env=_write_proof_probe_env(proof),
+        )
+        if (
+            probe.returncode == 0
+            and proof.is_file()
+            and proof.read_text(encoding="ascii") == "1\n"
+        ):
+            return binary
+
+    # Deterministic compile-time seam fallback (never sleep / never silent skip).
+    seam_c = build_dir / "permguard_seam_lstat.c"
+    seam_c.write_text(_SEAM_LSTAT_C, encoding="utf-8")
+    src_text = SRC.read_text(encoding="utf-8")
+    patched, count = re.subn(
+        r"(?<!\w)lstat\s*\(\s*path\s*,\s*&st\s*\)",
+        "permguard_test_lstat(path, &st)",
+        src_text,
+        count=1,
+    )
+    if count != 1:
+        pytest.fail(
+            "unable to install compile-time lstat seam: expected exactly one "
+            "lstat(path, &st) call site in src/permguard.c"
+        )
+    if "#include <sys/stat.h>" not in patched:
+        pytest.fail("seamed source lost #include <sys/stat.h>")
+    patched = patched.replace(
+        "#include <sys/stat.h>\n",
+        "#include <sys/stat.h>\n"
+        "int permguard_test_lstat(const char *path, struct stat *buf);\n",
+        1,
+    )
+    patched_src = build_dir / "permguard_seamed.c"
+    patched_src.write_text(patched, encoding="utf-8")
+    seam_binary = build_dir / "permguard-seam"
+    seam_argv = _compile_argv_base(seam_binary, patched_src, seam_c)
+    seamed = subprocess.run(seam_argv, capture_output=True, check=False)
+    if seamed.returncode != 0:
+        detail = seamed.stderr.decode("utf-8", errors="replace")
+        wrap_detail = compiled.stderr.decode("utf-8", errors="replace")
+        pytest.fail(
+            "failed to build deterministic replacement seam binary.\n"
+            f"wrap link:\n{wrap_detail}\nseam compile:\n{detail}"
+        )
+
+    proof = build_dir / "seam-proof-probe"
+    if proof.exists():
+        proof.unlink()
+    probe_target = build_dir / "seam-probe-clean"
+    write_regular(probe_target, MODE_CLEAN_FILE)
+    probe = run_permguard_hostile(
+        seam_binary,
+        probe_target,
+        env=_write_proof_probe_env(proof),
+    )
+    if not (
+        probe.returncode == 0
+        and proof.is_file()
+        and proof.read_text(encoding="ascii") == "1\n"
+    ):
+        pytest.fail(
+            "replacement-race seam binary did not prove metadata interposition; "
+            "refusing to fall back to an uninterposed permguard"
+        )
+    return seam_binary
+
+
+def _assert_no_pgh_tokens(*blobs: bytes) -> None:
+    for blob in blobs:
+        for label in HOSTILE_FIXTURE_HAZARDS:
+            assert label.encode("ascii") not in blob
+
+
+def test_hostile_contract_labels_are_not_product_tokens(permguard_bin, tmp_path):
+    """AC-01: PGH_* names organize tests only; never appear in product output."""
+
+    path = write_regular(tmp_path / "ac01-clean", MODE_CLEAN_FILE)
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == 0
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+    if HOSTILE_FIXTURES_CONTRACT.is_file():
+        text = HOSTILE_FIXTURES_CONTRACT.read_text(encoding="utf-8")
+        for label in HOSTILE_FIXTURE_HAZARDS:
+            assert label in text
+
+
+# --- PGH_DANGLING_SYMBOLIC_LINK -------------------------------------------------
+
+
+def test_hostile_pgh_dangling_symbolic_link(permguard_bin, tmp_path):
+    root = tmp_path
+    os.chmod(root, MODE_CLEAN_DIR)
+    dangling = root / "pgh-dangling"
+    dangling.symlink_to("definitely-absent-pgh-target")
+    assert stat_mod.S_ISLNK(_mode_bits(dangling))
+    assert not (root / "definitely-absent-pgh-target").exists()
+
+    before = snapshot_entry(dangling)
+    result = run_permguard_hostile(permguard_bin, dangling)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_symbolic_link(dangling)
+    assert b"MISSING" not in result.stderr
+    for code in HAZARD_RANK:
+        assert code.encode("ascii") not in result.stdout
+        assert code.encode("ascii") not in result.stderr
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+    assert_unchanged(dangling, before)
+
+
+# --- PGH_SYMBOLIC_LINK_LOOP -----------------------------------------------------
+
+
+def test_hostile_pgh_final_self_loop_is_symbolic_link(permguard_bin, tmp_path):
+    loop = make_self_loop_symlink(tmp_path / "self-loop")
+    result = run_permguard_hostile(permguard_bin, loop)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_symbolic_link(loop)
+    assert b"INSPECTION_ERROR_" not in result.stderr
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+def test_hostile_pgh_final_two_link_loop_is_symbolic_link(permguard_bin, tmp_path):
+    link_a, link_b = make_two_link_loop(tmp_path / "loop-a", tmp_path / "loop-b")
+    for link in (link_a, link_b):
+        result = run_permguard_hostile(permguard_bin, link)
+        assert result.returncode == 2
+        assert result.stdout == b""
+        assert result.stderr == diagnostic_symbolic_link(link)
+        assert f"INSPECTION_ERROR_{errno.ELOOP}".encode("ascii") not in result.stderr
+        for code in HAZARD_RANK:
+            assert code.encode("ascii") not in result.stdout
+
+
+def test_hostile_pgh_intermediate_loop_is_inspection_error_eloop(
+    permguard_bin, tmp_path
+):
+    link_a, link_b = make_two_link_loop(
+        tmp_path / "mid-loop-a", tmp_path / "mid-loop-b"
+    )
+    nested = link_a / "nested-child"
+    try:
+        os.lstat(nested)
+    except OSError as exc:
+        expected_errno = exc.errno
+    else:
+        pytest.fail("intermediate symlink loop unexpectedly became lstat-able")
+
+    assert expected_errno == errno.ELOOP
+
+    result = run_permguard_hostile(permguard_bin, nested)
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert result.stderr == diagnostic_inspection_error(expected_errno, nested)
+    assert b"SYMBOLIC_LINK" not in result.stderr
+    for code in HAZARD_RANK:
+        assert code.encode("ascii") not in result.stdout
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+    # Loop entries themselves remain untouched symlink fixtures.
+    assert stat_mod.S_ISLNK(_mode_bits(link_a))
+    assert stat_mod.S_ISLNK(_mode_bits(link_b))
+
+
+# --- PGH_UNREADABLE_ENTRY -------------------------------------------------------
+
+
+def test_hostile_pgh_mode_000_regular_file_is_metadata_inspectable(
+    permguard_bin, tmp_path
+):
+    path = write_regular(tmp_path / "mode-000-file", MODE_CLEAN_FILE)
+    os.chmod(path, MODE_UNREADABLE)
+    require_mode(path, MODE_UNREADABLE, label="mode-000-file")
+    actual = _mode_bits(path)
+    assert hazards_for_mode(actual) == []
+    assert stat_mod.S_ISREG(actual)
+
+    # Content is intentionally unreadable; snapshot mode only (no open).
+    before_mode = actual
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+    assert _mode_bits(path) == before_mode
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+def test_hostile_pgh_mode_000_directory_is_metadata_inspectable(
+    permguard_bin, tmp_path
+):
+    path = make_directory(tmp_path / "mode-000-dir", MODE_CLEAN_DIR)
+    os.chmod(path, MODE_UNREADABLE)
+    require_mode(path, MODE_UNREADABLE, label="mode-000-dir")
+    actual = _mode_bits(path)
+    assert hazards_for_mode(actual) == []
+
+    before = snapshot_entry(path)
+    try:
+        result = run_permguard_hostile(permguard_bin, path)
+        assert result.returncode == 0
+        assert result.stdout == b""
+        assert result.stderr == b""
+        assert_unchanged(path, before)
+    finally:
+        os.chmod(path, MODE_CLEAN_DIR)
+
+
+def test_hostile_pgh_child_below_non_searchable_parent_is_inaccessible(
+    permguard_bin, tmp_path
+):
+    if os.geteuid() == 0:
+        pytest.skip(
+            "EACCES inaccessible-child fixture is unreliable as root; "
+            "host cannot produce a trustworthy search-denial oracle"
+        )
+
+    blocked = tmp_path / "blocked-parent"
+    blocked.mkdir()
+    child = blocked / "secret-child"
+    write_regular(child, MODE_CLEAN_FILE)
+    os.chmod(blocked, MODE_UNREADABLE)
+    try:
+        try:
+            os.lstat(child)
+        except OSError as exc:
+            if exc.errno != errno.EACCES:
+                pytest.skip(
+                    "host did not produce EACCES for non-searchable parent "
+                    f"child (got errno {exc.errno}); capability unavailable"
+                )
+        else:
+            pytest.skip(
+                "host bypassed directory search restriction; "
+                "cannot produce EACCES inaccessible-child fixture"
+            )
+
+        result = run_permguard_hostile(permguard_bin, child)
+        assert result.returncode == 2
+        assert result.stdout == b""
+        assert result.stderr == diagnostic_inaccessible(child)
+        _assert_no_pgh_tokens(result.stdout, result.stderr)
+    finally:
+        os.chmod(blocked, MODE_CLEAN_DIR)
+
+
+# --- PGH_PERMISSION_CHANGE ------------------------------------------------------
+
+
+def test_hostile_pgh_permission_transitions_are_point_in_time(
+    permguard_bin, tmp_path
+):
+    path = write_regular(tmp_path / "perm-transition", MODE_CLEAN_FILE)
+    content_before = path.read_bytes()
+
+    sequence = (
+        (MODE_CLEAN_FILE, 0, b""),
+        (
+            MODE_GROUP_WRITABLE_FILE,
+            1,
+            findings_for_path(path, MODE_GROUP_WRITABLE_FILE),
+        ),
+        (
+            MODE_OTHER_WRITABLE_FILE,
+            1,
+            findings_for_path(path, MODE_OTHER_WRITABLE_FILE),
+        ),
+        (MODE_CLEAN_FILE, 0, b""),
+    )
+
+    for mode, status, stdout in sequence:
+        os.chmod(path, mode)
+        require_mode(path, mode, label="permission-transition")
+        before = snapshot_entry(path)
+        result = run_permguard_hostile(permguard_bin, path)
+        assert result.returncode == status
+        assert result.stdout == stdout
+        assert result.stderr == b""
+        assert_unchanged(path, before)
+        assert path.read_bytes() == content_before
+        _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+# --- PGH_UNUSUAL_FILENAME -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "escaped_fragment", "mode", "status"),
+    [
+        (b"name with spaces", b"name with spaces", MODE_OTHER_WRITABLE_FILE, 1),
+        (b'quote-"-name', b'quote-\\"-name', MODE_GROUP_WRITABLE_FILE, 1),
+        (b"back\\slash", b"back\\\\slash", MODE_OTHER_WRITABLE_FILE, 1),
+        (b"has\ttab", b"has\\x09tab", MODE_OTHER_WRITABLE_FILE, 1),
+        (b"has\nnewline", b"has\\x0Anewline", MODE_OTHER_WRITABLE_FILE, 1),
+        (b"has\x1besc", b"has\\x1Besc", MODE_OTHER_WRITABLE_FILE, 1),
+        (b"has\x7fdel", b"has\\x7Fdel", MODE_OTHER_WRITABLE_FILE, 1),
+    ],
+)
+def test_hostile_pgh_unusual_filename_escaping(
+    permguard_bin, tmp_path, raw_name, escaped_fragment, mode, status
+):
+    name = os.fsdecode(raw_name)
+    path = tmp_path / name
+    try:
+        write_regular(path, mode)
+    except OSError as exc:
+        pytest.skip(
+            f"host filesystem cannot create unusual name {raw_name!r}: {exc}"
+        )
+
+    before = snapshot_entry(path)
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == status
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(path, mode)
+    assert_no_raw_unsafe_bytes(result.stdout)
+    assert escaped_fragment in result.stdout
+    # Basenames that contain bytes needing \xHH escaping must not appear raw.
+    if any(byte < 0x20 or byte > 0x7E for byte in raw_name):
+        assert raw_name not in result.stdout
+    assert_unchanged(path, before)
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+def test_hostile_pgh_leading_dash_name_after_terminator(permguard_bin, tmp_path):
+    write_regular(tmp_path / "-leading-dash", MODE_OTHER_WRITABLE_FILE)
+    # Operand bytes after `--` are relative; findings quote those bytes.
+    result = run_permguard_hostile(
+        permguard_bin, "--", "-leading-dash", cwd=tmp_path
+    )
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(
+        "-leading-dash", MODE_OTHER_WRITABLE_FILE
+    )
+    assert_no_raw_unsafe_bytes(result.stdout)
+
+
+def test_hostile_pgh_non_utf8_filename_when_supported(permguard_bin, tmp_path):
+    raw_name = b"nonutf8-\xff-name"
+    name = os.fsdecode(raw_name)
+    path = tmp_path / name
+    try:
+        write_regular(path, MODE_OTHER_WRITABLE_FILE)
+    except OSError as exc:
+        pytest.skip(
+            f"host filesystem cannot create non-UTF-8 name {raw_name!r}: {exc}"
+        )
+
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(path, MODE_OTHER_WRITABLE_FILE)
+    assert b"\\xFF" in result.stdout
+    assert b"\xff" not in result.stdout
+    assert_no_raw_unsafe_bytes(result.stdout)
+
+
+# --- PGH_DEEP_PATH --------------------------------------------------------------
+
+
+def test_hostile_pgh_deep_existing_path_classifies_normally(permguard_bin):
+    root = _hostile_private_root()
+    try:
+        leaf = make_deep_existing_path(
+            root,
+            min_components=64,
+            min_bytes=1024,
+            leaf_mode=MODE_OTHER_WRITABLE_FILE,
+        )
+        before = snapshot_entry(leaf)
+        result = run_permguard_hostile(permguard_bin, leaf)
+        assert result.returncode == 1
+        assert result.stderr == b""
+        assert result.stdout == findings_for_path(
+            leaf, MODE_OTHER_WRITABLE_FILE
+        )
+        assert_unchanged(leaf, before)
+        _assert_no_pgh_tokens(result.stdout, result.stderr)
+        assert len(os.fsencode(leaf)) >= 1024
+        assert len(leaf.relative_to(root).parts) >= 64
+    finally:
+        _restore_tree_modes(root)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_hostile_pgh_deep_path_over_limit_matches_preflight_errno(permguard_bin):
+    root = _hostile_private_root()
+    try:
+        limit = _host_path_max(root)
+        if limit is None or limit <= 0:
+            pytest.skip(
+                "host does not expose PC_PATH_MAX; cannot construct a "
+                "process-level over-limit deep-path operand"
+            )
+
+        # Construct an argv pathname past the measured limit without requiring
+        # the filesystem to materialize it.
+        over = root / ("Z" * (int(limit) + 64))
+        over_s = os.fspath(over)
+        try:
+            os.lstat(over_s)
+        except OSError as exc:
+            expected_errno = exc.errno
+        except ValueError as exc:
+            pytest.skip(
+                f"Python rejected over-limit path before lstat ({exc}); "
+                "cannot pin product errno oracle"
+            )
+        else:
+            pytest.skip(
+                "host accepted an over-limit pathname; cannot exercise "
+                "failing deep-path lookup"
+            )
+
+        result = run_permguard_hostile(permguard_bin, over_s)
+        assert result.returncode == 2
+        assert result.stdout == b""
+        if expected_errno == errno.ENOENT:
+            assert result.stderr == diagnostic_missing(over_s)
+        elif expected_errno == errno.EACCES:
+            assert result.stderr == diagnostic_inaccessible(over_s)
+        else:
+            assert result.stderr == diagnostic_inspection_error(
+                expected_errno, over_s
+            )
+        _assert_no_pgh_tokens(result.stdout, result.stderr)
+    finally:
+        _restore_tree_modes(root)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# --- PGH_FIFO_OR_SPECIAL_FILE ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_status"),
+    [
+        (MODE_CLEAN_FILE, 0),
+        (MODE_GROUP_WRITABLE_FILE, 1),
+        (MODE_OTHER_WRITABLE_FILE, 1),
+        (MODE_BOTH_WRITABLE_FILE, 1),
+    ],
+)
+def test_hostile_pgh_fifo_classifies_mode_bits_without_blocking(
+    permguard_bin, tmp_path, mode, expected_status
+):
+    path = tmp_path / f"fifo-{mode:04o}"
+    make_fifo(path, mode)
+    before = snapshot_entry(path)
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == expected_status
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(path, mode)
+    assert_unchanged(path, before)
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+    # Never open either end: re-check still a FIFO with the same mode.
+    assert stat_mod.S_ISFIFO(_mode_bits(path))
+
+
+def test_hostile_pgh_af_unix_socket_classifies_when_supported(
+    permguard_bin, tmp_path
+):
+    path = tmp_path / "pgh.sock"
+    sock_path = None
+    sock = None
+    try:
+        sock_path, sock = make_unix_socket(path, MODE_OTHER_WRITABLE_FILE)
+        before = snapshot_entry(sock_path)
+        result = run_permguard_hostile(permguard_bin, sock_path)
+        assert result.returncode == 1
+        assert result.stderr == b""
+        assert result.stdout == findings_for_path(
+            sock_path, MODE_OTHER_WRITABLE_FILE
+        )
+        assert_unchanged(sock_path, before)
+    finally:
+        if sock is not None:
+            sock.close()
+        if sock_path is not None and sock_path.exists():
+            sock_path.unlink()
+
+
+def test_hostile_pgh_fifo_setid_bits_when_preserved(permguard_bin, tmp_path):
+    path = tmp_path / "fifo-setgid"
+    os.mkfifo(path)
+    os.chmod(path, MODE_SETGID_FILE)
+    actual = _mode_bits(path) & MODE_MASK
+    if not (actual & stat_mod.S_ISGID):
+        pytest.skip(
+            "host filesystem did not preserve set-group-ID on FIFO; "
+            "optional special-file set-ID addition unavailable"
+        )
+    require_mode(path, actual, label="fifo-setgid")
+    result = run_permguard_hostile(permguard_bin, path)
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(path, actual)
+
+
+# --- PGH_REPLACEMENT_RACE -------------------------------------------------------
+
+
+def test_hostile_pgh_replacement_before_lstat_classifies_new_object(tmp_path):
+    build_dir = tmp_path / "wrap-build-before"
+    build_dir.mkdir()
+    binary = _build_wrapped_permguard(build_dir)
+
+    target = tmp_path / "race-target"
+    aside = tmp_path / "race-aside"
+    fresh = tmp_path / "race-fresh"
+    proof = tmp_path / "race-proof-before"
+    write_regular(target, MODE_CLEAN_FILE, data=b"old-clean\n")
+    write_regular(fresh, MODE_OTHER_WRITABLE_FILE, data=b"new-other\n")
+
+    env = {
+        "PERMGUARD_WRAP_MODE": "before",
+        "PERMGUARD_WRAP_TARGET": str(target),
+        "PERMGUARD_WRAP_ASIDE": str(aside),
+        "PERMGUARD_WRAP_FRESH": str(fresh),
+        "PERMGUARD_WRAP_PROOF": str(proof),
+    }
+    result = run_permguard_hostile(binary, target, env=env)
+    assert proof.is_file() and proof.read_text(encoding="ascii") == "1\n"
+    assert result.returncode == 1
+    assert result.stderr == b""
+    assert result.stdout == findings_for_path(target, MODE_OTHER_WRITABLE_FILE)
+    assert target.read_bytes() == b"new-other\n"
+    assert aside.read_bytes() == b"old-clean\n"
+    assert not fresh.exists()
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+def test_hostile_pgh_replacement_after_lstat_classifies_old_snapshot(tmp_path):
+    build_dir = tmp_path / "wrap-build-after"
+    build_dir.mkdir()
+    binary = _build_wrapped_permguard(build_dir)
+
+    target = tmp_path / "race-target-after"
+    aside = tmp_path / "race-aside-after"
+    fresh = tmp_path / "race-fresh-after"
+    proof = tmp_path / "race-proof-after"
+    write_regular(target, MODE_CLEAN_FILE, data=b"old-clean\n")
+    write_regular(fresh, MODE_OTHER_WRITABLE_FILE, data=b"new-other\n")
+
+    env = {
+        "PERMGUARD_WRAP_MODE": "after",
+        "PERMGUARD_WRAP_TARGET": str(target),
+        "PERMGUARD_WRAP_ASIDE": str(aside),
+        "PERMGUARD_WRAP_FRESH": str(fresh),
+        "PERMGUARD_WRAP_PROOF": str(proof),
+    }
+    result = run_permguard_hostile(binary, target, env=env)
+    assert proof.is_file() and proof.read_text(encoding="ascii") == "1\n"
+    # Classification must use the pre-replacement clean snapshot.
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+    # Path bytes now belong to the replacement object.
+    assert target.read_bytes() == b"new-other\n"
+    assert (_mode_bits(target) & MODE_MASK) == (
+        MODE_OTHER_WRITABLE_FILE & MODE_MASK
+    )
+    assert aside.read_bytes() == b"old-clean\n"
+    _assert_no_pgh_tokens(result.stdout, result.stderr)
+
+
+def test_hostile_pgh_replacement_stress_outcomes_stay_in_closed_set(
+    permguard_bin, tmp_path
+):
+    """Optional unsynchronized probe: each run yields only the closed set.
+
+    Not a byte-repeatability claim. Does not replace the controlled-seam tests.
+    """
+
+    target = tmp_path / "stress-target"
+    alt = tmp_path / "stress-alt"
+    write_regular(target, MODE_CLEAN_FILE, data=b"a\n")
+    write_regular(alt, MODE_OTHER_WRITABLE_FILE, data=b"b\n")
+
+    for _ in range(8):
+        # Flip names within the private root without sleeping.
+        os.rename(target, tmp_path / "stress-tmp")
+        os.rename(alt, target)
+        os.rename(tmp_path / "stress-tmp", alt)
+        result = run_permguard_hostile(permguard_bin, target)
+        assert result.returncode in {0, 1, 2}
+        _assert_no_pgh_tokens(result.stdout, result.stderr)
+        if result.returncode == 2:
+            assert result.stdout == b""
+            assert result.stderr.startswith(b"permguard: ")
+            assert (
+                b"MISSING:" in result.stderr
+                or b"INACCESSIBLE:" in result.stderr
+                or b"SYMBOLIC_LINK:" in result.stderr
+                or b"INSPECTION_ERROR_" in result.stderr
+                or result.stderr == diagnostic_stdout_write()
+            )
+            continue
+
+        assert result.stderr == b""
+        mode = _mode_bits(target)
+        expected = findings_for_path(target, mode)
+        assert result.stdout == expected
+        if expected:
+            assert result.returncode == 1
+        else:
+            assert result.returncode == 0
+
+
+def test_hostile_pgh_source_surface_unchanged_no_open_or_follow():
+    """AC-11: hostile slice must not widen the production inspection surface."""
+
+    if not SRC.is_file():
+        pytest.fail(f"{SRC} is missing; hostile source-surface check requires it")
+    text = SRC.read_text(encoding="utf-8")
+    for label in HOSTILE_FIXTURE_HAZARDS:
+        assert label not in text
+    for pattern, name in (
+        (r"(?<!l)\bstat\s*\(", "bare stat("),
+        (r"\brealpath\s*\(", "realpath("),
+        (r"\breadlink\s*\(", "readlink("),
+        (r"\baccess\s*\(", "access("),
+        (r"(?<!f)\bopen\s*\(", "open("),
+        (r"\bmkfifo\s*\(", "mkfifo("),
+        (r"\bsocket\s*\(", "socket("),
+    ):
+        assert re.search(pattern, text) is None, (
+            f"src/permguard.c must not call {name}"
+        )
+    assert len(re.findall(r"(?<!\w)lstat\s*\(\s*(?!\d)", text)) >= 1

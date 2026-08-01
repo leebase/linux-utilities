@@ -1,5 +1,121 @@
 # Sprint Plan
 
+## pathaudit PA-W1 Open-Repair Maintenance (`c9e3de33f46b`)
+
+- [x] Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`)
+  closed Low `PA-W1` under `docs/pathaudit-open-repairs-contract.md`:
+  command-bounded `readlink` storage in `symlink_is_self_basename`,
+  preserved bare-self `INSPECTION_ERROR_<ELOOP>` reject-close, AC-4
+  non-self loop regressions, and bounded prose. Steps 1–7 passed attempt 1.
+- [x] Exact evidence: focused pathaudit pytest 156 passed / 15 skipped;
+  step-5 static gates exit 0 (one clang-format line-break repair); focused
+  ASan+UBSan and Valgrind each 156/15; complete `make quality` exit 0 with
+  ordinary / ASan / UBSan / Valgrind each 359 passed / 15 skipped (scratch
+  writable gitdir); smoke start/check 0 with empty `blocking_errors` and
+  check.log `356 passed, 18 skipped in 21.16s`.
+- [x] Independent verdict
+  `code-reviews/review-pathaudit-open-repairs.verdict.json` is `pass` and
+  closes historical Low `PA-W1`. Remaining: Medium `PAW1-DOC-901` and Low
+  `PAW1-DOC-902` / `PAW1-TEST-903` / `PAW1-TEST-904` / `PAW1-SCOPE-905`.
+  Not a pathaudit release.
+- [ ] Keep Medium `PAW1-DOC-901` and those four Lows visible until a later
+  independent review closes them. Do not invent release readiness or
+  optional polish as authorized work from this closeout. Prior pathaudit
+  Medium PA-6CA-4 and Lows PA-6CA-1/2/3 stay open. Planning order remains
+  `inodealias` → `shebangcheck` → `openunlink` ahead of any seventh-utility
+  CODE.
+
+## Seventh Utility Mission Recovery (`4824cd763b27` / origin `f7539c314ca1`)
+
+- [x] Bounded recovery run `4824cd763b27`
+  (`template_repair_before_review_feature_delivery`) repaired the live
+  seventh-mission recovery contract, reconciled the on-disk evaluation,
+  passed mechanical smoke, and obtained a fresh independent High-threshold
+  review of the `sparsemap` recommendation. Failed origin run
+  `f7539c314ca1` (`discover_evaluate_seventh_linux_utility`) remains
+  **FAILED**; its step-2 timed-out attempts (`0`/`124`/`124` under a
+  600-second ceiling after High `SEV7-H1` on pre-repair `elfinterp`) are
+  distinct from this recovery and are not silent passes.
+- [x] Fresh verdict
+  `code-reviews/review-seventh-utility-mission-evaluation-recovery.verdict.json`
+  is `pass` (no Critical/High). Weighted totals re-derived:
+  `sparsemap` 141 / `cgroupceil` 134 / `mountstack` 130 / `lockscope` 128 /
+  `elfinterp` 128. Allowlisted check: focused
+  `tests/test_governed_run_c847e01d15fe.py` → 4 passed / 0 skipped
+  (workflow only). Smoke start/check 0; check.log
+  `351 passed, 18 skipped in 20.99s` (sysdiff-centered; not `sparsemap`
+  product evidence).
+- [ ] Keep Medium `SEV7R-M1` (asymmetric recycled-candidate provenance /
+  omitted sixth-evaluation `sparsemap` rejection rationale) and
+  `SEV7R-M2` (compressed non-winner hazard ledger defects), plus Low
+  `SEV7R-L1` (incomplete attempt record) and `SEV7R-L2` (unhedged
+  syscall-seam prescription), visible until a later review closes them.
+- [ ] Do **not** implement, build, product-test, package, install, tag,
+  publish, or release `sparsemap`. This recovery is selection-review
+  evidence only and does not silently authorize a CODE playbook. Keep
+  earlier planning-mission ordering visible and ahead of any seventh-
+  utility implementation: `inodealias` (fourth), `shebangcheck` (fifth),
+  `openunlink` (sixth, still gated on `SIXTH2-M1`–`M3` plus Lows).
+
+## Sixth Utility Mission Discovery (`787b9bb3d830`)
+
+- [x] Select and independently review exactly **Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting**
+  as the sixth planning mission. One-purpose scope: for one explicit Linux PID, report open
+  descriptors whose followed targets are regular files with `st_nlink == 0`;
+  procfs link text is escaped display context, not the predicate.
+- [x] Record the planning-only first vertical slice: exact `--help`,
+  `--version`, or one-decimal-PID CLI; bounded canonical numeric enumeration of
+  fixed `/proc/PID/fd`; repeated directory-relative identity/type checks;
+  ascending escaped `OPEN_UNLINKED` findings; visible per-descriptor
+  advisories; closed statuses and taxonomies; focused fixtures; section-1
+  manual; strict C/static/memory gates; dedicated user smoke; and independent
+  review. All-PID discovery, target-content access, inode grouping, reclaim
+  estimates, process control, monitoring, installation, packaging, tagging,
+  publication, and release are excluded.
+- [x] Record selection evidence accurately. Review artifacts
+  `plans/review-sixth-utility-mission.md` and
+  `plans/review-sixth-utility-mission.verdict.json` are `pass` with no Critical
+  or High findings. Review allowlisted only Python byte-compilation of the
+  three existing pytest modules, which exited 0. Existing smoke is
+  sysdiff-centered aggregate evidence at 351 passed / 18 skipped, not an
+  `openunlink` build, test, quality, dedicated-smoke, or release gate.
+- [ ] Keep Medium `SIXTH2-M1` (descriptor-cap total suppression),
+  `SIXTH2-M2` (nonzero-link filesystem boundary), and `SIXTH2-M3` (status-1
+  finding/advisory discrimination), plus Low `SIXTH2-L1` (stderr writes),
+  `SIXTH2-L2` (defensive size-range code), and `SIXTH2-L3` (stale run-step
+  statement), visible until fresh independent review explicitly closes them.
+- [ ] Next executable action for `openunlink`: do not begin implementation
+  while the repair-before-expansion gate remains live. After applicable
+  Medium-or-higher debt is repaired or explicitly reclassified and
+  independently reviewed, generate a separate governed implementation
+  playbook beginning with a normative contract that resolves
+  `SIXTH2-M1`–`SIXTH2-M3` before CODE. This discovery does not reorder or
+  implement planning-only `inodealias` or `shebangcheck`.
+
+## permguard Medium-Repair Governed Run `ba6dc2fdd199` Recovery (`5035933ac7b4`)
+
+- [x] Governed recovery run `5035933ac7b4`
+  (`repair_governed_run_ba6dc2fdd199`) reconciled the dirty permguard
+  Medium-repair candidate from failed run `ba6dc2fdd199` and obtained a
+  clean independent review. Failed origin `ba6dc2fdd199` is still not a
+  passed delivery.
+- [x] Exact evidence: focused permguard pytest 63 passed / 0 skipped;
+  step-5 complete `make quality` exit 0 with ordinary / ASan+UBSan /
+  Valgrind each 354 passed / 15 skipped (scratch writable gitdir); smoke
+  start/check 0 with empty `blocking_errors` and check.log
+  `351 passed, 18 skipped in 21.76s`.
+- [x] Independent verdict
+  `code-reviews/review-governed-run-ba6dc2fdd199.verdict.json` is `pass`
+  and closes Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and
+  PG-DOC-512. Remaining: Low PGR-TEST-706, PGR-PORT-707, PGR-BUILD-708,
+  PGR-TEST-709, and PGR-DOC-710. Not a permguard release.
+- [ ] Keep those five Lows visible along with bootstrap Lows
+  PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, pathaudit
+  Medium PA-6CA-4 and Lows PA-6CA-1/2/3, and FUM5 Mediums/Lows. Next:
+  generate a separate governed `shebangcheck` implementation playbook
+  beginning with its normative contract. Do not claim unrelated backlog
+  closure or that failed origin `ba6dc2fdd199` passed.
+
 ## pathaudit Governed Run `6ca4cebc8527` Recovery (`4ae7a820b0a3`)
 
 - [x] Governed recovery run `4ae7a820b0a3`
@@ -20,9 +136,10 @@
   PA-6CA-4 (review-worker complete-suite/`git worktree` EROFS
   environment note) and Low PA-6CA-1/2/3. Not a pathaudit release.
 - [ ] Keep Medium PA-6CA-4 and Low PA-6CA-1/2/3 visible; do not treat
-  PA-6CA-4 as a pathaudit product regression. Resume permguard Medium
-  PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 repair before
-  feature expansion. Do not claim unrelated backlog closure.
+  PA-6CA-4 as a pathaudit product regression. Permguard Medium
+  PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 are closed by
+  later recovery `5035933ac7b4` without claiming failed origin
+  `ba6dc2fdd199` passed. Do not claim unrelated backlog closure.
 
 ## Discover and evaluate a fifth small Linux utility mission
 
@@ -46,14 +163,17 @@
   remains not a passed delivery; recovery run `4ae7a820b0a3` reconciled
   and independently reviewed that candidate and closed
   `pathaudit-shadow-1/2/3` (remaining PA-6CA-4 Medium and PA-6CA-1/2/3
-  Low). Preserve sequencing: first complete and independently review
-  permguard Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and
-  PG-DOC-512, and clear any other applicable Medium-or-higher
-  feature-expansion gate.
-- [ ] After those gates clear, generate a separate governed `shebangcheck`
-  implementation playbook. It must begin with the normative contract and
-  later provide fixtures, C source, documentation, dedicated user smoke,
-  quality evidence, and independent review. This discovery run performed no
+  Low).
+- [x] Permguard Medium-repair recovery: failed origin run `ba6dc2fdd199`
+  remains not a passed delivery; recovery run `5035933ac7b4` reconciled
+  and independently reviewed that candidate and closed Medium
+  PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 (remaining
+  Low PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/PGR-TEST-709/PGR-DOC-710).
+- [ ] Generate a separate governed `shebangcheck` implementation playbook.
+  It must begin with the normative contract and later provide fixtures, C
+  source, documentation, dedicated user smoke, quality evidence, and
+  independent review. Keep remaining Medium-or-higher notes (including
+  PA-6CA-4 and FUM5-M1/M2) visible. This discovery run performed no
   implementation, compiler, formatter, product test, release, installation,
   packaging, publication, or verification work for `shebangcheck`.
 
@@ -79,11 +199,11 @@ PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. One-code
 vertical-slice drafts are superseded non-authority. Not installed, packaged,
 released, recursive, or remedial.
 
-Sprint posture: repair the five Medium findings in a bounded governed slice
-(architecture taxonomy accuracy, remaining draft markers, `STDOUT_WRITE` /
-SIGPIPE tests, `lstat` portability flags, QUALITY/TESTING docs), then
-independently review before feature expansion. Keep the six Low findings
-visible.
+Sprint posture: later recovery `5035933ac7b4` closed the five Medium IDs
+under a fresh independent review without claiming failed origin
+`ba6dc2fdd199` passed; keep bootstrap Lows
+PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511 and recovery Lows
+PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/PGR-TEST-709/PGR-DOC-710 visible.
 
 ## Prior — Permguard First Vertical Slice (`f742c10135e5`)
 
@@ -484,6 +604,26 @@ or release closure from this slice.
 
 ## Current sprint
 
+- [x] Governed run `c9e3de33f46b` closed pathaudit Low `PA-W1` (command-
+  bounded `symlink_is_self_basename` `readlink` storage) under independent
+  verdict `pass`. Exact evidence: focused 156/15; `make quality` 359/15
+  ordinary/ASan/UBSan/Valgrind each; smoke start/check 0 with check.log
+  356/18. Remaining Medium `PAW1-DOC-901` and Lows `PAW1-DOC-902`/
+  `PAW1-TEST-903`/`PAW1-TEST-904`/`PAW1-SCOPE-905`. Not a pathaudit
+  release, install, package, tag, or publication.
+- [ ] Keep `PAW1-DOC-901` and the four new Lows visible. Do not invent
+  release readiness or optional polish from this maintenance closeout.
+  Preserve planning order: `inodealias` → `shebangcheck` → `openunlink`
+  (still gated on `SIXTH2-M1`–`M3`) ahead of any seventh-utility CODE.
+- [x] Bounded recovery `4824cd763b27` reconciled and High-threshold-reviewed
+  the `sparsemap` seventh-mission evaluation left by failed origin
+  `f7539c314ca1`. Fresh verdict `pass` with Medium `SEV7R-M1`/`SEV7R-M2`
+  and Low `SEV7R-L1`/`SEV7R-L2` retained. Origin remains Failed; timeouts
+  `0`/`124`/`124` stay distinct from this recovery. Not an
+  implementation, install, package, tag, publication, or release of
+  `sparsemap`.
+- [ ] Keep `SEV7R-M1`/`SEV7R-M2`/`SEV7R-L1`/`SEV7R-L2` visible. Do not
+  silently authorize `sparsemap` CODE.
 - [x] Deliver, validate, smoke-gate, and independently review the `permguard`
   bootstrap in run `51100a584ac9`,
   `bootstrap_permguard_first_vertical_slice`, under
@@ -497,13 +637,22 @@ or release closure from this slice.
   PG-PORT-505, PG-DOC-512 and Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508,
   PG-MAKE-509/510/511. Not installed, packaged, released, recursive, or
   remedial.
-- [ ] Next executable action: bounded governed repair for Medium PG-DOC-501
-  (rewrite architecture.md to the live four-code streaming contract),
-  remaining PG-DOC-502 draft markers, PG-TEST-503 (`STDOUT_WRITE`/SIGPIPE
-  tests), PG-PORT-505 (`-D_POSIX_C_SOURCE` instead of hand-declared `lstat`),
-  and PG-DOC-512 (QUALITY.md/TESTING.md permguard coverage), followed by
-  independent review before feature expansion. Keep Low
-  PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511 visible.
+- [x] Recovery run `5035933ac7b4` closed Medium PG-DOC-501/502,
+  PG-TEST-503, PG-PORT-505, and PG-DOC-512 under independent verdict
+  `pass` without claiming failed origin `ba6dc2fdd199` passed. Exact
+  evidence: focused pytest 63/0; `make quality` exit 0 with
+  354/15 ordinary/ASan/Valgrind each; smoke start/check 0 with check.log
+  351/18. Remaining Low PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/
+  PGR-TEST-709/PGR-DOC-710 plus bootstrap Lows stay visible.
+- [ ] Next executable action for earlier planning missions: generate a
+  separate governed `shebangcheck` implementation playbook beginning with
+  its normative contract (or clear `openunlink` Medium debt first under
+  the live repair-before-expansion gate), then fixtures, source,
+  documentation, dedicated smoke, quality evidence, and independent
+  review. Keep recovery Lows, bootstrap Lows, pathaudit Medium PA-6CA-4
+  and Lows, FUM5 Mediums/Lows, seventh-mission `SEV7R-*` findings, and
+  other prior Medium/Low backlogs visible. Do not claim permguard
+  released or `sparsemap` implemented.
 - [x] Prior one-code cycle: run `f742c10135e5` under
   `docs/permguard-first-vertical-slice-contract.md` (67 focused passed;
   Medium PG-REV-301/302). Superseded as product authority by `51100a584ac9`.
@@ -525,7 +674,8 @@ or release closure from this slice.
   Makefile wiring. Completed by current run `51100a584ac9` after prior
   one-code run `f742c10135e5`, single-code run `629d1f459446`, and
   historical four-code run `a8341dfae9f2`; Medium PG-DOC-501/502,
-  PG-TEST-503, PG-PORT-505, PG-DOC-512 now govern the next repair.
+  PG-TEST-503, PG-PORT-505, PG-DOC-512 were later closed by recovery
+  `5035933ac7b4` without claiming failed origin `ba6dc2fdd199` passed.
   Evaluation Lows and prior pathaudit/sysdiff backlogs remain visible and
   were not closed.
 - [x] Deliver, smoke-test, independently review, and close out
@@ -571,9 +721,12 @@ or release closure from this slice.
   full pytest → 269 passed, 1 skipped. Not a pathaudit release;
   sysdiff smoke oracle does not directly exercise writable-executable
   `--path` / `--command` detection.
-- [ ] Keep Low PA-W1/PA-W2 from `574d06adfc2a` visible for optional
-  polish unless a later review explicitly closes them; do not claim
-  that `pathaudit` is released or that `tests/smoke_manifest.json`
+- [x] Keep Low PA-W1 from `574d06adfc2a` closed by later run `c9e3de33f46b`
+  (fresh independent review); retain historical Low PA-W1 as prior evidence
+  only. Keep Low PA-W2 visible for optional polish unless a later review
+  explicitly closes it; keep Medium `PAW1-DOC-901` and Lows
+  `PAW1-DOC-902`/`PAW1-TEST-903`/`PAW1-TEST-904`/`PAW1-SCOPE-905` visible.
+  Do not claim that `pathaudit` is released or that `tests/smoke_manifest.json`
   covers writable-executable `--path` / `--command` behavior.
 - [x] Deliver, smoke-test, independently review, and close out
   Detect executable shadowing across PATH entries for `pathaudit

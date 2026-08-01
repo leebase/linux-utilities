@@ -1,5 +1,96 @@
 # Where Am I
 
+## pathaudit PA-W1 Open-Repair Maintenance
+
+Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`) closed Low
+`PA-W1` under `docs/pathaudit-open-repairs-contract.md`:
+`symlink_is_self_basename` now uses a command-bounded heap `readlink`
+buffer (`strlen(command) + 1`) instead of a 65,537-byte automatic array,
+propagates allocation failure as `OUT_OF_MEMORY` status 2, and preserves
+bare-self `INSPECTION_ERROR_<ELOOP>` reject-close plus non-self loop
+non-candidate behavior. Focused pathaudit pytest: 156 passed / 15 skipped.
+Step-5 complete `make quality` exited 0; ordinary / ASan / UBSan / Valgrind
+each 359 passed / 15 skipped (scratch writable gitdir). Smoke start/check 0
+with empty blockers; check.log `356 passed, 18 skipped in 21.16s`. Verdict
+`code-reviews/review-pathaudit-open-repairs.verdict.json` is `pass` with
+Medium `PAW1-DOC-901` and Lows `PAW1-DOC-902` / `PAW1-TEST-903` /
+`PAW1-TEST-904` / `PAW1-SCOPE-905`. This does not install, package, tag,
+publish, or release `pathaudit`, and it does not invent polish work.
+
+Planning-mission order stays visible and unchanged: `inodealias` (fourth),
+`shebangcheck` (fifth), `openunlink` (sixth), then reviewed `sparsemap`
+selection evidence only.
+
+## Seventh Utility Mission Recovery
+
+Bounded recovery run `4824cd763b27` reconciled the seventh-mission evaluation
+left by failed origin `f7539c314ca1` and obtained a fresh High-threshold
+independent review of the committed **`sparsemap`** recommendation
+(filesystem-reported logical data/hole ranges for explicit regular files via
+`SEEK_DATA`/`SEEK_HOLE`). Origin `f7539c314ca1` remains **FAILED**; its
+timed-out step-2 repair attempts (`0`/`124`/`124` under a 600-second ceiling
+after High `SEV7-H1` on pre-repair `elfinterp`) are distinct from this recovery
+and are not silent passes.
+
+Fresh verdict
+`code-reviews/review-seventh-utility-mission-evaluation-recovery.verdict.json`
+is `pass` with no Critical or High findings. Remaining Mediums:
+`SEV7R-M1`/`SEV7R-M2`; remaining Lows: `SEV7R-L1`/`SEV7R-L2`. Allowlisted
+check was workflow-only (4 passed); smoke 351/18 is sysdiff-centered. There
+is no `sparsemap` source, test, man page, binary, Make target, dedicated
+smoke, package, install, tag, publication, or release, and this recovery
+does **not** authorize implementation.
+
+## Sixth Utility Mission
+
+The sixth planning commitment is exactly **Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting**.
+It would do
+one thing for one explicit Linux PID: report open descriptors whose followed,
+stable target is a regular file with `st_nlink == 0`, treating procfs link text
+only as escaped context. The bounded first slice is `--help`, `--version`, or
+one decimal PID; canonical numeric `/proc/PID/fd` enumeration; repeated
+directory-relative metadata; ascending `OPEN_UNLINKED` output; visible
+per-descriptor advisories; closed taxonomies and statuses; focused fixtures;
+one man page; strict quality and memory gates; dedicated smoke; and review.
+All-PID discovery, target-content reads, inode aggregation, reclaim estimates,
+process control, monitoring, install/package work, and release are excluded.
+
+Run `787b9bb3d830` selected the mission and its independent verdict is `pass`
+with no Critical or High findings. Remaining Medium findings are
+`SIXTH2-M1` (descriptor-cap behavior loses partial evidence), `SIXTH2-M2`
+(nonzero-link unlink behavior on some filesystems), and `SIXTH2-M3` (status 1
+does not yet normatively distinguish a finding from advisory-only
+incompleteness). Remaining Lows are `SIXTH2-L1` (stderr-write semantics),
+`SIXTH2-L2` (defensive size-range reachability), and `SIXTH2-L3` (stale live
+run-step wording). Review only byte-compiled existing pytest modules; current
+351-passed / 18-skipped smoke is sysdiff-centered aggregate evidence.
+
+There is no `openunlink` source, test, manual, binary, Make target, dedicated
+smoke, quality result, package, tag, or release, and implementation has not
+begun. Next executable action for this selected mission: after applicable
+Medium-or-higher debt clears the repair-before-expansion gate under independent
+review, generate a separate governed implementation playbook beginning with a
+normative contract that resolves `SIXTH2-M1`–`SIXTH2-M3` before CODE. Keep the
+Low findings and the planning-only `inodealias` / `shebangcheck` ordering
+visible.
+
+## permguard Medium-Repair Governed Run `ba6dc2fdd199` Recovery
+
+Governed recovery run `5035933ac7b4` (`repair_governed_run_ba6dc2fdd199`)
+reconciled the dirty permguard Medium-repair candidate left by failed run
+`ba6dc2fdd199` and passed independent review. Focused permguard pytest:
+63 passed / 0 skipped. Step-5 complete `make quality` exited 0; ordinary,
+ASan+UBSan, and Valgrind routes each 354 passed / 15 skipped (scratch
+writable gitdir). Smoke start/check 0 with empty blockers; check.log
+`351 passed, 18 skipped in 21.76s`. Verdict
+`code-reviews/review-governed-run-ba6dc2fdd199.verdict.json` is `pass`
+and closes Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and
+PG-DOC-512. Remaining: Low PGR-TEST-706, PGR-PORT-707, PGR-BUILD-708,
+PGR-TEST-709, and PGR-DOC-710. Failed origin `ba6dc2fdd199` is still not
+a passed delivery; this does not release permguard or close unrelated
+backlogs. Review allowlisted only focused pytest and did not re-run
+`make quality`, sanitizers, or Valgrind.
+
 ## pathaudit Governed Run `6ca4cebc8527` Recovery
 
 Governed recovery run `4ae7a820b0a3` (`repair_governed_run_6ca4cebc8527`)
@@ -41,14 +132,15 @@ tag, or release was produced or verified. The suite still has three
 implemented utilities, while fourth mission `inodealias` and fifth mission
 `shebangcheck` remain planning commitments.
 
-Next action is not feature implementation yet: complete bounded repair and
-fresh independent review of permguard Medium PG-DOC-501/502, PG-TEST-503,
-PG-PORT-505, and PG-DOC-512, keep recovery findings Medium PA-6CA-4 and Low
-PA-6CA-1/2/3 visible after run `4ae7a820b0a3`, and clear any other applicable
-Medium-or-higher expansion gate. Only then should Agent-Orch generate a
-separate governed `shebangcheck` implementation playbook beginning with its
-normative contract and continuing through fixtures, implementation,
-documentation, dedicated smoke, quality evidence, and independent review.
+Permguard Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512
+are closed by recovery run `5035933ac7b4` without claiming failed origin
+`ba6dc2fdd199` passed. Keep recovery Lows PGR-TEST-706/PGR-PORT-707/
+PGR-BUILD-708/PGR-TEST-709/PGR-DOC-710, bootstrap Lows, pathaudit Medium
+PA-6CA-4 and Lows PA-6CA-1/2/3, and FUM5 Mediums/Lows visible. Next action:
+Agent-Orch should generate a separate governed `shebangcheck`
+implementation playbook beginning with its normative contract and
+continuing through fixtures, implementation, documentation, dedicated
+smoke, quality evidence, and independent review.
 
 ## Bootstrap permguard (`51100a584ac9`)
 
@@ -74,15 +166,15 @@ start/check 0, empty blockers, and check.log pytest
 permguard transitively through `make test` but is not a permguard-specific
 end-to-end flow.
 
-Verdict is `pass`, not finding-free: Medium PG-DOC-501 (architecture taxonomy
-mismatch), PG-DOC-502 (superseded draft residue), PG-TEST-503 (`STDOUT_WRITE`
-/SIGPIPE coverage gap), PG-PORT-505 (hand-declared `lstat`), and PG-DOC-512
-(QUALITY/TESTING silence) plus Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508,
-PG-MAKE-509/510/511 remain. One-code vertical-slice drafts are superseded
-non-authority. Next action is a bounded governed repair of the five Mediums
-and a fresh independent review before feature expansion. This is not evidence
-for broader permission auditing, recursion, remediation, release readiness, or
-a published release.
+Bootstrap verdict was `pass`, not finding-free: Medium PG-DOC-501/502,
+PG-TEST-503, PG-PORT-505, and PG-DOC-512 plus Low PG-CRAFT-506,
+PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. Later recovery
+`5035933ac7b4` closed those five Mediums under a fresh independent review
+without claiming failed origin `ba6dc2fdd199` passed; keep the six
+bootstrap Lows and the five recovery Lows visible. One-code
+vertical-slice drafts remain superseded non-authority. This is not
+evidence for broader permission auditing, recursion, remediation, release
+readiness, or a published release.
 
 ## Prior — Permguard First Vertical Slice (`f742c10135e5`)
 
@@ -458,19 +550,39 @@ sanitizer/Valgrind product gate, and not release readiness.
 
 ## Current Milestone
 
-The current milestone is the reviewed pathaudit maintenance recovery from
-run `4ae7a820b0a3` for failed origin `6ca4cebc8527`. It closes
-`pathaudit-shadow-1/2/3` under independent verdict `pass` while leaving
-Medium PA-6CA-4 and Low PA-6CA-1/2/3 visible, and it does not claim that
-the failed origin run passed or that pathaudit is released. The separately
-reviewed permguard bootstrap from run `51100a584ac9` remains live under
-`docs/permguard-bootstrap-contract.md` with Medium
-PG-DOC-501/502, PG-TEST-503, PG-PORT-505, PG-DOC-512 still open. This
-milestone does not change the separately prepared unpublished `sysdiff`
-0.1.0 package from run `580b0f6ff811`.
+The current milestone is the bounded pathaudit PA-W1 open-repair maintenance
+from run `c9e3de33f46b`. Historical Low `PA-W1` is closed under independent
+verdict `pass` with Medium `PAW1-DOC-901` and four Lows retained. This
+milestone does **not** install, package, tag, publish, or release
+`pathaudit`, and it does not invent optional polish as authorized work.
+Earlier planning order (`inodealias` → `shebangcheck` → `openunlink`) stays
+visible, as does reviewed `sparsemap` selection evidence from recovery
+`4824cd763b27` (origin `f7539c314ca1` still Failed). Separately reviewed
+permguard Medium-repair recovery `5035933ac7b4`, pathaudit recovery
+`4ae7a820b0a3`, and the live permguard bootstrap `51100a584ac9` remain in
+place, as does the unpublished `sysdiff` 0.1.0 package from `580b0f6ff811`.
 
 ## Milestone state
 
+- Run `c9e3de33f46b` closed pathaudit Low `PA-W1`: focused pytest 156/15;
+  `make quality` exit 0 with ordinary/ASan/UBSan/Valgrind each 359/15;
+  smoke start/check 0 with check.log 356/18; verdict `pass` with Medium
+  `PAW1-DOC-901` and Lows `PAW1-DOC-902`/`PAW1-TEST-903`/`PAW1-TEST-904`/
+  `PAW1-SCOPE-905`. Not a pathaudit release.
+- Run `4824cd763b27` recovered and High-threshold-reviewed the reconciled
+  seventh-mission `sparsemap` evaluation from failed origin `f7539c314ca1`:
+  verdict `pass` with Medium `SEV7R-M1`/`SEV7R-M2` and Low
+  `SEV7R-L1`/`SEV7R-L2`; allowlisted workflow pytest 4/0; smoke start/check
+  0 with check.log 351/18. Origin remains Failed; timeouts `0`/`124`/`124`
+  are not silent passes. Not a `sparsemap` implementation or release.
+- Run `5035933ac7b4` recovered and reviewed the dirty permguard
+  Medium-repair candidate from failed `ba6dc2fdd199`: focused pytest
+  63/0; `make quality` exit 0 with ordinary/ASan+UBSan/Valgrind each
+  354/15 (writable gitdir); smoke start/check 0 with check.log 351/18;
+  verdict `pass` closing PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and
+  PG-DOC-512 with remaining Low PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/
+  PGR-TEST-709/PGR-DOC-710. Origin `ba6dc2fdd199` is still not a passed
+  delivery.
 - Run `4ae7a820b0a3` recovered and reviewed the dirty pathaudit
   maintenance candidate from failed `6ca4cebc8527`: focused pytest
   151/15; static gates exit 0; ASan+UBSan and Valgrind pathaudit
@@ -483,8 +595,9 @@ milestone does not change the separately prepared unpublished `sysdiff`
   52/0 (review allowlisted, 0.43s); step-5 full 332/18 plus static gates and
   ASan/Valgrind `--help` probes; smoke start/check 0 and check.log 332/18.
   Review `pass` with Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505,
-  PG-DOC-512 and Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511.
-  Not installed, packaged, released, recursive, or remedial.
+  PG-DOC-512 (later closed by `5035933ac7b4`) and Low PG-CRAFT-506,
+  PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. Not installed, packaged,
+  released, recursive, or remedial.
 - Run `f742c10135e5` is prior one-code evidence under
   `docs/permguard-first-vertical-slice-contract.md`: focused review pytest
   67/0; verdict `pass` with Medium PG-REV-301/302. Superseded as product
@@ -727,12 +840,20 @@ milestone does not change the separately prepared unpublished `sysdiff`
 
 ## Next milestone
 
-Next executable action: a bounded governed repair of permguard Medium
-PG-DOC-501 (architecture taxonomy mismatch), remaining PG-DOC-502 draft
-markers, PG-TEST-503 (`STDOUT_WRITE`/SIGPIPE coverage), PG-PORT-505
-(hand-declared `lstat`), and PG-DOC-512 (QUALITY/TESTING silence), followed by
-fresh independent review before feature expansion. Keep Low
-PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, recovery Medium
-PA-6CA-4 and Low PA-6CA-1/2/3, evaluation Lows, and prior pathaudit/sysdiff
-backlogs visible. Do not claim permguard or pathaudit released, and preserve
-the unpublished sysdiff candidate from `580b0f6ff811`.
+Next executable action: respect planning-mission order
+(`inodealias` → `shebangcheck` → `openunlink`) and generate separately
+governed implementation playbooks beginning with normative contracts; keep
+`openunlink` blocked on `SIXTH2-M1`–`M3` until repaired or reclassified under
+independent review. Keep Medium `PAW1-DOC-901` and Lows
+`PAW1-DOC-902`/`PAW1-TEST-903`/`PAW1-TEST-904`/`PAW1-SCOPE-905` visible
+after `c9e3de33f46b`; do not invent release readiness or optional polish
+from that maintenance closeout. Keep Medium `SEV7R-M1`/`SEV7R-M2` and Low
+`SEV7R-L1`/`SEV7R-L2` visible; do not implement, package, install, tag,
+publish, or release `sparsemap` from recovery `4824cd763b27`, and do not claim
+failed origin `f7539c314ca1` passed. Also keep Low
+PGR-TEST-706/PGR-PORT-707/PGR-BUILD-708/PGR-TEST-709/PGR-DOC-710, bootstrap
+Lows PG-CRAFT-506/PG-TEST-507/PG-CLI-508/PG-MAKE-509/510/511, pathaudit
+Medium PA-6CA-4 and Lows PA-6CA-1/2/3, FUM5 Mediums/Lows, and prior
+pathaudit/sysdiff backlogs visible. Do not claim permguard or pathaudit
+released, do not claim failed origin `ba6dc2fdd199` passed, and preserve the
+unpublished sysdiff candidate from `580b0f6ff811`.

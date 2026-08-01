@@ -149,6 +149,29 @@ if [ -s "$pkg_stderr" ]; then
     exit 1
 fi
 
+# Installed binary must apply delimiter shielding (governed run 9add44496178).
+printf 'demo.key=a\n' >"$PKG_WORKDIR/shield-before.snapshot"
+printf 'demo.key=b -> c\n' >"$PKG_WORKDIR/shield-after.snapshot"
+set +e
+"$PKG_BIN" compare \
+    "$PKG_WORKDIR/shield-before.snapshot" "$PKG_WORKDIR/shield-after.snapshot" \
+    >"$pkg_stdout" 2>"$pkg_stderr"
+pkg_status=$?
+set -e
+if [ "$pkg_status" -ne 1 ]; then
+    printf 'expected status 1 from shielded installed compare, got %s\n' \
+        "$pkg_status" >&2
+    sed 's/^/  /' "$pkg_stdout" >&2
+    sed 's/^/  /' "$pkg_stderr" >&2
+    exit 1
+fi
+grep -Fqx '~ demo.key: a -> b -\x3E c' "$pkg_stdout"
+if [ -s "$pkg_stderr" ]; then
+    printf 'shielded installed compare wrote unexpected stderr\n' >&2
+    sed 's/^/  /' "$pkg_stderr" >&2
+    exit 1
+fi
+
 cp -a "$PKG_BIN" "$PKG_WORKDIR/sysdiff.before"
 cp -a "$PKG_MAN" "$PKG_WORKDIR/sysdiff.1.before"
 make -C "$ROOT" install DESTDIR="$PKG_DESTDIR" prefix="$PKG_PREFIX"

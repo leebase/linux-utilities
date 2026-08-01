@@ -27,6 +27,48 @@ binary under test. Internal `tests/test_check_tools.py` covers routed-tool
 preflight and is infrastructure, not product compare behavior. Defects should
 land as failing regressions before fixes.
 
+## pathaudit PA-W1 Test Strategy
+
+`tests/test_pathaudit.py` pins Low `PA-W1` without widening the CLI.
+`test_paw1_self_basename_buffer_is_command_bounded_and_owned` extracts
+`symlink_is_self_basename` and requires command-length heap storage plus
+cleanup rather than a `PATHAUDIT_MAX_ROOT_LENGTH` automatic `readlink`
+buffer. Bare self-link regressions
+`test_path_mode_symlink_loop_executable_candidate_is_inspection_error` and
+`test_command_mode_symlink_loop_executable_is_inspection_error` keep status
+`2`, empty stdout, and the exact escaped `INSPECTION_ERROR_<ELOOP>` bytes.
+Paired `--path` / `--command` cases for slash-bearing (`tool -> ./tool`) and
+byte-different mutual loops assert no false bare-self diagnostic, no
+`MATCH`/`SHADOWED`, and no execution of planted targets. Focused runs use
+`PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider
+tests/test_pathaudit.py -q`; sanitizer and Valgrind routes reuse
+`make pathaudit-sanitize` and `make pathaudit-valgrind`. Host-capability
+skips already present in the suite remain honest skips. The sysdiff-centered
+smoke manifest may provide transitive suite evidence but is not a dedicated
+PA-W1 end-to-end oracle.
+
+## permguard Test Strategy
+
+`tests/test_permguard.py` supplies unit-style coverage for exact CLI bytes,
+escaping, the four mode predicates, and statuses 0/1/2; integration coverage
+combines parsing, real `lstat`, operand ordering, streaming findings,
+continue-after-error behavior, final-symlink rejection, and checked stdout.
+Regression cases pin one `lstat` per operand, fixed taxonomy rank, duplicate
+operands, mixed hazard/error precedence, ignored `SIGPIPE`, and exact
+`STDOUT_WRITE` handling. Filesystem fixtures are isolated below pytest
+temporary directories, apply `chmod` after creation, verify the effective
+`lstat`-visible bits, and confirm modes and contents remain unchanged.
+Hostile-path cases cover spaces, quotes, backslashes, tabs, newlines, control
+bytes, DEL, and non-UTF-8 bytes where the host supports them. Stdout-failure
+coverage uses usable `/dev/full` and a pipe whose read end is closed, requiring
+status 2 and the exact diagnostic rather than signal termination. Sanitizer
+coverage runs through `make test-asan`, `make test-ubsan`, and
+`make permguard-sanitize`; Valgrind coverage runs through
+`make test-valgrind` and `make permguard-valgrind`, with
+`PERMGUARD_BIN` selecting the temporary binary and
+`PERMGUARD_UNDER_VALGRIND=1` enabling memcheck wrapping. Capability-dependent
+fixtures must give an explicit skip reason and are never counted as passes.
+
 ## Valgrind Hostile-Input Coverage
 
 Distinguish two layers: ordinary hostile-input regression coverage proves the

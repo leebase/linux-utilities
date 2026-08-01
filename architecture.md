@@ -223,39 +223,73 @@ claim a `pathaudit` release.
 
 ## 2026-07-28 — permguard explicit-path bootstrap
 
-**Decision:** Governed run `a8341dfae9f2` adds `permguard` as the suite's
-third small C17 utility with an explicit-operand-only interface:
-`permguard [--] PATH...`, plus informational `--help` and `--version`. The
-scanner performs exactly one `lstat` per operand and never follows symlinks.
-It classifies world-writable regular files, world-writable directories without
-the sticky bit, and executable regular files carrying set-user-ID or
-set-group-ID. Findings are retained until all operands have been inspected,
-then emitted in operand order and fixed hazard rank with printable-ASCII
-escaping. Exit status is 0 for a clean or informational run, 1 for completed
-hazard findings, and 2 for usage, resource limit, allocation, inspection, or
-stdout failure.
+**Decision:** The shipped `permguard` bootstrap is a small ISO C17,
+explicit-path-only scanner with the interface `permguard [--] PATH...` plus
+sole-argument `--help` and `--version`. It performs exactly one `lstat` for
+each operand. A successful non-symbolic inspection independently evaluates,
+in fixed order, `GROUP_WRITABLE` (`S_IWGRP`), `OTHER_WRITABLE` (`S_IWOTH`),
+`SET_USER_ID` (`S_ISUID`), and `SET_GROUP_ID` (`S_ISGID`), without
+file-type or sticky-bit conditions. Findings stream on stdout in operand and
+taxonomy order; processing continues after operand errors, while any
+operational error or rejected final symbolic link makes the final status 2
+and takes precedence over hazards. Status 0 is clean, status 1 is
+hazard-only, and checked stdout write or flush failure is operational.
+`argv` and its path strings are borrowed for the process lifetime and are
+neither modified nor freed. Each `struct stat` and fixed diagnostic buffer
+has automatic storage and does not escape its scope; the scanner owns no
+heap allocation. `errno` is captured immediately after a failed `lstat`.
+Stderr reporting is best-effort, and streamed stdout bytes cannot be recalled
+if a later operand or output operation fails.
 
-**Rationale:** The first slice needs to prove a useful permission-audit
-contract without inheriting pathaudit's PATH traversal or expanding into a
-general filesystem crawler. One metadata lookup per explicit operand keeps the
-runtime and ownership model auditable. Validate-before-output sequencing
-prevents a later inspection failure from leaving apparently complete partial
-findings.
+**Rationale:** Operators need a small, auditable preflight for named paths
+whose group/other write bits or set-ID bits are hazards, without inventing
+directory recursion, PATH search, or ownership policy. Streaming findings
+per operand keeps partial results visible when a later operand fails, while
+operational-error precedence preserves a single status-2 exit class.
 
-**Alternatives rejected:** Recursion (unbounded traversal and policy
-questions); reading PATH (belongs to pathaudit); following or resolving
-symlinks (would change the named-object contract); ACL/capability/owner policy
-(outside the closed first-slice taxonomy); chmod/chown remediation (violates
-the read-only mission); install, release, or dist membership (not authorized
-for this bootstrap).
+**Alternatives rejected:** File-type-conditioned or sticky-bit predicates
+(misstate the shipped four-code taxonomy); buffer-until-complete emission
+with allocation/resource-limit exits (the no-heap bootstrap has neither);
+following final symbolic links (hides the link itself and invents target
+policy); treating a prior one-code world-writable-file draft as live
+authority (superseded by the four-code bootstrap contract).
 
-**Consequences:** `src/permguard.c`, `tests/test_permguard.py`, and
-`man/permguard.1` join the strict compiler, formatting, static-analysis,
-manual, pytest, sanitizer, and Valgrind surfaces through additive Makefile
-wiring; dedicated build/memory recipes use temporary binaries. Existing
-sysdiff install/release/dist membership remains unchanged. Independent review
-`code-reviews/review-permguard-bootstrap.verdict.json` passed with Medium
-PG-DOC-001 and PG-TEST-002 plus three Low findings. This record addresses the
-architecture omission noted inside PG-DOC-001 only as a closeout edit; the
-finding remains open until stale QUALITY.md/TESTING.md are repaired and the
-combined change is independently reviewed.
+**Consequences:** User-facing docs and `architecture.md` must describe the
+four independent predicates and streaming continue-after-error model exactly.
+Gate membership, pytest overrides, and sanitizer/Valgrind routes are recorded
+in QUALITY.md and TESTING.md. The bootstrap does not recurse, enumerate
+directory children, walk ancestors, follow final symbolic links, read or
+search `PATH`, resolve commands, apply ownership, ACL, capability, content,
+or sticky-bit policy, remediate permissions, change privileges, persist
+state, monitor, network, install, package, publish, or claim race-free
+authorization or release readiness.
+
+## 2026-07-30 — permguard POSIX `lstat` feature-test macro
+
+**Decision:** Obtain the ABI-correct `lstat` prototype from `<sys/stat.h>`
+under an explicit `_POSIX_C_SOURCE=200809L` feature-test macro supplied on
+every governed permguard compile, syntax, analyzer, sanitizer, and Valgrind
+route via the dedicated Make variable `PERMGUARD_POSIX_CFLAGS` (and pytest
+`POSIX_C_SOURCE_FLAG`). Callers who replace `CFLAGS` cannot drop that flag;
+command-line overrides of `PERMGUARD_POSIX_CFLAGS` itself remain possible and
+are outside the intended CFLAGS-replacement protection. Do not hand-declare
+`lstat` in `src/permguard.c`. Keep a guarded in-source `#ifndef
+_POSIX_C_SOURCE` fallback so accidental flag omission still sees a declared
+symbol; that fallback does not replace the Make/pytest flag contract.
+
+**Rationale:** A hand-written prototype can bypass libc large-file/time
+redirection and mismatch `struct stat` on affected builds. A dedicated
+permguard Make variable prevents callers who replace `CFLAGS` from silently
+dropping the feature-test flag.
+
+**Alternatives rejected:** Keeping the hand-declared prototype; relying only
+on overridable `CFLAGS` for the flag; editing `src/pathaudit.c` under this
+permguard Medium-repair slice; treating the in-source fallback as sufficient
+evidence that Make routes still pass the flag.
+
+**Consequences:** Makefile and pytest oracles must require the literal flag or
+a `PERMGUARD_*CFLAGS`/`PERMGUARD_*FLAGS` reference whose definition carries
+`-D_POSIX_C_SOURCE=200809L`; `$(PERMGUARD_SRC)` alone must not satisfy those
+oracles. `make cppcheck-check` continues to parse `$(ALL_SRCS)` without the
+flag and relies on the guarded fallback. This decision does not change
+runtime finding taxonomy, CLI bytes, or release posture.

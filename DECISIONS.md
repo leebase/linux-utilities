@@ -14,6 +14,34 @@ explicit-snapshot scope stays intentional. Lee approved format-1 diff lines
 as the stable presentation contract unless an explicit versioned change is
 made.
 
+## 2026-07-30 — Sixth Utility Mission Selection
+
+- Commit exactly **Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting**
+  as the sixth mission. Its one purpose is
+  to report, for one explicit Linux PID, descriptors whose followed target is
+  a regular file with `st_nlink == 0`; procfs target text is non-authoritative
+  escaped context.
+- Bound the first slice to `--help`, `--version`, or one PID; fixed
+  `/proc/PID/fd`; numeric descriptor ordering; repeated directory-relative
+  metadata; one `OPEN_UNLINKED` finding form; visible per-descriptor
+  advisories; exact statuses; a manual; focused fixtures; strict quality
+  evidence; dedicated smoke; and review. Exclude all-PID discovery, content
+  access, inode grouping, reclaim estimates, control/remediation, monitoring,
+  installation, packaging, publication, and release.
+- Accept the selection evidence from governed run `787b9bb3d830`: independent
+  verdict `pass`, no Critical/High, with Medium `SIXTH2-M1`, `SIXTH2-M2`, and
+  `SIXTH2-M3`, plus Low `SIXTH2-L1`, `SIXTH2-L2`, and `SIXTH2-L3`. The
+  evidence proves only discovery and selection; its allowlisted Python
+  byte-compilation and sysdiff-centered aggregate smoke do not prove that
+  `openunlink` builds, tests, or ships.
+- Keep the live repair-before-expansion rule. The next executable
+  `openunlink` action is a separately governed implementation playbook only
+  after that gate and prior sequencing clear; its first deliverable must be a
+  normative contract resolving the descriptor-cap behavior (`SIXTH2-M1`),
+  filesystem link-count disclaimer (`SIXTH2-M2`), and status-1 caller
+  discriminator (`SIXTH2-M3`) before CODE. Preserve the Low findings until a
+  later review closes them.
+
 ## Current Decisions
 
 - Explicit snapshot comparison only: `sysdiff compare BEFORE AFTER` reads two

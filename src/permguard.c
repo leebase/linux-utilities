@@ -1,3 +1,19 @@
+/*
+ * Obtain the ABI-correct lstat(2) prototype from <sys/stat.h>.
+ *
+ * Governed builds pass -D_POSIX_C_SOURCE=200809L on the compiler command line
+ * (PERMGUARD_POSIX_CFLAGS in the Makefile; pytest's POSIX_C_SOURCE_FLAG). A
+ * guarded in-translation-unit define keeps a bare -std=c17 syntax check from
+ * seeing an undeclared lstat when that flag is omitted. Do not hand-declare
+ * lstat: a source prototype can bypass libc large-file/time redirection and
+ * mismatch the platform struct-stat layout (PG-PORT-505).
+ */
+#ifndef _POSIX_C_SOURCE
+/* Fallback when a bare -std=c17 invoke omits PERMGUARD_POSIX_CFLAGS. */
+/* NOLINTNEXTLINE(bugprone-reserved-identifier) */
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -5,13 +21,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-/*
- * lstat(2) is POSIX. Declare it explicitly instead of enabling a feature-test
- * macro: under -std=c17 those macros trip clang-tidy's
- * bugprone-reserved-identifier check (same pattern as pathaudit).
- */
-int lstat(const char *path, struct stat *buf);
 
 /* Closed bootstrap taxonomy bits in fixed emission rank. */
 #define HAZARD_GROUP_WRITABLE (1u << 0)

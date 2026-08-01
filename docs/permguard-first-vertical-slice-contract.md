@@ -1,5 +1,15 @@
 # `permguard` First Vertical-Slice Contract
 
+## Superseded
+
+This earlier one-code contract is historical evidence only and has no current
+product authority. `docs/permguard-bootstrap-contract.md` is the sole live
+product contract for `permguard`; this file and
+`plans/permguard-first-vertical-slice-plan.md` must not be used to infer,
+implement, test, or review current behavior. Their retained one-code text
+documents a superseded governed slice rather than an alternative live
+specification.
+
 ## Overview
 
 `permguard` is a small, read-only ISO C17 command-line utility that inspects

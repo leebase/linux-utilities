@@ -1,6 +1,17 @@
 # `permguard` First Vertical-Slice Delivery Plan
 
-Contract authority: `docs/permguard-first-vertical-slice-contract.md`.
+## Superseded
+
+This earlier one-code delivery plan is historical evidence only and has no
+current planning or product authority. `docs/permguard-bootstrap-contract.md`
+is the sole live product contract for `permguard`; this file and
+`docs/permguard-first-vertical-slice-contract.md` must not direct current
+implementation, verification, or review. The remaining one-code plan records
+a superseded governed approach, not a competing specification or active work
+plan.
+
+Historical contract authority for this superseded plan was
+`docs/permguard-first-vertical-slice-contract.md`; it is no longer live.
 
 This plan delivers the smallest contract-defined slice and reconciles the
 existing bootstrap implementation with it. The slice answers only whether an
@@ -16,10 +27,10 @@ third-party runtime library. Its only filesystem classification operation will
 be one POSIX `lstat` call per validated operand. The implementation will use
 `S_ISREG(st_mode)` and `S_IWOTH` directly; it will remove the former directory
 and set-ID hazard classification, ranking, and portability scaffolding so the
-executable agrees with the contract's closed one-code taxonomy. The superseded
-bootstrap contract and implementation plan that asserted a four-code taxonomy
-are removed from `docs/` and `plans/` rather than left unlabeled beside this
-authority.
+executable agrees with the contract's closed one-code taxonomy. This
+historical plan proposed removing the four-code bootstrap documents, but that
+proposal is itself superseded: the retained
+`docs/permguard-bootstrap-contract.md` is now the sole live product contract.
 
 The processing pipeline will be explicit and reject-closed:
 

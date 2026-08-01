@@ -25,7 +25,14 @@ mode; independent review
 Low finding (`path-dir-ownership-1`). Run `574d06adfc2a` applies the shared
 writability trust model to final executable
 targets resolved through PATH in `--path` and `--command` modes; explicit-root
-mode still does not search executables. Pathaudit has no install target in
+mode still does not search executables. Governed run `c9e3de33f46b`
+(`pathaudit_open_repair_maintenance`) closed Low `PA-W1` by replacing the
+65,537-byte automatic `readlink` buffer in `symlink_is_self_basename` with
+command-bounded heap storage under
+`docs/pathaudit-open-repairs-contract.md`; independent review
+`code-reviews/review-pathaudit-open-repairs.verdict.json` is `pass` with
+Medium `PAW1-DOC-901` and Lows `PAW1-DOC-902`/`PAW1-TEST-903`/
+`PAW1-TEST-904`/`PAW1-SCOPE-905`. Pathaudit has no install target in
 these slices (`make pathaudit` verifies under mktemp only) and is **not**
 released. The repository includes Makefile quality targets, shell and pytest
 coverage (including `tests/test_pathaudit.py`), sanitizer and Valgrind wiring,
@@ -39,14 +46,16 @@ reports the closed four-code taxonomy `GROUP_WRITABLE`, `OTHER_WRITABLE`,
 without file-type heuristics; final symlinks are status-2 rejections; findings
 stream per operand; mixed runs continue after errors with operational
 precedence. Findings are escaped and deterministic, and exits are 0 clean, 1
-hazards-only, or 2 error. Bootstrap contract/plan, source, tests, man page,
-README/CHANGELOG text, and additive quality/memory wiring exist. Independent
-review is `pass` with 5 Medium and 6 Low findings; this is not an installed,
-packaged, or released utility. One-code drafts
+hazards-only, or 2 error (including checked `STDOUT_WRITE` / ignored-`SIGPIPE`
+output failure). Bootstrap contract/plan, source, tests, man page,
+README/CHANGELOG text, and additive quality/memory wiring exist. Architecture,
+QUALITY.md, TESTING.md, README, `docs/permguard.md`, and `man/permguard.1`
+now match that shipped streaming four-code model; one-code drafts
 `docs/permguard-first-vertical-slice-contract.md` /
-`plans/permguard-first-vertical-slice-plan.md` are superseded non-authority.
-The existing sysdiff smoke oracle reaches permguard transitively via
-`make test` but is not a dedicated permguard user-flow smoke.
+`plans/permguard-first-vertical-slice-plan.md` open with conspicuous
+superseded markers and are non-authority. This is not an installed, packaged,
+or released utility. The existing sysdiff smoke oracle reaches permguard
+transitively via `make test` but is not a dedicated permguard user-flow smoke.
 
 A curated public
 repository `https://github.com/leebase/linux-utilities` exists; AgentFlow notes
@@ -56,6 +65,57 @@ GitHub `v0.1.0` tag/release aimed at that curated commit for `sysdiff`. Make
 limitations (changed-line delimiter ambiguity, Ubuntu-only CI, no packaged
 `.deb`/`.rpm`, explicit-snapshot-only sysdiff scope) remain in force. The
 existing sysdiff smoke oracle does not install pathaudit or permguard.
+
+## pathaudit PA-W1 Open-Repair Status
+
+Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`) closed Low
+`PA-W1` under `docs/pathaudit-open-repairs-contract.md`. Focused pathaudit
+pytest: 156 passed / 15 skipped. Step-5 complete `make quality` exited 0;
+ordinary / ASan / UBSan / Valgrind each 359 passed / 15 skipped (scratch
+writable gitdir). Smoke start/check 0 with empty blockers; check.log
+`356 passed, 18 skipped in 21.16s`. Independent verdict
+`code-reviews/review-pathaudit-open-repairs.verdict.json` is `pass`:
+historical Low `PA-W1` closed; remaining Medium `PAW1-DOC-901` (roff
+DIAGNOSTICS form swallow) and Lows `PAW1-DOC-902`, `PAW1-TEST-903`,
+`PAW1-TEST-904`, `PAW1-SCOPE-905`. Prior pathaudit Medium PA-6CA-4 and Lows
+PA-6CA-1/2/3 stay open. Pathaudit remains uninstalled, unpackaged, and
+unreleased; this status does not invent polish or release readiness.
+
+## Sixth Utility Mission Discovery
+
+Governed run `787b9bb3d830`
+(`discover_and_evaluate_sixth_linux_utility`) committed exactly **Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting**
+as the sixth planning mission. Its one-purpose scope is one explicit Linux PID:
+report descriptors whose followed targets are regular files with
+`st_nlink == 0`, while treating procfs link text only as escaped display
+context. The proposed first slice closes the CLI to `--help`, `--version`, or
+one PID; bounds and numerically sorts `/proc/PID/fd` entries; uses repeated
+directory-relative metadata to require a stable zero-link regular target;
+streams deterministic `OPEN_UNLINKED` findings and visible advisories; and
+requires focused fixtures, a section-1 manual, strict quality gates, dedicated
+smoke, and independent review. It excludes all-PID scans, inode grouping,
+content reads, storage-reclamation claims, process control, monitoring,
+networking, installation, packaging, and release.
+
+The selection verdict in
+`plans/review-sixth-utility-mission.verdict.json` is `pass`: no Critical or
+High findings, three Medium (`SIXTH2-M1` descriptor-cap partial-evidence
+behavior, `SIXTH2-M2` filesystem link-count boundary, `SIXTH2-M3` status-1
+caller discrimination), and three Low (`SIXTH2-L1` stderr-write semantics,
+`SIXTH2-L2` defensive size-range reachability, `SIXTH2-L3` stale run-step
+wording). Review ran only
+`python3 -m compileall -q tests/test_sysdiff.py tests/test_pathaudit.py
+tests/test_permguard.py`, which exited 0. Existing smoke remains direct
+sysdiff plus aggregate portfolio evidence at 351 passed / 18 skipped, not
+`openunlink` verification.
+
+No `openunlink` source, tests, manual, Make wiring, binary, sanitizer or
+Valgrind result, dedicated smoke, package, tag, or release exists, and
+implementation has not begun. Next executable action for this mission is to
+clear the live repair-before-expansion gate by repair or explicit
+reclassification plus independent review, then launch a separate governed
+playbook beginning with a normative `openunlink` contract that resolves
+`SIXTH2-M1`–`SIXTH2-M3` before CODE and preserves the Low findings.
 
 ## Permguard Review Status
 
@@ -69,19 +129,26 @@ clang-tidy, cppcheck, Clang analyzer, ASan+UBSan `--help` and Valgrind
 suites exiting 0. Smoke start/check exited 0 with no blocking errors;
 check.log pytest `332 passed, 18 skipped in 19.78s`.
 
-`code-reviews/review-permguard-bootstrap.verdict.json` is `pass` with Medium
-PG-DOC-501 (architecture.md describes a sticky-bit / file-type-conditioned
-taxonomy and buffer-until-complete emission the slice does not ship),
-PG-DOC-502 (superseded one-code drafts still lack in-file markers),
-PG-TEST-503 (no `STDOUT_WRITE`/SIGPIPE regression), PG-PORT-505 (hand-declared
-`lstat` vs LFS redirection), PG-DOC-512 (QUALITY.md/TESTING.md never mention
-permguard), and Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511.
-Prior High PG-DOC-401 from review attempt 1 is resolved by explicit Authority
-supersession in the bootstrap contract, plan, README, and CHANGELOG, plus this
-AgentFlow closeout. Next recommended action is bounded Medium repair
-(architecture accuracy, draft markers, stdout-failure tests, POSIX prototype
-flags, quality/testing docs) and review before feature expansion. Permguard
-remains explicit-path-only, non-recursive, PATH-blind, read-only, uninstalled,
+`code-reviews/review-permguard-bootstrap.verdict.json` is `pass` and originally
+recorded Medium PG-DOC-501/502, PG-TEST-503, PG-PORT-505, and PG-DOC-512 plus
+Low PG-CRAFT-506, PG-TEST-507, PG-CLI-508, PG-MAKE-509/510/511. Prior High
+PG-DOC-401 from review attempt 1 is resolved by explicit Authority
+supersession in the bootstrap contract, plan, README, and CHANGELOG. Governed
+recovery run `5035933ac7b4` (`repair_governed_run_ba6dc2fdd199`) closed those
+five Mediums under independent review
+`code-reviews/review-governed-run-ba6dc2fdd199.verdict.json` (`pass`):
+architecture and user-facing docs describe the four independent predicates and
+streaming continue-after-error model (PG-DOC-501); one-code contract/plan carry
+conspicuous superseded pointers without a false removal claim (PG-DOC-502);
+`STDOUT_WRITE` / ignored-`SIGPIPE` regressions are pinned (PG-TEST-503);
+`<sys/stat.h>` owns `lstat` under `-D_POSIX_C_SOURCE=200809L` on Make and
+pytest compile routes (PG-PORT-505); and QUALITY.md / TESTING.md name real
+permguard gate membership, overrides, fixture oracle, and sanitizer/Valgrind
+routes (PG-DOC-512). Failed run `ba6dc2fdd199` is not a passed delivery.
+Remaining recovery Lows are PGR-TEST-706, PGR-PORT-707, PGR-BUILD-708,
+PGR-TEST-709, and PGR-DOC-710; bootstrap Lows PG-CRAFT-506/PG-TEST-507/
+PG-CLI-508/PG-MAKE-509/510/511 stay visible. Permguard remains
+explicit-path-only, non-recursive, PATH-blind, read-only, uninstalled,
 unpackaged, and unreleased.
 
 ## Release Status

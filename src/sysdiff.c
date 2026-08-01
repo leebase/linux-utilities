@@ -62,6 +62,37 @@ static int put_escaped_bytes(FILE *stream, const char *text) {
   return 0;
 }
 
+/* Render snapshot values for diff records. Same rules as put_escaped_bytes,
+ * plus delimiter shielding: each raw three-byte sequence space-hyphen-
+ * greater-than (0x20 0x2D 0x3E) emits " -\\x3E" so a changed line keeps
+ * exactly one literal " -> " separator. Diagnostics keep put_escaped_bytes. */
+static int put_escaped_value(FILE *stream, const char *text) {
+  for (const unsigned char *p = (const unsigned char *)text; *p != '\0';) {
+    /* strncmp stops at NUL, so short hostile tails never over-read. */
+    if (strncmp((const char *)p, " ->", 3) == 0) {
+      if (fputs_checked(" -\\x3E", stream) != 0) {
+        return -1;
+      }
+      p += 3;
+      continue;
+    }
+    unsigned char ch = *p;
+    if (ch == '\\') {
+      if (fputs_checked("\\\\", stream) != 0) {
+        return -1;
+      }
+    } else if (ch >= 0x20U && ch <= 0x7eU) {
+      if (fputc_checked((int)ch, stream) != 0) {
+        return -1;
+      }
+    } else if (fprintf(stream, "\\x%02X", (unsigned int)ch) < 0) {
+      return -1;
+    }
+    p++;
+  }
+  return 0;
+}
+
 static int emit_write_error(void) {
   int err = errno;
   if (err == 0) {
@@ -443,7 +474,7 @@ cleanup:
 static int emit_added(const char *key, const char *value) {
   if (fputs_checked("+ ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
       fputc_checked('=', stdout) != 0 ||
-      put_escaped_bytes(stdout, value) != 0 ||
+      put_escaped_value(stdout, value) != 0 ||
       fputc_checked('\n', stdout) != 0) {
     return -1;
   }
@@ -453,7 +484,7 @@ static int emit_added(const char *key, const char *value) {
 static int emit_removed(const char *key, const char *value) {
   if (fputs_checked("- ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
       fputc_checked('=', stdout) != 0 ||
-      put_escaped_bytes(stdout, value) != 0 ||
+      put_escaped_value(stdout, value) != 0 ||
       fputc_checked('\n', stdout) != 0) {
     return -1;
   }
@@ -464,9 +495,9 @@ static int emit_changed(const char *key, const char *old_value,
                         const char *new_value) {
   if (fputs_checked("~ ", stdout) != 0 || fputs_checked(key, stdout) != 0 ||
       fputs_checked(": ", stdout) != 0 ||
-      put_escaped_bytes(stdout, old_value) != 0 ||
+      put_escaped_value(stdout, old_value) != 0 ||
       fputs_checked(" -> ", stdout) != 0 ||
-      put_escaped_bytes(stdout, new_value) != 0 ||
+      put_escaped_value(stdout, new_value) != 0 ||
       fputc_checked('\n', stdout) != 0) {
     return -1;
   }

@@ -1,6 +1,6 @@
 .\" Copyright (c) 2026 Lee Harrington
 .\" SPDX-License-Identifier: MIT
-.TH PERMGUARD 1 "2026-07-29" "permguard 0.1.0" "User Commands"
+.TH PERMGUARD 1 "2026-07-31" "permguard 0.1.0" "User Commands"
 .SH NAME
 permguard \(em report permission\-bit hazards on explicit paths
 .SH SYNOPSIS
@@ -122,7 +122,10 @@ Ownership policy, ACL interpretation, Linux capabilities, extended attributes,
 mount flags, package inventory, and service inspection are outside this slice.
 This manual does not claim that
 .B permguard
-is released, packaged, or installed.
+is released, packaged, or installed, and it does not treat failed Medium\-repair
+run
+.B ba6dc2fdd199
+as a passed delivery.
 .SH OPTIONS
 .TP
 .B \-\-help
@@ -228,7 +231,11 @@ Stdout contains all findings in deterministic order; stderr is empty.
 Usage error, or at least one operational operand error (missing, inaccessible,
 final symbolic link, or other
 .B lstat
-failure), or an internal failure such as a stdout write/flush error.
+failure), or a checked stdout write/flush failure that reports
+.B STDOUT_WRITE
+after
+.B SIGPIPE
+is ignored.
 For a valid mixed invocation,
 .B permguard
 continues inspecting later operands, emits findings for successfully inspected
@@ -239,6 +246,78 @@ Operational error precedence therefore overrides a simultaneous hazard that
 would otherwise yield status
 .BR 1 .
 A usage error prevents all inspection and leaves stdout empty.
+The current no\-heap bootstrap defines no allocation or product input\-limit
+failure class; statuses
+.BR 0 ,
+.BR 1 ,
+and
+.B 2
+exhaust normal returns.
+.SH HOSTILE PATHS AND SPECIAL FILES
+.B Hostile path bytes.
+Operand bytes are untrusted.
+Finding paths and diagnostic paths use the quoted\-byte escaping in
+.BR OUTPUT ,
+so spaces, quotes, backslashes, tab, newline, ESC, DEL, and other non\-printable
+or non\-ASCII bytes cannot forge records or emit raw terminal\-control sequences.
+Leading\-dash basenames are inspected only after
+.BR \-\- .
+.P
+.B Symbolic links.
+A final symbolic\-link operand is always
+.B SYMBOLIC_LINK
+with status
+.BR 2 ,
+including dangling targets and final self\-loops or two\-link loops; the link is
+never followed, so target mode bits are never transferred.
+A loop in an intermediate pathname component fails
+.B lstat
+and reports
+.B INSPECTION_ERROR_N
+with the captured decimal
+.B errno
+(commonly
+.BR ELOOP ),
+not
+.BR SYMBOLIC_LINK .
+.P
+.B Permissions.
+Classification reads only the named object's successful
+.B st_mode
+bits.
+A mode\-000 final regular file or directory under a searchable parent remains
+metadata\-inspectable without opening content; clean mode bits yield status
+.B 0
+with empty stdout.
+A child below a non\-searchable parent may report
+.B INACCESSIBLE
+when the host returns
+.BR EACCES ;
+some privileged or unusual filesystems can bypass that denial, so operators must
+not treat every blocked directory as a portable oracle.
+.B permguard
+never changes mode, ownership, or contents across permission transitions it
+observes.
+.P
+.B Special files.
+FIFOs and, when present, AF_UNIX socket pathnames are classified with the same
+four mode\-bit predicates as regular files and directories.
+Neither type is opened, so a FIFO scan must not block on readers or writers.
+Character and block device nodes are outside the documented fixture surface
+because creating them commonly requires elevated privilege.
+File type neither creates nor suppresses a public hazard code.
+.P
+.B Replacement and concurrency.
+Each operand is one point\-in\-time
+.B lstat
+observation.
+An entry replaced immediately before that call is classified from the new
+metadata; a replacement after a successful call does not revise the already
+captured
+.BR "struct\ stat" .
+.B permguard
+does not detect an undetectable replace\-and\-restore race, does not lock the
+path, and does not authorize later use of the named object.
 .SH SECURITY CONSIDERATIONS
 .B permguard
 is read\-only and requires no special privilege.
@@ -263,6 +342,13 @@ Filesystem state may change before or after the single
 .B lstat
 per operand; a clean result is neither a lock, an authorization decision, nor a
 general safety claim.
+Focused regression coverage for hostile and unusual filesystem objects lives in
+.B tests/test_permguard.py
+under
+.B docs/permguard\-hostile\-filesystem\-fixtures\-contract.md ;
+that contract does not widen the public CLI or taxonomy and does not claim that
+.B permguard
+is released, packaged, or installed.
 .SH EXAMPLES
 Inspect a private regular file (clean; exit status
 .BR 0 ,
@@ -306,4 +392,4 @@ Copyright \(co 2026 Lee Harrington.
 .B permguard
 is released under the MIT License.
 .SH VERSION
-permguard 0.1.0 (2026\-07\-29)
+permguard 0.1.0 (2026\-07\-31)

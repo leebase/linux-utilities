@@ -68,6 +68,14 @@ The command is never executed.
 - `1`: inspection completed and one or more findings were reported.
 - `2`: usage, environment, resource, metadata, or output error.
 
+A bare self-basename symlink loop under `--path` or `--command` (for example
+`tool` linking to `tool`) is unsafe inspection: status `2`, empty stdout, and
+one escaped `INSPECTION_ERROR_<ELOOP>` on stderr. Slash-bearing or mutual-loop
+candidates are not reclassified as that bare self case and invent no
+`MATCH`/`SHADOWED` rows. The self-basename discriminator uses command-bounded
+temporary `readlink` storage and never executes link text; allocator failure
+there is `OUT_OF_MEMORY` with status `2`.
+
 Findings are a point-in-time metadata observation. Filesystem state can change
 immediately afterward.
 

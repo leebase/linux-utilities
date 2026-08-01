@@ -126,12 +126,31 @@ assert_contains() {
 assert_diff_prefixes() {
     local path="$1"
     local line
+    local rest
+    local tmp
+    local arrow_count
 
     while IFS= read -r line || [ -n "$line" ]; do
         if [[ "$line" =~ ^[\+\-]\ [A-Za-z0-9._/-]+=.*$ ]]; then
+            # Added/removed values must not reintroduce a literal separator.
+            if [[ "$line" == *" -> "* ]]; then
+                fail "added/removed line must not contain literal ' -> ': $line"
+            fi
             continue
         fi
-        if [[ "$line" =~ ^~\ [A-Za-z0-9._/-]+:\ .*\ -\>\ .*$ ]]; then
+        # Changed lines keep the historical "~ key: OLD -> NEW" shape, but the
+        # old/new separator must be unique (governed run 9add44496178).
+        if [[ "$line" =~ ^~\ [A-Za-z0-9._/-]+:\ (.*)$ ]]; then
+            rest="${BASH_REMATCH[1]}"
+            arrow_count=0
+            tmp="$rest"
+            while [[ "$tmp" == *" -> "* ]]; do
+                tmp="${tmp#* -> }"
+                arrow_count=$((arrow_count + 1))
+            done
+            if [ "$arrow_count" -ne 1 ]; then
+                fail "changed line must contain exactly one ' -> ' separator: $line"
+            fi
             continue
         fi
         fail "unexpected diff line shape: $line"
@@ -618,6 +637,43 @@ if grep -a $'\x1b' "$stdout" >/dev/null || grep -a $'\x7f' "$stdout" >/dev/null;
     fail "stdout must not contain raw ESC or DEL bytes"
 fi
 assert_diff_prefixes "$stdout"
+
+# --- Delimiter shielding (governed run 9add44496178): raw " -> " in values
+# must not invent a second changed-record separator.
+shield_before="$WORKDIR/shield-before.snapshot"
+shield_after="$WORKDIR/shield-after.snapshot"
+expected_shield="$WORKDIR/expected.shield.golden"
+python3 - "$shield_before" "$shield_after" "$expected_shield" <<'PY'
+from pathlib import Path
+import sys
+
+before_path, after_path, expected_path = map(Path, sys.argv[1:4])
+before_path.write_bytes(
+    b"collide.left=a\n"
+    b"collide.right=a -> b\n"
+    b"gone.arrow=left -> right\n"
+    b"keep.unspaced=left->right\n"
+)
+after_path.write_bytes(
+    b"collide.left=b -> c\n"
+    b"collide.right=c\n"
+    b"keep.unspaced=left->right\n"
+    b"new.arrow=left -> right\n"
+)
+expected_path.write_bytes(
+    b"~ collide.left: a -> b -\\x3E c\n"
+    b"~ collide.right: a -\\x3E b -> c\n"
+    b"- gone.arrow=left -\\x3E right\n"
+    b"+ new.arrow=left -\\x3E right\n"
+)
+PY
+run_status 1 "$stdout" "$stderr" "$BIN" compare "$shield_before" "$shield_after"
+assert_file_equals "$expected_shield" "$stdout"
+assert_empty "$stderr"
+assert_diff_prefixes "$stdout"
+run_status 0 "$stdout" "$stderr" "$BIN" compare "$shield_before" "$shield_before"
+assert_file_equals "$expected_no_changes" "$stdout"
+assert_empty "$stderr"
 
 # Diagnostic path/command escaping for ESC bytes.
 esc_cmd=$'bad\x1bcmd'

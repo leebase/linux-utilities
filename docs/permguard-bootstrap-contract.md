@@ -144,10 +144,11 @@ error precedence therefore overrides a simultaneous hazard that would
 otherwise yield status `1`. A usage error prevents all inspection and leaves
 stdout empty.
 
-Statuses `0`, `1`, and `2` exhaust normal program returns. Internal failures
-such as allocation or checked-output failure are also operational status `2`
-with a stable stderr diagnostic; they never become a clean or hazard-only
-result. Tests must compare the numeric status and complete stdout and stderr
+Statuses `0`, `1`, and `2` exhaust normal program returns. Checked stdout
+write or flush failure is an operational status `2` with the stable
+`STDOUT_WRITE` diagnostic. The current no-heap implementation defines no
+allocation or product input-limit failure class; do not invent one in
+documentation, tests, or diagnostics. Tests must compare the numeric status and complete stdout and stderr
 bytes, because a mixed status `2` may intentionally contain valid findings as
 well as diagnostics.
 

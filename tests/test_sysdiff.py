@@ -532,6 +532,14 @@ def test_file_keys_are_compared_as_data(sysdiff_bin, tmp_path):
         (b"\x7f", r"\x7F"),
         (b"\xc3\xa9", r"\xC3\xA9"),
         (b"a\x1b\\b\t\rc\x7f\xff", r"a\x1B\\b\x09\x0Dc\x7F\xFF"),
+        # Governed run 9add44496178: shield raw " -> " so changed lines stay
+        # mechanically unique; unspaced "->" and a raw "\x3E" spelling stay as-is
+        # aside from backslash doubling.
+        (b"b -> c", r"b -\x3E c"),
+        (b"a -> b", r"a -\x3E b"),
+        (b"ends ->", r"ends -\x3E"),
+        (b"left->right", r"left->right"),
+        (b"\\x3E", r"\\x3E"),
     ],
 )
 def test_diff_values_are_safely_escaped(
@@ -548,21 +556,27 @@ def test_diff_values_are_safely_escaped(
     assert result.returncode == 1
     assert result.stdout == expected
     assert result.stderr == b""
+    assert result.stdout.count(b" -> ") == 1
     assert_no_raw_unsafe_bytes(result.stdout)
-    assert raw_value not in result.stdout or raw_value == b"\\"
 
 
 def test_added_and_removed_values_are_safely_escaped(sysdiff_bin, tmp_path):
     before = write_snapshot_bytes(
-        tmp_path / "before.snapshot", b"gone.key=old\x1b\t\r\\\x7f\xff\n"
+        tmp_path / "before.snapshot",
+        b"gone.key=old\x1b\t\r\\\x7f\xff\n"
+        b"arrow.gone=left -> right\n",
     )
     after = write_snapshot_bytes(
-        tmp_path / "after.snapshot", b"new.key=new\x1b\t\r\\\x7f\xff\n"
+        tmp_path / "after.snapshot",
+        b"new.key=new\x1b\t\r\\\x7f\xff\n"
+        b"arrow.new=left -> right\n",
     )
 
     result = run_sysdiff_bytes(sysdiff_bin, "compare", before, after)
 
     expected = (
+        b"- arrow.gone=left -\\x3E right\n"
+        b"+ arrow.new=left -\\x3E right\n"
         b"- gone.key=old\\x1B\\x09\\x0D\\\\\\x7F\\xFF\n"
         b"+ new.key=new\\x1B\\x09\\x0D\\\\\\x7F\\xFF\n"
     )
@@ -575,6 +589,7 @@ def test_added_and_removed_values_are_safely_escaped(sysdiff_bin, tmp_path):
     assert b"\r" not in result.stdout
     assert b"\x7f" not in result.stdout
     assert b"\xff" not in result.stdout
+    assert b" -> " not in result.stdout
 
 
 def test_opaque_comparison_ignores_display_escaping(sysdiff_bin, tmp_path):
