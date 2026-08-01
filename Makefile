@@ -6,20 +6,26 @@ SHELL := /bin/bash
 SRC := src/sysdiff.c
 PATHAUDIT_SRC := src/pathaudit.c
 PERMGUARD_SRC := src/permguard.c
+OPENUNLINK_SRC := src/openunlink.c
 # Permguard-only POSIX feature-test flag. Keep as a dedicated := variable so
 # callers who replace CFLAGS cannot drop the platform-header lstat prototype
 # contract (PG-PORT-505). Applied on every permguard compile/analyze route.
 PERMGUARD_POSIX_CFLAGS := -D_POSIX_C_SOURCE=200809L
+# Openunlink platform feature-test flags. Keep as a dedicated := variable so
+# callers who replace CFLAGS cannot drop the POSIX/large-file contract.
+# Applied on every openunlink compile/analyze route.
+OPENUNLINK_PLATFORM_CFLAGS := -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64
 # Ordinary product binary. Keep under build/ so .gitignore covers it; do not
 # emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
-# pathaudit and permguard have no workspace binary target; quality recipes
-# compile them under mktemp.
+# pathaudit, permguard, and openunlink have no workspace binary target; quality
+# recipes compile them under mktemp.
 BIN := build/sysdiff
 MANPAGE := man/sysdiff.1
 PATHAUDIT_MANPAGE := man/pathaudit.1
 PERMGUARD_MANPAGE := man/permguard.1
-ALL_SRCS := $(SRC) $(PATHAUDIT_SRC) $(PERMGUARD_SRC)
-ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE) $(PERMGUARD_MANPAGE)
+OPENUNLINK_MANPAGE := man/openunlink.1
+ALL_SRCS := $(SRC) $(PATHAUDIT_SRC) $(PERMGUARD_SRC) $(OPENUNLINK_SRC)
+ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE) $(PERMGUARD_MANPAGE) $(OPENUNLINK_MANPAGE)
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
 ASAN_CFLAGS := $(STRICT_WARNINGS) -O1 -g -fsanitize=address -fno-omit-frame-pointer
@@ -83,7 +89,8 @@ RELEASE_PATHSPECS := \
 	tests \
 	scripts
 
-.PHONY: all sysdiff pathaudit permguard test check clean quality make-quality \
+.PHONY: all sysdiff pathaudit permguard openunlink test check clean quality \
+	make-quality \
 	test-suite test-shell install uninstall dist distcheck release \
 	gcc-strict clang-strict clang-syntax format-check clang-tidy-check \
 	cppcheck-check clang-analyzer-check \
@@ -91,6 +98,7 @@ RELEASE_PATHSPECS := \
 	test-sanitize test-asan test-ubsan test-valgrind \
 	pathaudit-sanitize pathaudit-valgrind \
 	permguard-sanitize permguard-valgrind \
+	openunlink-test openunlink-sanitize openunlink-valgrind \
 	benchmark benchmark-check
 
 all: $(BIN)
@@ -117,9 +125,18 @@ permguard:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	$(CC) $(CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
 
+# Non-writing openunlink recipe: compile/link under a named /tmp workdir only,
+# then discard. Does not create build/openunlink or a top-level ./openunlink.
+openunlink:
+	@set -e; \
+	workdir=$$(mktemp -d /tmp/openunlink-build.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	$(CC) $(CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
+
 # install/uninstall remain sysdiff-only in this slice (PG-NG-3: packaging /
-# installation outside the vertical slice). pathaudit and permguard stay
-# compile-verified via quality/sanitize recipes without shipping install paths.
+# installation outside the vertical slice). pathaudit, permguard, and openunlink
+# stay compile-verified via quality/sanitize recipes without shipping install
+# paths.
 install: $(BIN)
 	install -d "$(DESTDIR)$(bindir)"
 	install -d "$(DESTDIR)$(man1dir)"
@@ -160,7 +177,8 @@ gcc-strict:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
-	gcc $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+	gcc $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC); \
+	gcc $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
 
 clang-strict:
 	@set -e; \
@@ -172,12 +190,14 @@ clang-strict:
 	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
 	clang $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
-	clang $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC)
+	clang $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC); \
+	clang $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
 
 clang-syntax:
 	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
 	clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC)
 	clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC)
+	clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC)
 
 format-check:
 	clang-format --dry-run --Werror $(ALL_SRCS)
@@ -186,6 +206,7 @@ clang-tidy-check:
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS)
 	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS)
+	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(OPENUNLINK_SRC) -- $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS)
 
 cppcheck-check:
 	cppcheck --quiet --enable=all --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
@@ -205,7 +226,9 @@ clang-analyzer-check:
 	clang --analyze $(STRICT_WARNINGS) -Xclang -analyzer-werror \
 		-Xclang -analyzer-output=text -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
 	clang --analyze $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -Xclang -analyzer-werror \
-		-Xclang -analyzer-output=text -o "$$workdir/permguard" $(PERMGUARD_SRC)
+		-Xclang -analyzer-output=text -o "$$workdir/permguard" $(PERMGUARD_SRC); \
+	clang --analyze $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -Xclang -analyzer-werror \
+		-Xclang -analyzer-output=text -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
 
 man-check:
 	@warnfile=$$(mktemp /tmp/permguard-manwarn.XXXXXXXXXX) || exit 1; \
@@ -227,7 +250,8 @@ man-check:
 # Pin the ordinary product binary so an inherited SYSDIFF_BIN (e.g. from an
 # outer sanitizer/Valgrind/pytest invocation) cannot redirect or skip packaging.
 # Scrub PATHAUDIT_BIN / PATHAUDIT_UNDER_VALGRIND / PERMGUARD_BIN /
-# PERMGUARD_UNDER_VALGRIND on the pytest line so an inherited override (or a
+# PERMGUARD_UNDER_VALGRIND / OPENUNLINK_BIN / OPENUNLINK_UNDER_VALGRIND /
+# OPENUNLINK_SEAM_CFLAGS on the pytest line so an inherited override (or a
 # nested extract under an outer memory gate) cannot redirect those contract
 # suites away from compiling their sources.
 # Leave test-asan / test-ubsan / test-valgrind alone; those set the vars
@@ -239,6 +263,8 @@ test-suite: $(BIN)
 	$(MAKE) test-shell
 	env -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
 		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND \
+		-u OPENUNLINK_BIN -u OPENUNLINK_UNDER_VALGRIND \
+		-u OPENUNLINK_SEAM_CFLAGS \
 		SYSDIFF_BIN="$(CURDIR)/$(BIN)" $(PYTEST_NO_CACHE) tests/ -q
 
 sanitizer-test: test-sanitize
@@ -259,6 +285,7 @@ test-asan:
 	tmpbin="$$workdir/sysdiff-asan"; \
 	pathaudit_bin="$$workdir/pathaudit-asan"; \
 	permguard_bin="$$workdir/permguard-asan"; \
+	openunlink_bin="$$workdir/openunlink-asan"; \
 	if ! clang $(ASAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: AddressSanitizer build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
@@ -271,13 +298,21 @@ test-asan:
 		printf 'error: AddressSanitizer permguard build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(ASAN_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
+		printf 'error: AddressSanitizer openunlink build failed (clang or ASan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
 		PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
+		OPENUNLINK_BIN="$$openunlink_bin" \
+		OPENUNLINK_SEAM_CFLAGS="$(ASAN_CFLAGS)" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 SYSDIFF_BIN="$$tmpbin" \
 			PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
+			OPENUNLINK_BIN="$$openunlink_bin" \
+			OPENUNLINK_SEAM_CFLAGS="$(ASAN_CFLAGS)" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -290,6 +325,7 @@ test-ubsan:
 	tmpbin="$$workdir/sysdiff-ubsan"; \
 	pathaudit_bin="$$workdir/pathaudit-ubsan"; \
 	permguard_bin="$$workdir/permguard-ubsan"; \
+	openunlink_bin="$$workdir/openunlink-ubsan"; \
 	if ! clang $(UBSAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
@@ -302,13 +338,21 @@ test-ubsan:
 		printf 'error: UndefinedBehaviorSanitizer permguard build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! clang $(UBSAN_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
+		printf 'error: UndefinedBehaviorSanitizer openunlink build failed (clang or UBSan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
 		PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
+		OPENUNLINK_BIN="$$openunlink_bin" \
+		OPENUNLINK_SEAM_CFLAGS="$(UBSAN_CFLAGS)" \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 SYSDIFF_BIN="$$tmpbin" \
 			PATHAUDIT_BIN="$$pathaudit_bin" PERMGUARD_BIN="$$permguard_bin" \
+			OPENUNLINK_BIN="$$openunlink_bin" \
+			OPENUNLINK_SEAM_CFLAGS="$(UBSAN_CFLAGS)" \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -321,6 +365,7 @@ test-valgrind:
 	tmpbin="$$workdir/sysdiff-valgrind"; \
 	pathaudit_bin="$$workdir/pathaudit-valgrind"; \
 	permguard_bin="$$workdir/permguard-valgrind"; \
+	openunlink_bin="$$workdir/openunlink-valgrind"; \
 	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: Valgrind debug build failed\n' >&2; \
 		exit 1; \
@@ -333,15 +378,21 @@ test-valgrind:
 		printf 'error: Valgrind permguard debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
+	if ! gcc $(VALGRIND_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
+		printf 'error: Valgrind openunlink debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
 	status=0; \
 	SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
 		PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
 		PERMGUARD_BIN="$$permguard_bin" PERMGUARD_UNDER_VALGRIND=1 \
+		OPENUNLINK_BIN="$$openunlink_bin" OPENUNLINK_UNDER_VALGRIND=1 \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
 		SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
 			PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
 			PERMGUARD_BIN="$$permguard_bin" PERMGUARD_UNDER_VALGRIND=1 \
+			OPENUNLINK_BIN="$$openunlink_bin" OPENUNLINK_UNDER_VALGRIND=1 \
 			$(PYTEST_NO_CACHE) tests/ -q || status=$$?; \
 	fi; \
 	exit "$$status"
@@ -420,6 +471,50 @@ permguard-valgrind:
 	valgrind --quiet --error-exitcode=99 --leak-check=full \
 		--show-leak-kinds=all \
 		"$$tmpbin" "$$fixture" >/dev/null
+
+# openunlink-only focused pytest gate: compile is owned by pytest under /tmp;
+# scrub ambient overrides so the suite builds from source. Cache and bytecode
+# writes are disabled. Does not create build/openunlink or a top-level binary.
+openunlink-test:
+	@set -eu; \
+	env -u OPENUNLINK_BIN -u OPENUNLINK_UNDER_VALGRIND -u OPENUNLINK_SEAM_CFLAGS \
+		$(PYTEST_NO_CACHE) tests/test_openunlink.py -q
+
+# openunlink-only ASan+UBSan gate: compile a production binary under /tmp, tell
+# the pytest seam builder to use the same instrumentation, and run the complete
+# focused module. Does not write build/openunlink or a top-level ./openunlink.
+openunlink-sanitize:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate sanitize
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/openunlink-sanitize.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/openunlink-sanitize"; \
+	if ! clang $(ASAN_CFLAGS) -fsanitize=undefined $(OPENUNLINK_PLATFORM_CFLAGS) \
+		-o "$$tmpbin" $(OPENUNLINK_SRC); then \
+		printf 'error: openunlink AddressSanitizer/UBSan build failed (clang or sanitizer runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	OPENUNLINK_BIN="$$tmpbin" \
+	OPENUNLINK_SEAM_CFLAGS="$(ASAN_CFLAGS) -fsanitize=undefined" \
+		$(PYTEST_NO_CACHE) tests/test_openunlink.py -q
+
+# openunlink-only Valgrind gate: separate non-sanitized GCC debug binary under
+# /tmp, full leak checking with all leak kinds, nonzero error-exitcode,
+# --track-fds=yes via the pytest runner, and the complete focused module.
+openunlink-valgrind:
+	@$(PYTHON) "$(CURDIR)/scripts/check_tools.py" --memory-gate valgrind
+	@set -eu; \
+	workdir=$$(mktemp -d /tmp/openunlink-valgrind.XXXXXXXXXX) || exit 1; \
+	trap 'rm -rf "$$workdir"' EXIT HUP INT TERM; \
+	tmpbin="$$workdir/openunlink-valgrind"; \
+	if ! gcc $(VALGRIND_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$tmpbin" $(OPENUNLINK_SRC); then \
+		printf 'error: openunlink Valgrind debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
+	OPENUNLINK_BIN="$$tmpbin" OPENUNLINK_UNDER_VALGRIND=1 \
+		$(PYTEST_NO_CACHE) tests/test_openunlink.py -q
 
 clean:
 	rm -rf build
@@ -676,7 +771,11 @@ distcheck:
 			;; \
 	esac; \
 	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
-		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND $(MAKE) -C "$$sourcedir"; \
+		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND \
+		-u OPENUNLINK_BIN -u OPENUNLINK_UNDER_VALGRIND -u OPENUNLINK_SEAM_CFLAGS \
+		$(MAKE) -C "$$sourcedir"; \
 	env -u SYSDIFF_BIN -u SYSDIFF_UNDER_VALGRIND -u PATHAUDIT_BIN -u PATHAUDIT_UNDER_VALGRIND \
-		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND $(MAKE) -C "$$sourcedir" test; \
+		-u PERMGUARD_BIN -u PERMGUARD_UNDER_VALGRIND \
+		-u OPENUNLINK_BIN -u OPENUNLINK_UNDER_VALGRIND -u OPENUNLINK_SEAM_CFLAGS \
+		$(MAKE) -C "$$sourcedir" test; \
 	printf 'distcheck: ok\n'

@@ -1,0 +1,107 @@
+{
+  "schema": "builtin:review_verdict/v1",
+  "verdict": "pass",
+  "findings": [
+    {
+      "id": "SIXTH2-M1",
+      "severity": "Medium",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "First Vertical Slice, lines 305-309 and 389 and 451-453",
+      "problem": "Enumeration 'stops before retaining a 65,537th descriptor' and the taxonomy makes FD_COUNT_LIMIT a whole-scan status-2 failure emitted 'before descriptor output', so a process holding more than 65,536 open descriptors yields empty stdout and no findings at all. That is precisely the class the mission targets: long-running servers, proxies, and databases routinely run with RLIMIT_NOFILE well above 65,536 and are the processes most likely to pin unlinked files. The ceiling is asserted without derivation from any Linux limit, and unlike FD_UNSTABLE, FD_UNREADABLE, FD_SIZE_RANGE, and TARGET_LENGTH_LIMIT it converts a bounded-inspection condition into total suppression rather than a visible partial result. The repaired document is otherwise careful never to trade a real finding for a bounds condition, so this is an unresolved inconsistency in the same design principle that closed prior finding SIXTH-H1.",
+      "proposed_fix": "In the later contract, reclassify the descriptor ceiling as a bounded-scan advisory: inspect and report the descriptors retained up to the cap, emit FD_COUNT_LIMIT once on stderr with the PID-owned diagnostic shape, and return status 1 so the operator receives partial evidence plus an explicit incompleteness signal. Alternatively keep the hard failure but derive the ceiling from a documented Linux limit and state in the evaluation that processes above it are out of scope. Either way add an acceptance check pinning the chosen behavior at the 65,536/65,537 boundary."
+    },
+    {
+      "id": "SIXTH2-M2",
+      "severity": "Medium",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "Committed Selection line 266, man-page requirements lines 417-426, acceptance checks lines 428-479",
+      "problem": "The whole product claim rests on the predicate st_nlink == 0, but on several real filesystems a deleted-but-open file never reaches link count zero. NFS silly-rename converts an unlink of an open file into a rename to a .nfsXXXX name, leaving st_nlink == 1 for the lifetime of the descriptor, and comparable behavior exists on other network and stacked filesystems. Such a process produces empty stdout and status 0, which the exit-status paragraph defines as 'a completed stable scan with no finding' and an operator will read as 'this process holds no deleted files'. The document is otherwise scrupulous about honest boundaries: it disclaims physical allocation, reclaimable bytes, the cause of a zero link count, ENOENT versus hidepid, and ABA replacement. This false-negative boundary is the one gap, and it sits directly under the mission's stated user story of apparent non-reclamation after deletion. Neither the mandatory man-page content list nor any acceptance check requires it to be stated.",
+      "proposed_fix": "Add the boundary to the evaluation's honesty set and to the mandatory man-page content list: a clean status-0 scan means only that no inspected descriptor had a zero-link regular target, not that the process holds no deleted file, because some filesystems (NFS silly-rename among them) keep a nonzero link count for an unlinked open file. Add an acceptance check that the man page and any summary text carry this disclaimer, and record it in the Risks section beside the existing point-in-time and reclaimable-space disclaimers."
+    },
+    {
+      "id": "SIXTH2-M3",
+      "severity": "Medium",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "First Vertical Slice, exit statuses lines 364-373 and acceptance checks lines 443-446",
+      "problem": "Status 1 means either 'at least one OPEN_UNLINKED finding' or 'the scan completed but at least one descriptor could not be inspected', with no normative way for a caller to tell them apart. The document names Unix composition through exit status as a selection criterion, yet the natural shell idiom (test the status to decide whether a process pins deleted files) misreports an advisory-only run as a positive finding. The discriminator does exist implicitly, since findings go to stdout and advisories to stderr, and line 403 acknowledges 'status 1 for advisory-only completion' as a distinct case, but it is never stated as a caller-facing contract and no acceptance check pins it. The sibling shipped contract in project-plan.md:186-193 keeps status 1 for findings only and routes operational conditions to status 2, so this is an unexplained divergence from suite convention.",
+      "proposed_fix": "State normatively in the contract and man page that stdout emptiness is the discriminator: status 1 with at least one stdout line means a finding, and status 1 with empty stdout means an incomplete but non-failing scan reported only on stderr. Explain in the evaluation why advisories join the finding status instead of the operational status 2 used by the suite's other contract. Add an acceptance check that an advisory-only run returns status 1 with byte-empty stdout and a non-empty stderr advisory, distinct from a finding-bearing status 1."
+    },
+    {
+      "id": "SIXTH2-L1",
+      "severity": "Low",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "First Vertical Slice, lines 364-373",
+      "problem": "Stdout write and final-flush failure are pinned to STDOUT_WRITE and status 2, and SIGPIPE handling is specified, but the document never says what happens when writing an advisory or diagnostic to stderr fails. Because every incompleteness signal in this design is stderr-only, an implementation could plausibly treat a failed stderr write as another error path and change the numeric result. The suite's shipped shebangcheck contract settled the same question explicitly at project-plan.md:204-205.",
+      "proposed_fix": "Add one sentence to the exit-status rules stating that failure to write a best-effort stderr diagnostic or advisory does not change the numeric exit status, matching project-plan.md:204-205, and note that there is no STDERR_WRITE code in the closed taxonomy."
+    },
+    {
+      "id": "SIXTH2-L2",
+      "severity": "Low",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "First Vertical Slice, lines 341-343 and 383-385",
+      "problem": "FD_SIZE_RANGE fires when the stable target's st_size 'is negative or cannot be represented losslessly for output'. Under the mandated _FILE_OFFSET_BITS=64 with intmax_t formatting from <inttypes.h>, off_t is a signed 64-bit type that the kernel does not populate with negative values for a regular file, so no real filesystem path reaches this code. The acceptance checks confirm it, reaching the case only through the compile-time seam. A closed taxonomy entry with no reachable production trigger is defensive but undocumented as such, and a reader of the man page cannot tell that the code will never appear in practice.",
+      "proposed_fix": "State in the evaluation and the later contract that FD_SIZE_RANGE is a defensive code with no expected production trigger under the mandated off_t configuration and is exercised only through the test seam, or drop it from the closed taxonomy and treat an impossible size as PROCESS_SCAN."
+    },
+    {
+      "id": "SIXTH2-L3",
+      "severity": "Low",
+      "file": "plans/sixth-utility-mission-evaluation.md",
+      "location": "Portfolio Evidence, lines 89-94",
+      "problem": "The document asserts in the present tense that the sibling run 787b9bb3d830 'is RUNNING at step_02_discover_and_evaluate_missions'. That run's run.json now reports current_step_id step_03_review_mission_selection and current_attempt_number 2, with a recorded repair loop from review cycle 1. The claim was accurate when written and the surrounding conclusion (this document is the only output of the slice) still holds, but a later reader treating the line as live run state would be misled about which step and attempt produced the document.",
+      "proposed_fix": "Qualify the sentence with the observation time, for example 'as observed during step_02 on 2026-07-30', or state the run identifier and playbook without pinning a step that advances while the document is under review."
+    }
+  ],
+  "checks_run": [
+    {
+      "command": "python3 -m compileall -q tests/test_sysdiff.py tests/test_pathaudit.py tests/test_permguard.py",
+      "exit_code": 0,
+      "summary": "Byte-compiled the three live per-utility pytest modules named in the evaluation's Portfolio Evidence section. Exit code 0 with no diagnostics, confirming they remain syntactically valid Python in the current dirty worktree and that this review left them untouched."
+    }
+  ],
+  "lenses": {
+    "prior_finding_closure": {
+      "finding_ids": [],
+      "justification": "Attempt 1 failed on SIXTH-H1 and SIXTH-H2. Both are genuinely closed rather than re-worded. Mid-scan churn is now the status-1 advisory FD_UNSTABLE that preserves stable findings, with streamed output in numeric descriptor order (lines 326-332, 352-362), replacing the operational FD_RACE that discarded collected findings. The open Medium debt is now enumerated by identifier with its sources (lines 68-79), and the repair-before-expansion gate is stated with citations to project-plan.md, sprint-plan.md, STATUS.md, and WHERE_AM_I.md (lines 81-87), all of which I confirmed exist at project-plan.md:231, sprint-plan.md:397, sprint-plan.md:738, STATUS.md:149, and WHERE_AM_I.md:368."
+    },
+    "duplicated_capability": {
+      "finding_ids": [],
+      "justification": "The committed mission, Bootstrap `openunlink` explicit-process zero-link regular-file descriptor reporting, is distinct from all implemented and reserved capability. src/ holds only sysdiff.c, pathaudit.c, and permguard.c; plans/fourth-utility-mission-evaluation.md reserves inodealias identity grouping; and the project-plan.md Mission Contract reserves shebangcheck interpreter validation. Reporting descriptors whose followed target is a zero-link regular file compares no snapshots, judges no PATH trust or mode bits, groups no (st_dev, st_ino) aliases, and parses no interpreter header. Inode aggregation is the nearest collision and is both barred in the non-goals and fenced by an acceptance oracle requiring duplicated descriptors for one object to produce separate ascending-FD lines."
+    },
+    "user_value": {
+      "finding_ids": ["SIXTH2-M2", "SIXTH2-M1"],
+      "justification": "The operator outcome is concrete and the scorecard arithmetic is correct in all six columns (43, 42, 44, 40, 38, 41). The document does not conceal that futuremtime outscores the selection by one point and argues the override on substance rather than by adjusting scores. Value is nonetheless overstated at two edges: the tool cannot see unlinked-but-open files on filesystems that keep a nonzero link count, and it refuses to answer at all for processes above the descriptor ceiling."
+    },
+    "scope_and_first_slice_size": {
+      "finding_ids": [],
+      "justification": "The slice is large for a bootstrap — normative contract, one source, seam-instrumented tests, a handshake-driven same-UID helper, man page, dedicated smoke, quality evidence, and independent review — but it stays at one binary, one explicit operand, one finding code, and four advisory codes, and defers install, packaging, tagging, and publication. It sits at the upper bound of a release-sized bootstrap rather than past it, and the document names it as such instead of understating it."
+    },
+    "hidden_dependencies": {
+      "finding_ids": [],
+      "justification": "Runtime dependencies are libc plus a fixed /proc, with no library ecosystem, privileged helper, service, container runtime, or network. Test dependencies are the existing compiler and pytest floor; the slice explicitly bars root, chown, mount reconfiguration, strace, nm, and objdump. The one residual dependency is environmental: the mandatory dedicated smoke needs a mounted, readable procfs. Because the fixture holder is a same-UID child it remains visible under hidepid, so the risk is narrow and does not rise to a finding."
+    },
+    "unix_architecture": {
+      "finding_ids": ["SIXTH2-M3"],
+      "justification": "One-shot command, single translation unit, explicit operand, deterministic sorted text on stdout, diagnostics on stderr, finite execution, no daemon, watcher, telemetry, plugin, configuration file, or network client. The one architectural weakness is composition through exit status, where status 1 conflates a real finding with an incomplete scan and the discriminator is never made normative."
+    },
+    "hostile_input": {
+      "finding_ids": ["SIXTH2-M1"],
+      "justification": "Ceilings are concrete and internally consistent: 65,536 retained descriptors, 65,536 accepted link-text bytes read into a 65,537-byte sentinel buffer so exact fit is distinguishable from truncation, and a line buffer sized for the genuine worst case of four-byte \\xNN escaping. Descriptor names must be canonical ASCII decimal with a no-leading-zero rule, the count cap is correctly separated from the fd-number range so a high dup2 target is not falsely capped, all arithmetic is checked, target text is not retained across descriptors, and every displayed byte is escaped. The count cap's total-suppression failure mode is the exception."
+    },
+    "c_implementation_realism": {
+      "finding_ids": ["SIXTH2-L2"],
+      "justification": "One C17 translation unit is realistic for this slice. Ownership is assigned for the DIR * duplicate versus the retained inspection descriptor with no double close after fdopendir, readdir storage is borrowed only until the next call, allocation completes before streaming begins, _FILE_OFFSET_BITS=64 and <inttypes.h> formatting are mandated, and narrowing from pid_t, off_t, ino_t, dev_t, nlink_t, and size_t is prohibited. The before/after (st_dev, st_ino, file type) comparison with st_nlink == 0 on the final observation is implementable and honestly disclaims ABA replacement. One taxonomy entry is unreachable under the mandated off_t configuration."
+    },
+    "exit_behavior": {
+      "finding_ids": ["SIXTH2-M3", "SIXTH2-L1"],
+      "justification": "Three statuses, SIGPIPE ignored so a closed stdout reaches the checked STDOUT_WRITE path rather than a signal-derived shell status, status-2 numeric precedence stated without retracting already streamed stdout, an explicit empty-stdout rule for pre-inspection failures, and three distinct stderr diagnostic shapes for per-descriptor, PID-owned, and global conditions. The gaps are the dual meaning of status 1 and the unspecified behavior on stderr write failure."
+    },
+    "acceptance_checks": {
+      "finding_ids": ["SIXTH2-M2", "SIXTH2-M3"],
+      "justification": "Fifteen bullets pin exact help, version, and usage bytes; every finding, advisory, and operational code; seam-injected errno mapping without root or a hidepid mount; the 65,536 and 65,537 link-text boundary; hostile-byte escaping determinism; a no-content-read and no-signal audit of the sole translation unit; strict GCC and Clang builds with clang-tidy, cppcheck, the Clang static analyzer, ASan, UBSan, and Valgrind; and a dedicated smoke that explicitly demotes the existing sysdiff smoke to aggregate regression evidence. The two omissions are a filesystem-boundary disclaimer check and a caller-discriminator check for status 1."
+    },
+    "governance_and_workspace_evidence": {
+      "finding_ids": ["SIXTH2-L3"],
+      "justification": "Every governance citation was verified in its named source: FUM-M1 in code-reviews/review-fourth-utility-mission.verdict.json; FUM5R2-M1 through FUM5R2-M6 in code-reviews/review-fifth-utility-mission.verdict.json; PA-6CA-4, PA-M1, PA-M2, FUM5-M1, and FUM5-M2 in result-review.md and sprint-plan.md; and packaging runs 939ee21b0d76, 240bfcbc634e, b54d61531266, and a2d750c92da3 in result-review.md. artifacts/user-smoke/result.json reports app_started true, core_flow_completed true, both exit codes 0, and no blocking errors, and check.log confirms the quoted 351 passed, 18 skipped. tests/smoke_manifest.json is sysdiff-only, matching the document's own qualification. The document correctly declines to authorize implementation. Only the live sibling-run step assertion has drifted."
+    }
+  }
+}
