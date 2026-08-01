@@ -1,0 +1,94 @@
+." Copyright (c) 2026 Lee Harrington
+." SPDX-License-Identifier: MIT
+.TH OPENUNLINK 1 "2026-08-01" "openunlink 0.1.0" "User Commands"
+.SH NAME
+openunlink \(em report stable zero-link regular-file descriptors for one process
+.SH SYNOPSIS
+.B openunlink
+.I PID
+.br
+.B openunlink \-\-help
+.br
+.B openunlink \-\-version
+.SH DESCRIPTION
+.B openunlink
+is a small read-only ISO C17/Linux command-line utility.  It inspects one
+explicitly supplied process ID through the fixed
+.BR /proc/PID/fd
+directory and reports descriptors whose followed targets are observed as stable
+regular files with a final
+.BR st_nlink
+of zero.
+.PP
+The utility does not open target contents, recover files, estimate reclaimable
+storage, terminate processes, or accept an alternate procfs root.  Procfs
+visibility and ordinary credential or
+.B hidepid
+policy apply in the caller's current namespaces.
+.PP
+The only informational forms are sole-argument
+.B \-\-help
+and
+.BR \-\-version .
+The PID must be canonical ASCII decimal text in the range 1 through
+.BR INT_MAX .
+.SH OUTPUT
+Each finding is one stdout line:
+.PP
+.RS
+.nf
+OPEN_UNLINKED<TAB>pid=PID<TAB>fd=FD<TAB>size=BYTES<TAB>target="ESCAPED_TARGET"
+.fi
+.RE
+.PP
+.B BYTES
+is the lossless final
+.B st_size
+observation.  It is not the procfs link-text length, a reclaim estimate, or a
+physical allocation measurement.  Procfs-supplied display bytes are escaped;
+the literal
+.B \ (deleted)
+suffix is never used as the finding predicate.
+.PP
+The scanner retains the first 65536 valid descriptor names in observed
+enumeration order and sorts those retained names numerically before inspection.
+The 65537th valid name stops enumeration and produces one
+.BR FD_COUNT_LIMIT
+advisory without discarding findings already retained.
+.SH LINK-COUNT BOUNDARY
+The finding predicate is the final followed metadata observation
+.BR st_nlink == 0
+after target identity and regular-file type remain stable around link-text
+inspection.  A status-0 result therefore means only that no retained,
+successfully inspected descriptor met that narrow observation.
+.PP
+NFS silly-rename and other filesystem or stacking behavior can leave a nonzero
+link count after an unlink-like operation.  Those cases are intentionally
+silent.  A cosmetic
+.B \ (deleted)
+suffix in procfs text is likewise only display context.
+.SH EXIT STATUS
+.TP
+.B 0
+No retained descriptor produced a finding, or an informational command
+succeeded.
+.TP
+.B 1
+At least one
+.B OPEN_UNLINKED
+finding was emitted; per-descriptor advisories may also be present.
+.TP
+.B 2
+Usage, process, scan, memory, size, or checked output failure.
+.SH NON-GOALS
+The utility does not follow caller-provided paths, open target files, group
+descriptors by inode, modify processes or filesystems, read configuration,
+persist state, run a service, use networking, or claim file recovery.  It is a
+source preview and is not installed by
+.BR make\ install .
+.SH SEE ALSO
+.BR proc (5)
+.SH AUTHORITATIVE CONTRACT
+See
+.BR docs/sixth-utility-capability-contract.md
+in the source tree.

@@ -1,0 +1,31 @@
+{
+  "packet_id": "linux-utilities-post-hardening-commissioning-2026-08-01-v2",
+  "workspace": "/home/lee/projects/linux-utilities-autonomous",
+  "declared_inputs": [
+    "AGENTS.md",
+    "commissioning/post-hardening-commissioning-packet.md",
+    "commissioning/post-hardening-commissioning-packet.json",
+    "commissioning/check_packet.py",
+    "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+    "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+    "/home/lee/projects/auto-orch/config/crews.yaml"
+  ],
+  "required_outputs": [
+    "docs/mission-post-hardening-commissioning.md",
+    "artifacts/commissioning-evaluator/result.json"
+  ],
+  "allowed_paths": [
+    "docs/",
+    "artifacts/commissioning-evaluator/"
+  ],
+  "validation_timeout_seconds": {
+    "packet": 30,
+    "focused_openunlink": 180,
+    "full_suite": 300,
+    "distribution": 360,
+    "identity": 120,
+    "scratch": 30
+  }
+}

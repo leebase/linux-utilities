@@ -9,6 +9,7 @@ telemetry, and does not run a background service.
 | [`sysdiff`](docs/sysdiff.md) | Compare two explicit `key=value` system snapshots | Released: v0.1.0 |
 | [`pathaudit`](docs/pathaudit.md) | Find risky, missing, or shadowed entries in command search paths | Preview |
 | [`permguard`](docs/permguard.md) | Report dangerous permission bits on explicitly named paths | Preview |
+| [`openunlink`](docs/openunlink.md) | Report stable zero-link regular files held open by one process | Preview |
 
 The preview tools are available as reviewed source with tests and manual
 pages. They are intentionally not included in the `sysdiff` installation or
@@ -30,6 +31,9 @@ cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
 cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
   -D_POSIX_C_SOURCE=200809L \
   -o build/permguard src/permguard.c
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
+  -o build/openunlink src/openunlink.c
 ```
 
 Try the built-in help:
@@ -38,6 +42,7 @@ Try the built-in help:
 ./build/sysdiff --help
 ./build/pathaudit --help
 ./build/permguard --help
+./build/openunlink --help
 ```
 
 `make` remains the supported build and installation path for the released
@@ -59,6 +64,8 @@ for staged or custom installations.
   command-specific audits with examples.
 - [permguard guide](docs/permguard.md) — permission checks, symlink behavior,
   examples, and limitations.
+- [openunlink guide](docs/openunlink.md) — one-process descriptor scans,
+  zero-link semantics, output, and limitations.
 
 Traditional section-1 manual pages are also included:
 
@@ -66,6 +73,7 @@ Traditional section-1 manual pages are also included:
 man -l man/sysdiff.1
 man -l man/pathaudit.1
 man -l man/permguard.1
+man -l man/openunlink.1
 ```
 
 ## Test and inspect
@@ -171,6 +179,22 @@ authorization claim; character and block device nodes stay out of scope.
 Product authority remains `docs/permguard-bootstrap-contract.md`; the
 hostile-fixture contract is acceptance evidence only and does not install,
 package, or release `permguard`.
+
+## openunlink
+
+`openunlink` is a preview ISO C17/Linux utility with the single form
+`openunlink PID`, plus sole-argument `--help` and `--version`. It scans only
+the fixed `/proc/PID/fd` directory and reports descriptors whose followed
+targets are observed as stable regular files with final `st_nlink == 0`.
+`OPEN_UNLINKED` output includes the final `st_size` as observation context;
+the first `65536` valid descriptors are retained in observed order and a
+`65537`th produces one `FD_COUNT_LIMIT` advisory. A status-0 result does not
+exclude NFS silly-rename or other cases where unlink-like behavior leaves a
+nonzero link count. The utility is read-only, does not open target contents,
+does not terminate processes, and is not installed or packaged by this
+preview. See [`docs/openunlink.md`](docs/openunlink.md),
+[`man/openunlink.1`](man/openunlink.1), and the authority contract in
+[`docs/sixth-utility-capability-contract.md`](docs/sixth-utility-capability-contract.md).
 
 ## License
 

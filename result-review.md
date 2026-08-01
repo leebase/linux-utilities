@@ -1,5 +1,29 @@
 # Result Review
 
+## Post-hardening commissioning preparation — 2026-08-01
+
+The bounded repair and packet-alignment intervention is complete without a
+new governed run. The prior timeout's relative inputs were absent from the
+autonomous worktree; the next packet is now self-contained under
+`commissioning/` and declares only the packet, its completeness checker, the
+two required operator verifier inputs, and the three mission authority files.
+Agent-Orch now has a reusable preflight guard for missing/unreadable declared
+inputs, with output dependencies exempted until their producing step runs.
+The regression test passes, as does all seven-test platform-commissioning
+module coverage.
+
+The product repair remains separate from platform repair. The seam fixture's
+default size now follows the supplied link payload and no product C source was
+changed. The documentation slice added `docs/openunlink.md` and
+`man/openunlink.1`, updated README/CHANGELOG, and made the contract's exact
+`65536`/`65537` limits and NFS/st_nlink boundary visible. Focused openunlink
+validation passed 134 tests in 46.42s; the full suite passed 548 with 18
+skips in 117.16s; the isolated distribution extraction passed in 60.12s.
+Identity, packet, strict lint, and diff checks passed. Recommendation for the
+next operator decision is **Ready for another supervised commissioning run**;
+the mission remains paused and this session did not launch, re-arm, restore
+cron, or push.
+
 ## Governed Run af89bd4b8fcd Repair
 
 Documentation-only AgentFlow repair for failed governed run `af89bd4b8fcd`

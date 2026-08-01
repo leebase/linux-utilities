@@ -35,6 +35,9 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 - Add the preview `permguard` source, manual page, tests, and strict quality
   wiring. It checks explicitly named paths for group/other writability and
   set-user-ID/set-group-ID bits without following final symlinks.
+- Add the preview `openunlink` guide and manual page. Its status-0 claim is
+  limited to observed final `st_nlink == 0`; NFS silly-rename and other
+  nonzero-link cases are not reported as zero-link findings.
 - Add a concise suite README and a practical guide for each utility under
   `docs/`, including direct C17 compilation instructions.
 - Keep installation and release packaging limited to the released `sysdiff`

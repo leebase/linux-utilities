@@ -1,5 +1,29 @@
 # Context
 
+## Post-hardening commissioning preparation — 2026-08-01
+
+The autonomous `main` worktree is prepared for another supervised commissioning
+cycle, but no run was launched. The missing e5e872615eed inputs were the four
+recovery documents and two recovery scripts that existed only in the
+interactive hardening checkout. A bounded packet now lives under
+`commissioning/`, with a manifest and `check_packet.py`; the prepared playbook
+declares only that packet, the narrow verifier inputs, and mission authority
+files. Agent-Orch preflight now rejects missing or unreadable declared inputs
+before worker invocation while allowing outputs produced by earlier steps; its
+focused platform test and the full platform-commissioning test module pass.
+
+The openunlink fixture slice now derives default expected `size` from supplied
+link bytes, preserving explicit boundary sizes. The documentation/contract
+slice adds the guide and manual and records exact `65536`/`65537`, final
+`st_size`, final `st_nlink == 0`, and NFS silly-rename semantics. Validation:
+focused openunlink `134 passed` in 46.42s; complete suite `548 passed,
+18 skipped` in 117.16s; distribution extraction `1 passed` in 60.12s;
+identity JSON and protection dry-run passed; packet completeness passed for
+9 inputs; strict repaired-playbook lint passed; and `git diff --check` passed.
+The guarded pruner dry-run was safe and listed one terminal old candidate
+(`5a3c165c0a46`) without deleting it. Keep the mission paused, do not push,
+restore cron, re-arm, or launch the prepared playbook without authorization.
+
 ## Snapshot
 
 Documentation-only repair of AgentFlow records for failed governed run

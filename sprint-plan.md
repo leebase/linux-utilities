@@ -1,5 +1,28 @@
 # Sprint Plan
 
+## Post-hardening commissioning preparation — 2026-08-01
+
+- [x] Align the commissioning packet with the configured autonomous worktree:
+  `commissioning/post-hardening-commissioning-packet.md`, its JSON manifest,
+  and `commissioning/check_packet.py` are present and readable. The packet
+  excludes unrelated platform history and the prepared playbook declares only
+  the bounded context plus narrow authority inputs.
+- [x] Add the reusable pre-worker declared-input preflight guard in Agent-Orch;
+  it fails missing/unreadable inputs before worker invocation while allowing
+  outputs declared by prior steps. Platform regression coverage is green.
+- [x] Repair the openunlink seam fixture expectation without changing product
+  source: default fixture size is the supplied link payload length, while
+  explicit sizes remain available for boundary tests.
+- [x] Complete the openunlink documentation/contract slice with exact limit
+  constants, final `st_size` and `st_nlink == 0` semantics, NFS silly-rename
+  limitation, guide, and section-1 manual.
+- [x] Validate focused `134 passed` / 46.42s, full `548 passed` / 18 skipped /
+  117.16s, distribution extraction `1 passed` / 60.12s, packet completeness,
+  identity, scratch syntax/dry-run, strict playbook lint, and diff checks.
+- [ ] Obtain separate authorization before launching the prepared
+  `post_hardening_commissioning_repaired.yaml`; keep mission scheduling paused,
+  do not push, and do not restore cron or re-arm.
+
 ## pathaudit PA-W1 Open-Repair Maintenance (`c9e3de33f46b`)
 
 - [x] Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`)

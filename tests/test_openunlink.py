@@ -970,7 +970,13 @@ def test_fixture_survives_and_no_control_action(openunlink_bin):
 # ---------------------------------------------------------------------------
 
 
-def _zero_link_entry(name: str, *, ino: int, size: int = 3, link: bytes = b"abc"):
+def _zero_link_entry(
+    name: str, *, ino: int, size: int | None = None, link: bytes = b"abc"
+):
+    # OPEN_UNLINKED prints the final st_size, so the seam fixture defaults to
+    # the payload length and only uses an explicit size for boundary cases.
+    if size is None:
+        size = len(link)
     st = make_stat(dev=10, ino=ino, mode=S_IFREG | 0o600, nlink=0, size=size)
     return make_entry(name, first=st, second=st, link=link)
 

@@ -28,8 +28,8 @@ The rules and acceptance oracles below close the design questions recorded as
 `SIXTH2-M1`, `SIXTH2-M2`, and `SIXTH2-M3`; they are not optional guidance.
 
 Those closures are fixed and mechanically gated: `SIXTH2-M1` retains and
-inspects the first 65,536 valid entries in observed enumeration order, reports
-their findings, and makes the 65,537th valid entry one `FD_COUNT_LIMIT`
+inspects the first 65,536 (`65536`) valid entries in observed enumeration
+order, reports their findings, and makes the 65,537th (`65537`) valid entry one `FD_COUNT_LIMIT`
 advisory; `SIXTH2-M2` limits the claim to `st_nlink == 0` and requires the
 nonzero-link/NFS-silly-rename boundary in fixtures and user documentation; and
 `SIXTH2-M3` makes stdout emptiness the status-1 caller discriminator. The
