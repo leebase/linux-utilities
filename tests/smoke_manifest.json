@@ -26,5 +26,5 @@
   "startup_delay_seconds": 0,
   "startup_timeout_seconds": 10,
   "poll_interval_seconds": 0.25,
-  "check_timeout_seconds": 30
+  "check_timeout_seconds": 300
 }
