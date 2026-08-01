@@ -19,6 +19,9 @@
 - [x] Validate focused `134 passed` / 46.42s, full `548 passed` / 18 skipped /
   117.16s, distribution extraction `1 passed` / 60.12s, packet completeness,
   identity, scratch syntax/dry-run, strict playbook lint, and diff checks.
+- [ ] Before any autonomous re-arm, obtain authorized reconciliation of the
+  still-uncommented Linux Utilities cron line. Mission state is halted and
+  auto-orch preflight no-ops, but the schedule is not cleanly disarmed.
 - [ ] Obtain separate authorization before launching the prepared
   `post_hardening_commissioning_repaired.yaml`; keep mission scheduling paused,
   do not push, and do not restore cron or re-arm.

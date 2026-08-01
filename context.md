@@ -19,10 +19,13 @@ slice adds the guide and manual and records exact `65536`/`65537`, final
 focused openunlink `134 passed` in 46.42s; complete suite `548 passed,
 18 skipped` in 117.16s; distribution extraction `1 passed` in 60.12s;
 identity JSON and protection dry-run passed; packet completeness passed for
-9 inputs; strict repaired-playbook lint passed; and `git diff --check` passed.
+10 inputs; strict repaired-playbook lint passed; and `git diff --check` passed.
 The guarded pruner dry-run was safe and listed one terminal old candidate
-(`5a3c165c0a46`) without deleting it. Keep the mission paused, do not push,
-restore cron, re-arm, or launch the prepared playbook without authorization.
+(`5a3c165c0a46`) without deleting it. Mission state is halted/paused and
+auto-orch preflight refuses to start it, but the host crontab still contains an
+uncommented Linux Utilities loop line. Treat that residual schedule as a
+governance blocker to autonomous re-arm; do not change it, push, restore cron,
+re-arm, or launch the prepared playbook without authorization.
 
 ## Snapshot
 

@@ -10,6 +10,7 @@
     "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
     "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
     "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
     "/home/lee/projects/auto-orch/config/crews.yaml"
   ],
   "required_outputs": [

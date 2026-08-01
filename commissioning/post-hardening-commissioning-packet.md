@@ -62,6 +62,14 @@ evidenced in this run:
 If any criterion is not proven, classify the failure precisely and recommend
 `Not ready` or `Ready after specific follow-up` rather than inferring success.
 
+The current operator evidence says the mission loop state is `idle` and the
+mission is halted with `value_exhausted: true`; auto-orch preflight therefore
+refuses to start a cycle. The host crontab still contains an uncommented
+Linux Utilities loop line, even though its own preflight no-ops on the halted
+state. Do not edit that schedule in this packet or run: record the discrepancy
+as a governance blocker to autonomous re-arm and never describe the scheduler
+as cleanly disarmed unless a separate authorized operator action proves it.
+
 ## Allowed paths and required outputs
 
 The producing worker may write only `docs/mission-post-hardening-commissioning.md`.

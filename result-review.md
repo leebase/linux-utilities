@@ -19,10 +19,13 @@ changed. The documentation slice added `docs/openunlink.md` and
 `65536`/`65537` limits and NFS/st_nlink boundary visible. Focused openunlink
 validation passed 134 tests in 46.42s; the full suite passed 548 with 18
 skips in 117.16s; the isolated distribution extraction passed in 60.12s.
-Identity, packet, strict lint, and diff checks passed. Recommendation for the
-next operator decision is **Ready for another supervised commissioning run**;
-the mission remains paused and this session did not launch, re-arm, restore
-cron, or push.
+Identity, packet, strict lint, and diff checks passed. Mission state is
+halted/paused and auto-orch preflight refuses to start it, but the host crontab
+still contains an uncommented Linux Utilities loop line. That residual schedule
+is a governance blocker to autonomous re-arm and was left unchanged.
+Recommendation: **Ready after specific follow-up**—obtain authorized
+scheduling reconciliation before any autonomous re-arm. This session did not
+launch, re-arm, restore cron, or push.
 
 ## Governed Run af89bd4b8fcd Repair
 
