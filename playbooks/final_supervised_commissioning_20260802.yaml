@@ -6,7 +6,9 @@
     "The playbook conforms to the linux-utilities mixed-economy governed route mandate.",
     "System-validator records are authoritative for validation; workers may summarize but may not replace them.",
     "The audited Auto-Orch pause remains active and autonomous scheduling is never re-armed by this workflow.",
-    "The evaluator is an independent user_tester whose readiness_report is bound to the human readiness_gate."
+    "The evaluator is an independent user_tester whose readiness_report is bound to the human readiness_gate.",
+    "Every validator dependency resolves from a committed baseline: the governed Linux Utilities worktree, Agent-Orch, or Auto-Orch. No validator is read from the separate interactive checkout.",
+    "Repository identity and scratch retention are Agent-Orch concerns and are exercised through the platform CLI; the mission owns only its expected-repository policy in commissioning/check_repository_expectations.py."
   ],
   "defaults": {
     "worker": "codex_cli",
@@ -43,8 +45,7 @@
         "commissioning/final-commissioning-packet-2026-08-02.md",
         "commissioning/final-commissioning-packet-2026-08-02.json",
         "commissioning/check_packet.py",
-        "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
-        "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+        "commissioning/check_repository_expectations.py",
         "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
         "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
         "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
@@ -91,22 +92,12 @@
           },
           {
             "type": "command_succeeds",
-            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --json",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 commissioning/check_repository_expectations.py --workspace /home/lee/projects/linux-utilities-autonomous --agent-orch /home/lee/projects/agent-orch/.venv/bin/agent-orch --json",
             "timeout_seconds": 120
           },
           {
             "type": "command_succeeds",
-            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --protect --dry-run --json",
-            "timeout_seconds": 120
-          },
-          {
-            "type": "command_succeeds",
-            "command": "bash -n /home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
-            "timeout_seconds": 30
-          },
-          {
-            "type": "command_succeeds",
-            "command": "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh --dry-run",
+            "command": "/home/lee/projects/agent-orch/.venv/bin/agent-orch scratch-clean --workspace /home/lee/projects/linux-utilities-autonomous --runs-dir /home/lee/projects/linux-utilities-agent-orch-runs --retention-days 2 --json",
             "timeout_seconds": 30
           },
           {
@@ -163,9 +154,8 @@
         "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
         "/home/lee/projects/auto-orch/config/crews.yaml",
         "/home/lee/projects/linux-utilities-agent-orch-runs/operator-supersession-77fc787b8e91.json",
-        "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
-        "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
         "commissioning/check_packet.py",
+        "commissioning/check_repository_expectations.py",
         "/home/lee/projects/agent-orch/docs/platform-commissioning-contract.md",
         "/home/lee/projects/agent-orch/docs/commissioning-verdict-contract.md",
         "/home/lee/projects/auto-orch/docs/auto-orch-commissioning-verdict-contract.md"

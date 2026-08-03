@@ -64,10 +64,8 @@ records are authoritative for product validation:
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 python3 commissioning/check_packet.py --workspace /home/lee/projects/linux-utilities-autonomous --manifest commissioning/final-commissioning-packet-2026-08-02.json --json
-PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --json
-PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --protect --dry-run --json
-bash -n /home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh
-/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh --dry-run
+PYTHONDONTWRITEBYTECODE=1 python3 commissioning/check_repository_expectations.py --workspace /home/lee/projects/linux-utilities-autonomous --agent-orch /home/lee/projects/agent-orch/.venv/bin/agent-orch --json
+/home/lee/projects/agent-orch/.venv/bin/agent-orch scratch-clean --workspace /home/lee/projects/linux-utilities-autonomous --runs-dir /home/lee/projects/linux-utilities-agent-orch-runs --retention-days 2 --json
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_openunlink.py -q
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_sysdiff.py::test_dist_extracts_builds_and_tests_outside_workspace -q
