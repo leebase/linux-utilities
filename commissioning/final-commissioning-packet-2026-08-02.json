@@ -1,0 +1,38 @@
+{
+  "packet_id": "linux-utilities-final-commissioning-2026-08-02-v1",
+  "workspace": "/home/lee/projects/linux-utilities-autonomous",
+  "declared_inputs": [
+    "AGENTS.md",
+    "commissioning/final-commissioning-packet-2026-08-02.md",
+    "commissioning/final-commissioning-packet-2026-08-02.json",
+    "commissioning/check_packet.py",
+    "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+    "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+    "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
+    "/home/lee/projects/auto-orch/config/crews.yaml",
+    "/home/lee/projects/linux-utilities-agent-orch-runs/operator-supersession-77fc787b8e91.json",
+    "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+    "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+    "/home/lee/projects/auto-orch/docs/auto-orch-commissioning-verdict-contract.md",
+    "/home/lee/projects/agent-orch/docs/platform-commissioning-contract.md",
+    "/home/lee/projects/agent-orch/docs/commissioning-verdict-contract.md"
+  ],
+  "required_outputs": [
+    "docs/mission-post-hardening-final-commissioning.md",
+    "artifacts/final-commissioning-evaluator/result.json"
+  ],
+  "allowed_paths": [
+    "docs/mission-post-hardening-final-commissioning.md",
+    "artifacts/final-commissioning-evaluator/"
+  ],
+  "validation_timeout_seconds": {
+    "packet": 30,
+    "focused_openunlink": 180,
+    "full_suite": 300,
+    "distribution": 360,
+    "identity": 120,
+    "scratch": 30
+  }
+}
