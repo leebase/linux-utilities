@@ -731,11 +731,25 @@ REQUIRED_ARCHIVE_MEMBERS = (
     "sysdiff/tests/test_sysdiff_fixture.sh",
     "sysdiff/scripts/check_tools.py",
     "sysdiff/docs/sysdiff-snapshot-format-and-scope.md",
+    # The dist ships tests/test_commissioning_dependencies.py, so it must also
+    # ship every file that test loads or reads. Omitting them made the extract
+    # fail collection with FileNotFoundError while the source tree passed.
+    # See docs/commissioning-validator-ownership.md.
+    "sysdiff/AGENTS.md",
+    "sysdiff/commissioning/check_packet.py",
+    "sysdiff/commissioning/check_repository_expectations.py",
+    "sysdiff/commissioning/final-commissioning-packet-2026-08-02.json",
+    "sysdiff/commissioning/final-commissioning-packet-2026-08-02.md",
+    "sysdiff/playbooks/final_supervised_commissioning_20260802.yaml",
 )
+# playbooks/ is no longer banned wholesale: the one commissioning playbook is a
+# shipped-contract input. Its authoring surfaces stay development-tree-only, and
+# the exact-membership pin below keeps the rest of the directory out.
 EXCLUDED_ARCHIVE_FRAGMENTS = (
     ".git/",
     "code-reviews/",
-    "playbooks/",
+    "playbooks/templates/",
+    "playbooks/starter_proof.yaml",
     "plans/",
     "dist/",
     ".pytest_cache",
@@ -966,8 +980,32 @@ def test_dist_archive_layout_and_normalized_metadata():
     for fragment in EXCLUDED_ARCHIVE_FRAGMENTS:
         assert fragment not in joined
     assert "sysdiff/code-reviews" not in joined
-    assert "sysdiff/playbooks" not in joined
     assert "sysdiff/plans" not in joined
+    # Exactly one playbook ships. A directory pathspec would sweep in the
+    # templates and the starter proof, so DIST_PATHSPECS names this file.
+    shipped_playbooks = sorted(
+        name
+        for name in name_set
+        if name.startswith("sysdiff/playbooks/") and not name.endswith("/")
+    )
+    assert shipped_playbooks == [
+        "sysdiff/playbooks/final_supervised_commissioning_20260802.yaml"
+    ], shipped_playbooks
+    # commissioning/ ships as a directory, but only tracked mission artifacts
+    # may appear: no run evidence, caches, or credentials.
+    shipped_commissioning = sorted(
+        name
+        for name in name_set
+        if name.startswith("sysdiff/commissioning/") and not name.endswith("/")
+    )
+    assert shipped_commissioning == [
+        "sysdiff/commissioning/check_packet.py",
+        "sysdiff/commissioning/check_repository_expectations.py",
+        "sysdiff/commissioning/final-commissioning-packet-2026-08-02.json",
+        "sysdiff/commissioning/final-commissioning-packet-2026-08-02.md",
+        "sysdiff/commissioning/post-hardening-commissioning-packet.json",
+        "sysdiff/commissioning/post-hardening-commissioning-packet.md",
+    ], shipped_commissioning
 
 
 def test_dist_excludes_untracked_files():

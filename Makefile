@@ -47,6 +47,20 @@ SOURCE_DATE_EPOCH ?= 0
 DIST_PREFIX := sysdiff
 DISTCHECK_EPOCH := 946684800
 # Tracked release pathspecs only (source, tests, build metadata, docs, license).
+# The dist must also carry every file the shipped tests import or read, or the
+# extract fails collection while the source tree passes. tests/
+# test_commissioning_dependencies.py loads commissioning/
+# check_repository_expectations.py and reads the final commissioning packet and
+# its playbook, so those ship as product rather than being skipped when absent.
+# AGENTS.md ships because the packet declares it as an input and the same test
+# asserts every workspace-relative declared input resolves.
+# commissioning/ ships whole: all of it is tracked mission-contract material,
+# and `git ls-files` selection means run output, evidence, caches, and
+# credentials can never enter the archive even when they sit in that directory.
+# playbooks/ ships as one exact file, not the directory: only the final
+# supervised commissioning playbook is part of the shipped contract, while
+# playbooks/templates/ and playbooks/starter_proof.yaml are orchestration
+# authoring surfaces that follow the same development-tree-only rule as plans/.
 DIST_PATHSPECS := \
 	Makefile \
 	LICENSE \
@@ -54,12 +68,15 @@ DIST_PATHSPECS := \
 	CHANGELOG.md \
 	SECURITY.md \
 	CONTRIBUTING.md \
+	AGENTS.md \
 	.gitignore \
 	src \
 	man \
 	tests \
 	scripts \
-	docs
+	docs \
+	commissioning \
+	playbooks/final_supervised_commissioning_20260802.yaml
 
 # Release-candidate archive under artifacts/ (make clean must not remove).
 # Archive and checksum are co-located; the checksum records the archive
