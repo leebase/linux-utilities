@@ -32,6 +32,21 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+### Governed workspace abstraction
+
+- Document the bounded internal workflow repair: the repository-owned journey
+  manifest remains immutable evaluator authority, with workspace-relative paths,
+  required AC traces, canonical journey/result/finding fields, and preserved
+  journey authority. Command claims use token-by-token direct argv-prefix
+  validation and are re-executed without a shell from the governed workspace
+  root as `cwd`; malformed, unmatched, operator-bearing, wrong-cwd, or
+  unverifiable claims fail closed. Deterministic smoke remains aggregate
+  sysdiff compatibility evidence, user simulation remains independently
+  re-executed journey evidence, and diff review remains an independent review
+  of the changed workflow and its evidence. The utility CLI and sysdiff
+  behavior are unchanged, so the man-page phase is omitted. This entry makes
+  no release, installation, packaging, deployment, or new-behavior claim.
+
 - Add the preview `permguard` source, manual page, tests, and strict quality
   wiring. It checks explicitly named paths for group/other writability and
   set-user-ID/set-group-ID bits without following final symlinks.

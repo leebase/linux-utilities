@@ -69,6 +69,33 @@ coverage runs through `make test-asan`, `make test-ubsan`, and
 `PERMGUARD_UNDER_VALGRIND=1` enabling memcheck wrapping. Capability-dependent
 fixtures must give an explicit skip reason and are never counted as passes.
 
+## User journey execution verification
+
+Governed-workflow user simulation is a distinct evidence layer. The immutable
+repository-owned journey manifest is checked for its pinned authority before a
+result is accepted; every required journey and AC trace must remain present.
+Paths are resolved from the canonical governed workspace root, and every
+claimed command is parsed into argv tokens and checked against an allowlisted
+argv prefix token by token. Only a matching argv is re-executed directly,
+without a shell, using the governed workspace root as `cwd`; shell operators,
+malformed or unmatched claims, wrong-cwd claims, exit-code or observed-output
+mismatches, and zero verifiable claims fail closed.
+
+The canonical result contains `journeys` and `findings`. Each journey records
+its name, status, concrete `steps_taken`, and `commands_run`; each command
+claim records `command` and integer `exit_code`, with `stdout_contains` only
+when observed. A failed journey needs a complete actionable finding with
+`id`, `severity`, `journey`, `problem`, `reproduction`, `expected`, `actual`,
+and `proposed_fix`, plus only the permitted optional evidence fields.
+
+Keep the three evidence types separate: deterministic smoke runs the existing
+aggregate sysdiff compatibility chain; user simulation records and verifies
+the declared journey claims; diff review independently inspects the contract,
+plan, playbook, tests, and evidence. Passing one does not prove the others.
+This repair changes no utility CLI or user-visible command, so the man-page
+phase is intentionally omitted; this section is not a release or new sysdiff
+behavior claim.
+
 ## Valgrind Hostile-Input Coverage
 
 Distinguish two layers: ordinary hostile-input regression coverage proves the

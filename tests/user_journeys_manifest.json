@@ -1,0 +1,80 @@
+{
+  "journeys": [
+    {
+      "name": "A user reads the repository-owned journey contract and confirms the manifest is a usable named oracle",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user supplies malformed journey data and receives a specific fail-closed validation result",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user runs the governed check from an unrelated current directory without changing path meaning",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user observes that only the exact allowlisted smoke argv prefix is re-executed directly",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user confirms that required journey authority is retained when the workspace is repaired",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user follows every acceptance-check trace and sees exploratory coverage remain supplementary",
+      "authority": "author",
+      "traces_to": ["AC-1"]
+    },
+    {
+      "name": "A user retries after producer-side narrowing and sees the pinned journey oracle reject tampering",
+      "authority": "author",
+      "traces_to": ["AC-2"]
+    },
+    {
+      "name": "A user reviews a result that reports every journey with concrete steps commands and actionable evidence",
+      "authority": "author",
+      "traces_to": ["AC-2"]
+    },
+    {
+      "name": "A user runs the existing deterministic smoke chain without confusing it with direct journey evidence",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "A user confirms the workspace abstraction remains additive and does not create product release or network behavior",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "An evaluator tries an unexpected working directory and a malformed workspace condition as exploratory coverage",
+      "authority": "exploratory",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "A user runs the real sysdiff binary with no arguments and receives usage guidance instead of a crash",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "A user asks the real sysdiff binary for help and receives its usage summary",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "A user compares two snapshots with the real sysdiff binary and sees deterministic added removed and changed entries",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    },
+    {
+      "name": "A user gives the real sysdiff binary a malformed snapshot and receives an escaped diagnostic without partial output",
+      "authority": "author",
+      "traces_to": ["AC-3"]
+    }
+  ],
+  "command_allowlist": ["build/sysdiff"]
+}

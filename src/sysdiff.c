@@ -44,6 +44,22 @@ static int fputs_checked(const char *text, FILE *stream) {
   return fputs(text, stream) == EOF ? -1 : 0;
 }
 
+static bool checked_size_add(size_t left, size_t right, size_t *result) {
+  if (left > SIZE_MAX - right) {
+    return false;
+  }
+  *result = left + right;
+  return true;
+}
+
+static bool checked_size_mul(size_t left, size_t right, size_t *result) {
+  if (right != 0 && left > SIZE_MAX / right) {
+    return false;
+  }
+  *result = left * right;
+  return true;
+}
+
 static int put_escaped_bytes(FILE *stream, const char *text) {
   for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
     unsigned char ch = *p;
@@ -117,7 +133,9 @@ static int print_usage(FILE *stream) {
  * of terminating the process. Failure aborts before command dispatch. */
 static int ignore_sigpipe_for_stdout(void) {
   if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
-    fprintf(stderr, "sysdiff: cannot ignore SIGPIPE: %s\n", strerror(errno));
+    int signal_errno = errno;
+    fprintf(stderr, "sysdiff: cannot ignore SIGPIPE: %s\n",
+            strerror(signal_errno));
     return 2;
   }
   return 0;
@@ -143,7 +161,12 @@ static char *copy_range(const char *text, size_t len) {
     return NULL;
   }
 
-  char *copy = malloc(len + 1);
+  size_t allocation_size = 0;
+  if (!checked_size_add(len, 1, &allocation_size)) {
+    return NULL;
+  }
+
+  char *copy = malloc(allocation_size);
   if (copy == NULL) {
     return NULL;
   }
@@ -189,19 +212,28 @@ static enum LineStatus read_line(FILE *file, char **out, size_t *out_len,
     /* Allow one extra non-newline byte so a trailing CR in CRLF does not
      * shrink the effective content limit; parse_snapshot enforces the real
      * SYSDIFF_MAX_LINE_BYTES bound after stripping line endings. */
-    if (ch != '\n' && len >= SYSDIFF_MAX_LINE_BYTES + 1) {
+    if (ch != '\n' && len > SYSDIFF_MAX_LINE_BYTES) {
       free(line);
       return LINE_TOO_LONG;
     }
 
-    if (cap - len <= 1) {
-      size_t new_cap = cap == 0 ? 128 : cap * 2;
-      if (new_cap <= cap || new_cap > SIZE_MAX / sizeof(line[0])) {
+    if (cap == 0 || len >= cap - 1) {
+      size_t new_cap = 128;
+      if (cap != 0) {
+        if (cap > SIZE_MAX / 2) {
+          free(line);
+          return LINE_ALLOC_ERROR;
+        }
+        new_cap = cap * 2;
+      }
+      size_t allocation_size = 0;
+      if (new_cap <= cap ||
+          !checked_size_mul(new_cap, sizeof(line[0]), &allocation_size)) {
         free(line);
         return LINE_ALLOC_ERROR;
       }
 
-      char *new_line = realloc(line, new_cap * sizeof(line[0]));
+      char *new_line = realloc(line, allocation_size);
       if (new_line == NULL) {
         free(line);
         return LINE_ALLOC_ERROR;
@@ -278,17 +310,24 @@ static enum AppendStatus snapshot_append(struct Snapshot *snapshot, char *key,
   }
 
   if (snapshot->len == snapshot->cap) {
-    size_t new_cap = snapshot->cap == 0 ? 8 : snapshot->cap * 2;
+    size_t new_cap = 8;
+    if (snapshot->cap != 0) {
+      if (snapshot->cap > SIZE_MAX / 2) {
+        return APPEND_ALLOC_ERROR;
+      }
+      new_cap = snapshot->cap * 2;
+    }
     if (new_cap > SYSDIFF_MAX_SNAPSHOT_ENTRIES) {
       new_cap = SYSDIFF_MAX_SNAPSHOT_ENTRIES;
     }
+    size_t allocation_size = 0;
     if (new_cap <= snapshot->cap ||
-        new_cap > SIZE_MAX / sizeof(snapshot->items[0])) {
+        !checked_size_mul(new_cap, sizeof(snapshot->items[0]),
+                          &allocation_size)) {
       return APPEND_ALLOC_ERROR;
     }
 
-    struct Entry *new_items =
-        realloc(snapshot->items, new_cap * sizeof(snapshot->items[0]));
+    struct Entry *new_items = realloc(snapshot->items, allocation_size);
     if (new_items == NULL) {
       return APPEND_ALLOC_ERROR;
     }
@@ -328,8 +367,9 @@ static bool validate_no_duplicates(const char *path,
 static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
   FILE *file = fopen(path, "rb");
   if (file == NULL) {
+    int open_errno = errno;
     diag_puts_escaped(path);
-    fprintf(stderr, ": cannot open: %s\n", strerror(errno));
+    fprintf(stderr, ": cannot open: %s\n", strerror(open_errno));
     return 2;
   }
 
@@ -445,8 +485,9 @@ static int parse_snapshot(const char *path, struct Snapshot *snapshot) {
   }
 
   if (fclose(file) != 0) {
+    int close_errno = errno;
     diag_puts_escaped(path);
-    fprintf(stderr, ": close failed: %s\n", strerror(errno));
+    fprintf(stderr, ": close failed: %s\n", strerror(close_errno));
     file = NULL;
     goto cleanup;
   }

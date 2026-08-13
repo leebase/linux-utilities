@@ -1294,7 +1294,7 @@ def test_release_excludes_untracked_files():
     """REL-C847-001: release must use git ls-files, not a live-tree find.
 
     Untracked scratch under RELEASE_PATHSPECS directories must not ship. Uses a
-    detached git worktree so decoys never touch the real worktree, and builds
+    isolated detached clone so decoys never touch the real worktree, and builds
     the archive out-of-tree so the suite does not rewrite the live artifacts/
     release deliverable.
     """
@@ -1310,17 +1310,23 @@ def test_release_excludes_untracked_files():
     archive = work / RELEASE_ARCHIVE_REL
     checksum = work / RELEASE_CHECKSUM_REL
     decoy_rels = ("src/STRAY_UNTRACKED.txt", "tests/leftover_scratch.snapshot")
-    worktree_added = False
     try:
-        add = subprocess.run(
-            ["git", "worktree", "add", "--detach", str(wt), "HEAD"],
+        clone = subprocess.run(
+            ["git", "clone", "--no-local", "--no-hardlinks", str(ROOT), str(wt)],
             cwd=str(ROOT),
             capture_output=True,
             text=True,
             check=False,
         )
-        assert add.returncode == 0, add.stderr
-        worktree_added = True
+        assert clone.returncode == 0, clone.stderr
+        detach = subprocess.run(
+            ["git", "checkout", "--detach", "HEAD"],
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert detach.returncode == 0, detach.stderr
 
         # Copy current Makefile/tests into the worktree so the repair under
         # test is what `make release` runs (HEAD alone may lack uncommitted
@@ -1368,14 +1374,6 @@ def test_release_excludes_untracked_files():
             m == "sysdiff-release" or m.startswith("sysdiff-release/") for m in names
         )
     finally:
-        if worktree_added:
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", str(wt)],
-                cwd=str(ROOT),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
         shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(wt, ignore_errors=True)
 

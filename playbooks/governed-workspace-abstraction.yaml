@@ -1,0 +1,623 @@
+{
+  "playbook_id": "governed_workspace_abstraction_delivery",
+  "name": "Governed workspace abstraction delivery",
+  "authoring_notes": [
+    "All repository paths in this playbook are workspace-relative POSIX paths. The user-journey manifest is the repository-owned oracle at tests/user_journeys_manifest.json; validator path resolution is rooted at the governed workspace and rejects absolute, parent-escaping, and symlink-escaping candidates.",
+    "The manifest is an existing immutable input and is pinned before implementation, repair, and user-simulation acceptance. Repair may change only its declared implementation, tests, documentation, and playbook paths; it cannot write the manifest that evaluates the repair.",
+    "The canonical user-test result is an object with journeys and findings. Each journey requires name, status, steps_taken, and commands_run; each command claim requires command and integer exit_code, and each finding requires id, severity, journey, problem, reproduction, expected, actual, and proposed_fix, with optional observations and workspace-relative artifacts.",
+    "user_journeys_execution_verified re-executes only shell-word-split argv prefixes from command_allowlist with token-by-token matching, directly from the governed workspace root without a shell; shell operators, prefix misses, and zero verified claims fail closed.",
+    "The current manifest has author-owned and exploratory journeys, so no external seed is required. If a human- or mission-owned seed is introduced, its workspace-relative seed path must be declared as an input, remain outside implementation and repair write scopes, and be supplied as seed_path to user_journeys_all_passed.",
+    "The canonical smoke route remains tests/smoke_manifest.json -> smoke helpers -> scripts/smoke.sh -> make test. It is aggregate sysdiff evidence, not a substitute for direct journey evidence."
+  ],
+  "defaults": {
+    "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.6-luna"
+      }
+    },
+    "retry_policy": {
+      "max_attempts": 2,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "roles": {
+    "implementation_worker": [
+      {
+        "harness": "codex_cli",
+        "model": "gpt-5.6-luna"
+      }
+    ],
+    "user_tester": [
+      {
+        "harness": "claude_code",
+        "model": "claude-sonnet-5"
+      }
+    ],
+    "slice_reviewer": [
+      {
+        "harness": "claude_code",
+        "model": "claude-sonnet-5"
+      }
+    ]
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "operational_paths": ["tmp", ".agent-orch-scratch"],
+  "steps": [
+    {
+      "step_id": "step_01_define_slice_contract",
+      "name": "Define the governed workspace abstraction contract",
+      "role": "implementation_worker",
+      "mission": "Read AGENTS.md and the current repository orientation. Define the governed workspace abstraction contract under docs/ with the repository-owned manifest path, workspace-relative path containment, direct command_allowlist argv-prefix execution, authority and AC-N traceability, immutable manifest protection, result discipline, and the boundary between deterministic smoke and independent user journeys. Use exact Markdown headings Overview, Problem, Constraints, and Acceptance Checks, with at least 120 non-whitespace characters under each heading. Keep all writes within docs/.",
+      "inputs": [
+        "AGENTS.md",
+        "context.md",
+        "architecture.md",
+        "product-definition.md"
+      ],
+      "allowed_paths": ["docs/governed-workspace-abstraction-contract.md"],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/governed-workspace-abstraction-contract.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/governed-workspace-abstraction-contract.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/governed-workspace-abstraction-contract.md",
+            "headings": ["Overview", "Problem", "Constraints", "Acceptance Checks"],
+            "min_chars_under_heading": 120
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the contract with concrete workspace, command, authority, traceability, immutability, and result-gate rules under the declared docs path.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_03_plan_slice_delivery",
+      "name": "Plan the governed workspace abstraction",
+      "role": "implementation_worker",
+      "mission": "Read the contract and write an implementation plan covering the repository-owned manifest, canonical workspace-relative resolution including symlink containment, token-by-token command allowlisting with no shell, journey authority and contract traces, manifest pinning, producer repair scope, result evidence, compatibility tests, smoke, and review. Map every AC-N to a concrete action. Use exact Markdown headings Architecture, Tests, Verification, and Risks, with at least 120 non-whitespace characters under each heading. Keep all writes within plans/.",
+      "inputs": [
+        "AGENTS.md",
+        "architecture.md",
+        "docs/governed-workspace-abstraction-contract.md"
+      ],
+      "allowed_paths": ["plans/governed-workspace-abstraction-implementation-plan.md"],
+      "outputs": {
+        "required": [
+          {
+            "path": "plans/governed-workspace-abstraction-implementation-plan.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "plans/governed-workspace-abstraction-implementation-plan.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "plans/governed-workspace-abstraction-implementation-plan.md",
+            "headings": ["Architecture", "Tests", "Verification", "Risks"],
+            "min_chars_under_heading": 120
+          }
+        ],
+        "semantic": [
+          {
+            "type": "semantic_check",
+            "path": "plans/governed-workspace-abstraction-implementation-plan.md",
+            "mode": "contract_traceability",
+            "reference_path": "docs/governed-workspace-abstraction-contract.md",
+            "judge_harness": "pi_cli"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the plan so every contract acceptance check maps to a concrete test, playbook, validator, or verification action without broadening the product scope.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_04_author_slice_tests",
+      "name": "Author governed workspace abstraction tests first",
+      "role": "implementation_worker",
+      "mission": "Read the contract, plan, existing governed-run tests, smoke manifest, smoke script, and the existing immutable tests/user_journeys_manifest.json. Author the focused validator tests before implementation and verify that the pinned repository-owned manifest uses command_allowlist [\"bash scripts/smoke.sh\"] as an argv prefix and gives every required journey non-empty traces_to coverage for AC-1 through AC-10, with exploratory coverage supplemental. Do not edit the manifest, implementation, documentation, smoke files, or compatibility tests. Keep the only write within the focused test path.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "plans/governed-workspace-abstraction-implementation-plan.md",
+        "tests/test_governed_run_9add44496178.py",
+        "tests/test_governed_run_c847e01d15fe.py",
+        "tests/test_commissioning_dependencies.py",
+        "tests/smoke_manifest.json",
+        "scripts/smoke.sh",
+        "tests/user_journeys_manifest.json"
+      ],
+      "allowed_paths": [
+        "tests/test_governed_workspace_abstraction.py"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "tests/test_governed_workspace_abstraction.py",
+            "type": "text"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "tests/test_governed_workspace_abstraction.py"
+          },
+          {
+            "type": "file_exists",
+            "path": "tests/user_journeys_manifest.json"
+          },
+          {
+            "type": "json_parse",
+            "path": "tests/user_journeys_manifest.json"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/user_journeys_manifest.json",
+            "sha256": "0d21f5624b734e7b4ff58e02a42190bde9818cc2ae02e272ae964a72564bfbcc"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m compileall tests/test_governed_workspace_abstraction.py",
+            "require_collected_tests": false
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair only the authored validator tests. Keep the existing repository-owned journey manifest unchanged, hash-pinned, trace-complete, and syntactically valid.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_05_implement_slice",
+      "name": "Implement the governed workspace abstraction",
+      "role": "implementation_worker",
+      "mission": "Read the contract, plan, separately authored tests, existing workflow playbook, pinned journey manifest, smoke manifest and helpers, and compatibility tests. Repair only playbooks/governed-workspace-abstraction.yaml. Its user-simulation gate must use docs/governed-workspace-abstraction-contract.md as contract_path, pin tests/user_journeys_manifest.json, preserve complete AC-1 through AC-10 traceability, and enforce the canonical result fields: journeys and findings; journey name/status/steps_taken/commands_run; command command/exit_code with optional stdout_contains; and finding id/severity/journey/problem/reproduction/expected/actual/proposed_fix with optional observations/artifacts. Pair user_journeys_all_passed with the non-advisory user_journeys_execution_verified rule. Require token-by-token matching of shell-word-split argv prefixes, direct execution from the governed workspace root without a shell, and rejection of shell operators, prefix misses, wrong-cwd claims, and zero verified claims. Prevent the user tester from writing product or test paths, and route failures to the prior repair-and-verify step. Preserve distinct deterministic smoke, user-simulation, and independent review gates. Do not modify tests or the pinned manifest; preserve callers and fixtures encoded by the governed-run and commissioning compatibility tests. Keep the only write within the target playbook path.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "plans/governed-workspace-abstraction-implementation-plan.md",
+        "tests/test_governed_workspace_abstraction.py",
+        "tests/test_governed_run_9add44496178.py",
+        "tests/test_governed_run_c847e01d15fe.py",
+        "tests/test_commissioning_dependencies.py",
+        "tests/smoke_manifest.json",
+        "tests/smoke_start.py",
+        "tests/check_sysdiff_smoke.py",
+        "tests/test_sysdiff_fixture.sh",
+        "scripts/smoke.sh",
+        "tests/user_journeys_manifest.json"
+      ],
+      "allowed_paths": ["playbooks/governed-workspace-abstraction.yaml"],
+      "outputs": {
+        "required": [
+          {
+            "path": "playbooks/governed-workspace-abstraction.yaml",
+            "type": "text"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "playbooks/governed-workspace-abstraction.yaml"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/user_journeys_manifest.json",
+            "sha256": "0d21f5624b734e7b4ff58e02a42190bde9818cc2ae02e272ae964a72564bfbcc"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_governed_workspace_abstraction.py -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 180
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the playbook only. Ensure it declares the repository manifest and contract paths, direct argv-prefix and traceability validators, the manifest hash, and a repair scope that cannot write the evaluating manifest.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_06_document_slice",
+      "name": "Document the governed workspace abstraction",
+      "role": "implementation_worker",
+      "mission": "Document the governed workspace abstraction in README.md and CHANGELOG.md. Explain that the repository-owned journey manifest is an evaluator oracle, all paths are workspace-relative, commands are direct argv-prefix claims rather than shell text, AC-N traces are required, the manifest is immutable during repair, and deterministic smoke remains separate from user simulation. Add an exact Markdown heading Governed workspace abstraction to README.md with at least 120 non-whitespace characters under it, and add a substantive Unreleased note to CHANGELOG.md. Do not claim a product release, installation, packaging, or deployment. Keep writes within README.md and CHANGELOG.md.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "plans/governed-workspace-abstraction-implementation-plan.md",
+        "playbooks/governed-workspace-abstraction.yaml",
+        "tests/test_governed_workspace_abstraction.py",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "allowed_paths": ["README.md", "CHANGELOG.md"],
+      "outputs": {
+        "required": [
+          {"path": "README.md", "type": "markdown"},
+          {"path": "CHANGELOG.md", "type": "markdown"}
+        ]
+      },
+      "validation": {
+        "structural": [
+          {"type": "file_exists", "path": "README.md"},
+          {"type": "file_exists", "path": "CHANGELOG.md"},
+          {
+            "type": "markdown_headings_present",
+            "path": "README.md",
+            "headings": ["Governed workspace abstraction"],
+            "min_chars_under_heading": 120
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "CHANGELOG.md",
+            "headings": ["Unreleased"],
+            "min_chars_under_heading": 120
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair only the user-facing documentation and describe the evaluator boundary accurately without changing product scope.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_07_repair_and_verify_slice",
+      "name": "Repair and verify the governed workspace abstraction",
+      "role": "implementation_worker",
+      "mission": "Repair remaining failures in the playbook, focused tests, compatibility tests, and explanatory docs. The repository-owned tests/user_journeys_manifest.json is an immutable evaluator oracle: read it, hash-check it, and never edit it in this repair step. The producer repair scope deliberately omits that manifest, while the later evaluator may write only artifacts/user-test and tmp. Run the focused abstraction tests, all three existing governed-run compatibility modules, and the complete tests/ suite from the governed workspace root. Preserve the existing smoke manifest and helper chain. Keep writes within the explicit repair paths and never add a network, install, package, release, or product behavior.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "plans/governed-workspace-abstraction-implementation-plan.md",
+        "playbooks/governed-workspace-abstraction.yaml",
+        "tests/test_governed_workspace_abstraction.py",
+        "tests/test_governed_run_9add44496178.py",
+        "tests/test_governed_run_c847e01d15fe.py",
+        "tests/test_commissioning_dependencies.py",
+        "tests/user_journeys_manifest.json",
+        "tests/smoke_manifest.json",
+        "scripts/smoke.sh",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "allowed_paths": [
+        "playbooks/governed-workspace-abstraction.yaml",
+        "tests/test_governed_workspace_abstraction.py",
+        "tests/test_governed_run_9add44496178.py",
+        "tests/test_governed_run_c847e01d15fe.py",
+        "tests/test_commissioning_dependencies.py",
+        "README.md",
+        "CHANGELOG.md",
+        "tmp"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "playbooks/governed-workspace-abstraction.yaml",
+            "type": "text"
+          },
+          {
+            "path": "tests/test_governed_workspace_abstraction.py",
+            "type": "text"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_hash_matches",
+            "path": "tests/user_journeys_manifest.json",
+            "sha256": "0d21f5624b734e7b4ff58e02a42190bde9818cc2ae02e272ae964a72564bfbcc"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_governed_workspace_abstraction.py tests/test_governed_run_9add44496178.py tests/test_governed_run_c847e01d15fe.py tests/test_commissioning_dependencies.py -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 300
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 600
+          },
+          {
+            "type": "command_succeeds",
+            "command": "git diff --check",
+            "timeout_seconds": 30
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the playbook, compatibility tests, or docs while preserving the pinned manifest, then rerun focused compatibility tests and the complete suite. Do not write tests/user_journeys_manifest.json.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_08_user_smoke_gate",
+      "name": "Run the canonical user smoke gate",
+      "worker": "smoke_runner",
+      "mission": "Run the existing deterministic smoke route from the governed workspace root and capture artifacts/user-smoke/result.json. Do not modify the smoke manifest, smoke helpers, scripts/smoke.sh, Makefile, or product files. This aggregate sysdiff-centered route is evidence for compatibility only and must not be relabeled as direct user-journey evidence.",
+      "inputs": [
+        "tests/smoke_manifest.json",
+        "tests/smoke_start.py",
+        "tests/check_sysdiff_smoke.py",
+        "tests/test_sysdiff_fixture.sh",
+        "scripts/smoke.sh",
+        "playbooks/governed-workspace-abstraction.yaml"
+      ],
+      "allowed_paths": ["artifacts/user-smoke", "build", "tmp"],
+      "outputs": {
+        "required": [
+          {"path": "artifacts/user-smoke/result.json", "type": "json"}
+        ]
+      },
+      "validation": {
+        "structural": [
+          {"type": "file_exists", "path": "artifacts/user-smoke/result.json"},
+          {"type": "json_parse", "path": "artifacts/user-smoke/result.json"},
+          {
+            "type": "file_hash_matches",
+            "path": "tests/smoke_manifest.json",
+            "sha256": "07dba4c4d19ba6c26192276a23708141c3f55d4e72df3547d3db59fd499706ec"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/smoke_start.py",
+            "sha256": "bc6d21ca69d0acb20a2f9cd1e685d097af118c528e8a3d39af63f5c253516fe6"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/check_sysdiff_smoke.py",
+            "sha256": "28a1eec3aa6597d206b76cd45cc163f99c325f87679ae1de784afce6f7f91f1a"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "tests/test_sysdiff_fixture.sh",
+            "sha256": "bb0b41a9521df058b89910a0352c2bf42e8f248261cedadcef4b6e315c317bcc"
+          },
+          {
+            "type": "file_hash_matches",
+            "path": "scripts/smoke.sh",
+            "sha256": "daca1ec8b6d0da5d40d65161342f585d0b732d053cf88a396199e63897919667"
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "bash scripts/smoke.sh",
+            "timeout_seconds": 300
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the governed slice only if the pinned deterministic smoke oracle remains unchanged; a pin failure is an external change and must halt rather than be rewritten.",
+        "after_retries_exhausted": "halt",
+        "repair": {
+          "step_id": "step_07_repair_and_verify_slice",
+          "max_cycles": 2
+        }
+      }
+    },
+    {
+      "step_id": "step_08b_user_simulation_gate",
+      "name": "Run the independent user simulation",
+      "role": "user_tester",
+      "mission": "Act as an independent evaluator from the governed workspace root. Read docs/governed-workspace-abstraction-contract.md, the pinned repository-owned tests/user_journeys_manifest.json, the playbook, the smoke evidence, and the documented boundary. Attempt every named journey, including exploratory coverage, and write artifacts/user-test/result.json plus an append-only artifacts/user-test/findings-log.md. The result must be the canonical object with journeys and findings arrays. Every journey must contain name, status, non-empty concrete steps_taken, and non-empty commands_run; every command claim must contain command and its actual integer exit_code and may contain stdout_contains only when observed. Every failure must have a finding containing id, severity, journey, problem, reproduction, expected, actual, and proposed_fix, with optional observations and non-empty workspace-relative artifacts when cited. Use only commands whose shell-word-split argv matches a manifest command_allowlist entry token by token; record bare argv claims rather than shell pipelines, redirections, or other shell operators. The paired execution validator directly re-executes those argv claims from the governed workspace root without a shell, so wrong-cwd claims, prefix misses, malformed commands, and zero verified claims fail closed. Do not edit tests/user_journeys_manifest.json, product files, tests, smoke files, the playbook, or any path outside artifacts/user-test and tmp. The manifest hash is checked before journey acceptance, the contract path enforces complete AC-1 through AC-10 coverage, and the manifest is evaluated independently of producer repair scope.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "tests/user_journeys_manifest.json",
+        "tests/smoke_manifest.json",
+        "scripts/smoke.sh",
+        "playbooks/governed-workspace-abstraction.yaml",
+        "artifacts/user-smoke/result.json",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "allowed_paths": ["artifacts/user-test", "tmp"],
+      "outputs": {
+        "required": [
+          {"path": "artifacts/user-test/result.json", "type": "json"},
+          {"path": "artifacts/user-test/findings-log.md", "type": "markdown"}
+        ]
+      },
+      "validation": {
+        "structural": [
+          {"type": "file_exists", "path": "artifacts/user-test/result.json"},
+          {"type": "json_parse", "path": "artifacts/user-test/result.json"},
+          {"type": "file_exists", "path": "artifacts/user-test/findings-log.md"},
+          {
+            "type": "file_hash_matches",
+            "path": "tests/user_journeys_manifest.json",
+            "sha256": "0d21f5624b734e7b4ff58e02a42190bde9818cc2ae02e272ae964a72564bfbcc"
+          },
+          {
+            "type": "user_journeys_all_passed",
+            "path": "artifacts/user-test/result.json",
+            "manifest_path": "tests/user_journeys_manifest.json",
+            "contract_path": "docs/governed-workspace-abstraction-contract.md"
+          }
+        ],
+        "system": [
+          {
+            "type": "user_journeys_execution_verified",
+            "path": "artifacts/user-test/result.json",
+            "manifest_path": "tests/user_journeys_manifest.json",
+            "advisory": false,
+            "timeout_seconds": 600
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the implementation through step_07, not the evaluator or manifest. The result must cover every pinned journey with canonical name, status, steps_taken, and commands_run fields; command claims must contain command and exit_code; findings must contain id, severity, journey, problem, reproduction, expected, actual, and proposed_fix, with valid non-empty evidence when cited. Use direct allowlisted argv claims and route product or workflow defects through the repair edge.",
+        "after_retries_exhausted": "halt",
+        "repair": {
+          "step_id": "step_07_repair_and_verify_slice",
+          "max_cycles": 2
+        }
+      }
+    },
+    {
+      "step_id": "step_09_review_verified_slice",
+      "name": "Independently review the verified abstraction",
+      "role": "slice_reviewer",
+      "mission": "Read the contract, plan, playbook, focused and compatibility tests, smoke result, user result, findings log, README, and CHANGELOG. Review both the playbook boundary and the independent journey evidence. Write code-reviews/review-governed-workspace-abstraction.md with exact headings Checks Run and Lens Notes, with at least 40 non-whitespace characters under each heading, and write code-reviews/review-governed-workspace-abstraction.verdict.json using builtin:review_verdict/v1. Run and report the exact allowlisted command PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q with its real exit code, along with any other checks actually run. Treat any Critical or High finding as a repair trigger. Keep writes within code-reviews/.",
+      "inputs": [
+        "AGENTS.md",
+        "docs/governed-workspace-abstraction-contract.md",
+        "plans/governed-workspace-abstraction-implementation-plan.md",
+        "playbooks/governed-workspace-abstraction.yaml",
+        "tests/test_governed_workspace_abstraction.py",
+        "tests/test_governed_run_9add44496178.py",
+        "tests/test_governed_run_c847e01d15fe.py",
+        "tests/test_commissioning_dependencies.py",
+        "tests/user_journeys_manifest.json",
+        "artifacts/user-smoke/result.json",
+        "artifacts/user-test/result.json",
+        "artifacts/user-test/findings-log.md",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "allowed_paths": ["code-reviews"],
+      "outputs": {
+        "required": [
+          {
+            "path": "code-reviews/review-governed-workspace-abstraction.md",
+            "type": "markdown"
+          },
+          {
+            "path": "code-reviews/review-governed-workspace-abstraction.verdict.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "code-reviews/review-governed-workspace-abstraction.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "code-reviews/review-governed-workspace-abstraction.md",
+            "headings": ["Checks Run", "Lens Notes"],
+            "min_chars_under_heading": 40
+          },
+          {
+            "type": "json_schema",
+            "path": "code-reviews/review-governed-workspace-abstraction.verdict.json",
+            "schema_path": "builtin:review_verdict/v1"
+          },
+          {
+            "type": "review_verdict_clean",
+            "path": "code-reviews/review-governed-workspace-abstraction.verdict.json",
+            "severity_threshold": "High"
+          }
+        ],
+        "system": [
+          {
+            "type": "checks_run_match",
+            "path": "code-reviews/review-governed-workspace-abstraction.verdict.json",
+            "timeout_seconds": 600
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair only the governed implementation and its honest review evidence; keep the manifest pinned and make every checks_run claim reproduce exactly.",
+        "after_retries_exhausted": "halt",
+        "repair": {
+          "step_id": "step_07_repair_and_verify_slice",
+          "max_cycles": 2
+        }
+      }
+    },
+    {
+      "step_id": "step_10_closeout_handoff_docs",
+      "name": "Record the governed workspace abstraction handoff",
+      "role": "implementation_worker",
+      "mission": "After review, update context.md, result-review.md, sprint-plan.md, and WHERE_AM_I.md with a factual handoff that distinguishes authoritative validator evidence from worker claims, names the immutable manifest and direct-command boundary, records the full-suite and smoke evidence actually available, and does not claim release, installation, packaging, publication, or deployment. Preserve exact headings Snapshot and What's Happening Now in context.md, with at least 80 non-whitespace characters under each heading. Keep writes within the declared handoff files.",
+      "inputs": [
+        "AGENTS.md",
+        "code-reviews/review-governed-workspace-abstraction.md",
+        "code-reviews/review-governed-workspace-abstraction.verdict.json",
+        "context.md",
+        "result-review.md",
+        "sprint-plan.md",
+        "WHERE_AM_I.md"
+      ],
+      "allowed_paths": [
+        "context.md",
+        "result-review.md",
+        "sprint-plan.md",
+        "WHERE_AM_I.md"
+      ],
+      "outputs": {
+        "required": [
+          {"path": "context.md", "type": "markdown"},
+          {"path": "result-review.md", "type": "markdown"}
+        ]
+      },
+      "validation": {
+        "structural": [
+          {"type": "file_exists", "path": "context.md"},
+          {"type": "file_exists", "path": "result-review.md"},
+          {
+            "type": "markdown_headings_present",
+            "path": "context.md",
+            "headings": ["Snapshot", "What's Happening Now"],
+            "min_chars_under_heading": 80
+          }
+        ],
+        "semantic": [
+          {
+            "type": "semantic_check",
+            "path": "context.md",
+            "question": "Does the handoff accurately describe the governed workspace abstraction and its review verdict, preserve the distinction between the immutable journey manifest and producer repair scope, and avoid claiming unsupported release or verification outcomes?",
+            "reference_path": "code-reviews/review-governed-workspace-abstraction.verdict.json",
+            "judge_harness": "pi_cli"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Repair the handoff docs so they match the review verdict and recorded evidence while preserving the workspace-abstraction boundary and conservative release posture.",
+        "after_retries_exhausted": "halt"
+      }
+    }
+  ]
+}

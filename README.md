@@ -96,6 +96,30 @@ make quality
 See [TESTING.md](TESTING.md) and [QUALITY.md](QUALITY.md) for the full tool
 list and individual targets.
 
+## Governed workspace abstraction
+
+The repository also documents an internal governed-workflow repair. The
+repository-owned `tests/user_journeys_manifest.json` is the immutable evaluator
+oracle: repair work must preserve its journeys, authority, traces, and command
+allowlist. Manifest, contract, playbook, result, and cited-artifact paths are
+resolved relative to the canonical governed workspace root. A claimed command
+is shell-word parsed and accepted only when its complete argv begins with an
+allowlisted argv prefix, matched token by token. The matched argv is executed
+directly, with no shell and with the governed workspace root as `cwd`; shell
+operators, malformed words, prefix misses, wrong-cwd claims, and zero verified
+claims fail closed. Results use canonical `journeys` and `findings` structures:
+journeys record concrete steps and command claims, while findings retain the
+required problem, reproduction, expected, actual, and proposed-fix fields.
+
+The existing deterministic smoke route remains aggregate compatibility evidence
+for the sysdiff-centered suite. User simulation is separate evidence that
+records journeys and claims for independent re-execution. Diff review is a
+separate inspection of the contract, plan, repaired playbook, tests, and
+evidence; none of these gates can be relabeled as another. This repair changes
+no utility CLI or user-visible command, so its man-page phase is omitted. It
+does not claim new sysdiff behavior, release, installation, packaging, or
+deployment.
+
 ## Design principles
 
 - One clear job per executable.

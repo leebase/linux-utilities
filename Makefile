@@ -406,6 +406,15 @@ test-valgrind:
 		OPENUNLINK_BIN="$$openunlink_bin" OPENUNLINK_UNDER_VALGRIND=1 \
 		./tests/test_sysdiff.sh || status=$$?; \
 	if [ "$$status" -eq 0 ]; then \
+		fuzz_wrapper="$$workdir/sysdiff-fuzz-valgrind-wrapper"; \
+		printf '%s\n' '#!/bin/sh' \
+			"exec valgrind --quiet --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,possible \"$$tmpbin\" \"\$$@\"" \
+			>"$$fuzz_wrapper"; \
+		chmod 755 "$$fuzz_wrapper"; \
+		SYSDIFF_BIN="$$fuzz_wrapper" SYSDIFF_UNDER_VALGRIND=0 \
+			$(PYTEST_NO_CACHE) tests/test_sysdiff_malformed_fuzz.py -q || status=$$?; \
+	fi; \
+	if [ "$$status" -eq 0 ]; then \
 		SYSDIFF_BIN="$$tmpbin" SYSDIFF_UNDER_VALGRIND=1 \
 			PATHAUDIT_BIN="$$pathaudit_bin" PATHAUDIT_UNDER_VALGRIND=1 \
 			PERMGUARD_BIN="$$permguard_bin" PERMGUARD_UNDER_VALGRIND=1 \

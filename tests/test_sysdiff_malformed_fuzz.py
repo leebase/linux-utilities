@@ -543,6 +543,15 @@ def run_compare_case(
         before, after = companion, malformed
 
     cmd = [str(binary), "compare", str(before), str(after)]
+    if os.environ.get("SYSDIFF_UNDER_VALGRIND") == "1":
+        cmd = [
+            "valgrind",
+            "--quiet",
+            "--error-exitcode=99",
+            "--leak-check=full",
+            "--errors-for-leak-kinds=definite,possible",
+            *cmd,
+        ]
     try:
         result = subprocess.run(
             cmd,
