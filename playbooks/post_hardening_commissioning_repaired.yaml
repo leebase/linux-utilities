@@ -1,0 +1,229 @@
+{
+  "playbook_id": "post_hardening_commissioning_repaired",
+  "name": "Linux Utilities post-hardening commissioning after bounded repairs",
+  "authoring_notes": [
+    "Prepared from the supported docs_only commissioning shape after e5e872615eed.",
+    "The producing worker receives one self-contained packet and does not receive broad shared-memory history.",
+    "The playbook preserves explicit user_tester and read-only semantic-judge routes, identity gates, and the paused mission requirement.",
+    "This playbook is prepared for explicit supervised execution; using it never enables autonomous scheduling or implies human approval.",
+    "The continuation after c407cbd5bdf4 is intentionally bounded: preserved validator evidence supplies the completed checks, while the worker only closes the existing report."
+  ],
+  "defaults": {
+    "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.6-sol"
+      }
+    },
+    "retry_policy": {
+      "max_attempts": 1,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "roles": {
+    "user_tester": [
+      {
+        "harness": "claude_code",
+        "model": "claude-opus-5"
+      }
+    ]
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_commission_repaired_state",
+      "name": "Commission repaired post-hardening state",
+      "mission": "This is a bounded continuation after a producer timeout. The prior attempt already created docs/mission-post-hardening-commissioning.md, and the Agent-Orch system-validator and semantic-judge evidence is preserved for this retry. Read only that existing report, the commissioning packet, and the preserved validator evidence supplied in this mission packet. Do not rerun any validation command by default, do not inspect unrelated history or authority files, and do not repeat the full-suite or distribution checks. Confirm that the existing report has the exact headings Findings, Evidence, Local Verification, Route And Provider Verification, Mission Pause, Failure Classification, and Recommendation, that each has at least 100 non-whitespace characters, and that it honestly classifies the prior worker/runtime failure and does not claim readiness. If it already satisfies those conditions, leave it unchanged and return a concise completion summary immediately. If a correction is strictly necessary, edit only docs/mission-post-hardening-commissioning.md and then return. Do not modify product files, tests, scripts, routing, schedules, Agent-Orch, or remote state; do not restore cron, re-arm, push, or launch another run.",
+      "inputs": [
+        "AGENTS.md",
+        "commissioning/post-hardening-commissioning-packet.md",
+        "commissioning/post-hardening-commissioning-packet.json",
+        "commissioning/check_packet.py",
+        "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+        "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
+        "/home/lee/projects/auto-orch/config/crews.yaml"
+      ],
+      "allowed_paths": [
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/mission-post-hardening-commissioning.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/mission-post-hardening-commissioning.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/mission-post-hardening-commissioning.md",
+            "headings": [
+              "Findings",
+              "Evidence",
+              "Local Verification",
+              "Route And Provider Verification",
+              "Mission Pause",
+              "Failure Classification",
+              "Recommendation"
+            ],
+            "min_chars_under_heading": 100
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 commissioning/check_packet.py --workspace /home/lee/projects/linux-utilities-autonomous --manifest commissioning/post-hardening-commissioning-packet.json --json",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --json",
+            "timeout_seconds": 120
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --protect --dry-run --json",
+            "timeout_seconds": 120
+          },
+          {
+            "type": "command_succeeds",
+            "command": "bash -n /home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh --dry-run",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_openunlink.py -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 180
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 300
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_sysdiff.py::test_dist_extracts_builds_and_tests_outside_workspace -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 360
+          },
+          {
+            "type": "command_succeeds",
+            "command": "git diff --check",
+            "timeout_seconds": 30
+          }
+        ],
+        "semantic": [
+          {
+            "type": "semantic_check",
+            "path": "docs/mission-post-hardening-commissioning.md",
+            "mode": "criterion",
+            "reference_path": "commissioning/post-hardening-commissioning-packet.md",
+            "question": "Does the commissioning report faithfully apply the bounded packet, preserve repository identity and evidence-chain checks, record exact focused/full/distribution verification, verify deterministic producer/user_tester/semantic-judge routes and provider availability, preserve the paused mission, distinguish product from platform failures, and refuse readiness unless every packet acceptance criterion is evidenced?",
+            "judge_harness": "pi_cli"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Use only the commissioning packet and declared authority inputs. Repair the report under docs/ only, record commands actually run, and classify any missing evidence or failure precisely. Do not change product files, tests, routing, schedules, Agent-Orch, or remote state.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_02_independent_user_tester_route",
+      "role": "user_tester",
+      "name": "Exercise independent user tester route",
+      "mission": "This is a bounded schema-repair continuation after the evaluator produced a detailed result without the playbook's required top-level keys. Read the existing artifacts/commissioning-evaluator/result.json and preserve its detailed findings, divergences, acceptance-criteria analysis, failure classifications, and Not ready recommendation. Add or repair only the required top-level JSON contract fields: identity_verified, scratch_retention_verified, routing_verified, user_tester_route_verified, semantic_judge_provider_verified, mission_paused, and recommendation. Every required boolean must be present and truthful; use false for any failed, blocked, or unproven criterion and never infer a pass. Set recommendation to exactly Not ready. Do not rerun validation commands, do not modify the report, product files, tests, scripts, routing sources, schedules, Agent-Orch, or remote state, and write only artifacts/commissioning-evaluator/result.json.",
+      "inputs": [
+        "docs/mission-post-hardening-commissioning.md",
+        "commissioning/post-hardening-commissioning-packet.md",
+        "commissioning/post-hardening-commissioning-packet.json",
+        "commissioning/check_packet.py",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
+        "/home/lee/projects/auto-orch/config/crews.yaml"
+      ],
+      "allowed_paths": [
+        "artifacts/commissioning-evaluator/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "artifacts/commissioning-evaluator/result.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "json_schema",
+            "path": "artifacts/commissioning-evaluator/result.json",
+            "schema": {
+              "type": "object",
+              "required": [
+                "identity_verified",
+                "scratch_retention_verified",
+                "routing_verified",
+                "user_tester_route_verified",
+                "semantic_judge_provider_verified",
+                "mission_paused",
+                "recommendation"
+              ],
+              "properties": {
+                "identity_verified": {"type": "boolean"},
+                "scratch_retention_verified": {"type": "boolean"},
+                "routing_verified": {"type": "boolean"},
+                "user_tester_route_verified": {"type": "boolean"},
+                "semantic_judge_provider_verified": {"type": "boolean"},
+                "mission_paused": {"type": "boolean"},
+                "recommendation": {"type": "string"}
+              },
+              "additionalProperties": true
+            }
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "python3 -c \"import json, pathlib; json.loads(pathlib.Path('artifacts/commissioning-evaluator/result.json').read_text())\"",
+            "timeout_seconds": 30
+          }
+        ]
+      },
+      "on_fail": {
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_03_commissioning_approval",
+      "type": "human_approval",
+      "name": "Approve commissioning evidence",
+      "mission": "Human gate: read the commissioning report and independent evaluator result. Approve only if the evidence is faithful, identity and route artifacts are preserved, the semantic judge actually completed, the mission remained paused, and the recommendation does not authorize re-arm. The run remains WAITING_APPROVAL until explicit human approval is recorded.",
+      "inputs": [
+        "docs/mission-post-hardening-commissioning.md",
+        "artifacts/commissioning-evaluator/result.json"
+      ]
+    }
+  ]
+}

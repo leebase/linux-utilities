@@ -1,5 +1,232 @@
 # Sprint Plan
 
+## Temporal-evidence commissioning — 2026-08-02
+
+- [x] Supersede prior parked commissioning run `f46965f7b80a` through the
+  supported operator record without changing its run directory or evidence.
+- [x] Verify supervised preflight, packet completeness, repository identity,
+  pause/scheduler state, routing/provider readiness, and commissioning checks.
+- [x] Launch exactly one fresh supervised run: `ddb08f4d2714`.
+- [x] Preserve producer/evaluator route attestations, semantic-judge and
+  validator attestations, identity snapshots, evaluator packet, approval
+  packet, route artifacts, and evidence-chain records.
+- [x] Review the merged evaluator report and platform-owned attestations at the
+  human gate; leave approval withheld.
+- [ ] Resolve the missing exact-scope `evidence_chain_verified` attestation
+  and committed platform-baseline posture under separate authorization before
+  any future commissioning cycle. Do not resume, re-arm, restore cron, push,
+  or launch another run from this slice.
+
+Final recommendation: **Not ready** for controlled autonomous re-arm. The run
+recommends `Ready for controlled pilot`, but that does not satisfy the required
+autonomous-re-arm approval condition; its gate remains `WAITING_APPROVAL`.
+
+## First fresh supervised commissioning under Contract v1 — 2026-08-02
+
+- [x] Run the required preflight: packet 16/16, repository identity,
+  protection, pause, disabled Linux Utilities loop, no active governed run,
+  deterministic mixed-economy routing, and provider readiness.
+- [x] Launch exactly one fresh supervised governed run:
+  `f46965f7b80a`.
+- [x] Preserve the producer, independent user-tester, semantic-judge,
+  validator-authority, route, identity, and evidence-chain records.
+- [x] Evaluate the authoritative readiness report and bound human gate.
+- [x] Leave approval withheld because the recommendation is `Not ready` and
+  `runtime_route_execution` plus `user_tester_route` are
+  `verification_failed`.
+- [ ] Repair the two route-evidence provenance gaps and obtain separate
+  authorization before any future commissioning cycle.
+
+Final recommendation: **Not ready**. Run evidence is outside the workspace at
+`../linux-utilities-agent-orch-runs/f46965f7b80a/f46965f7b80a/`; keep the
+audited pause, disabled scheduler, and all prior lineages untouched.
+
+## Platform commissioning contract migration — 2026-08-02
+
+- [x] Replace boolean evaluator readiness with the platform
+  `readiness_report` vocabulary and ten explicit criteria.
+- [x] Declare evaluator authority inputs and consume the platform's seven
+  evidence classes through its governed evaluator handoff.
+- [x] Bind human approval to the same report and criteria with
+  `readiness_gate`; missing report, gate, or criteria is fail-closed.
+- [x] Add evaluator/readiness contracts, before/after evidence, and reusable
+  migration notes for other autonomous missions.
+- [x] Run `check-commissioning` successfully and verify packet completeness.
+- [x] Do not launch the next supervised commissioning run.
+
+Validation is complete for this migration only. The mission remains paused,
+autonomous scheduling remains disabled, and any future governed run requires
+separate authorization.
+
+## Final supervised commissioning under platform baseline — 2026-08-02
+
+- [x] Record the audited mission pause with supervised commissioning allowed.
+- [x] Supersede `77fc787b8e91` externally without approval, resume, or mutation;
+  re-verify its unchanged 4-entry / 24-artifact evidence chain.
+- [x] Launch exactly one new independent governed commissioning run:
+  `b69d197e720f`.
+- [x] Continue that same lineage through the supported validation-only repair:
+  `9060cd44d39d`, with no second independent launch.
+- [x] Verify packet, identity, scratch, routing, provider, producer, tester,
+  semantic-judge, validator, and evidence-chain authority.
+- [ ] Resolve the supported human-gate and active-run overlap before any
+  autonomous re-arm; keep the audited pause and disabled scheduler intact.
+
+Final recommendation: **Ready after specific follow-up**. The detailed report
+is `docs/mission-post-hardening-final-commissioning-report.md`.
+
+## Trial/resume diagnosis and governed closeout — 2026-08-02
+
+- [x] Diagnose the post-auth producer timeout without raising 600 seconds.
+- [x] Prove the root was an over-broad reporting task and duplicate validation,
+  not a general stdin, provider, product, identity, or routing execution hang.
+- [x] Repair the continuation into a bounded report-closeout slice and state
+  the evaluator's seven required top-level JSON fields.
+- [x] Resume the existing lineage through both worker steps: final continuation
+  `77fc787b8e91`, evidence verified 4 entries / 24 artifacts.
+- [ ] Obtain explicit human approval for `step_03_commissioning_approval` only
+  after reviewing the evaluator's `Not ready` blockers; do not approve
+  automatically.
+
+The final continuation is `WAITING_APPROVAL`, not a completed commissioning
+pass. Autonomous `main@650ebeb` remains clean except for the required report,
+Linux Utilities loop cron count is zero, and scratch-pruner count is one. The
+remaining findings are the worker/validator full-suite context divergence,
+stale routing authority versus `mixed-economy`, and lack of a supported
+paused-state proof. Do not re-arm, restore cron, push, or launch another run.
+
+## Cost-effective mixed crew selected — 2026-08-02
+
+- [x] Select the existing `mixed-economy` crew for Linux Utilities.
+- [x] Preserve cross-vendor judgment, governed producer/reviewer/judge routes,
+  independent testing, semantic review, identity enforcement, and strict
+  gates.
+- [ ] Run read-only preflight and route resolution before any future
+  separately authorized governed run.
+
+This routing change does not enable cron, re-arm the mission, launch a run,
+change the crew catalog, weaken validation, or resolve the outstanding
+semantic-judge provider credential issue.
+
+## Supervised commissioning result — 2026-08-02
+
+- [x] Launch exactly one newly authorized governed run: `c407cbd5bdf4`.
+- [x] Preserve producer prompt/envelope, route selection, validator output,
+  identity snapshots, semantic-judge attempt, sealed evidence, and final
+  state.
+- [x] Verify the evidence chain: 3 entries / 24 artifacts, no divergence.
+- [x] Confirm focused 134 passed, full 547 passed / 19 skipped, distribution
+  extraction 1 passed, packet completeness, 19 identity checks, scratch,
+  governance, and diff checks passed.
+- [ ] Restore the authorized `openai-codex` credential for the semantic judge
+  and obtain separate authorization for another supervised run.
+
+Run `c407cbd5bdf4` halted at step 1 because the required `pi_cli` / `gpt-5.5`
+semantic judge exited with `No API key found for openai-codex`. This is a
+provider/configuration failure; it does not justify changing the 600-second
+worker timeout, routing, tests, or governance. The producer completed and
+made only its required report. User testing and human approval were not
+reached. Keep the Linux Utilities loop cron disabled, do not re-arm or push,
+and do not launch another run without separate authorization.
+
+Recommendation: **Ready after specific follow-up**.
+
+## Corrected branch posture and supervised commissioning — 2026-08-02
+
+- [x] Correct the earlier branch-label error: interactive preparation is
+  `agent/public-utility-guides` at `34e4a4a`; autonomous execution is `main` at
+  `650ebeb`.
+- [x] Confirm the linked-worktree arrangement and all 19 identity checks pass.
+- [x] Confirm the prepared playbook is explicitly supplied from the
+  interactive checkout and is not a mission-level launch input.
+- [x] Confirm all ten producer inputs exist in the autonomous worktree.
+- [ ] Execute exactly one newly authorized supervised governed run.
+- [ ] Preserve route, worker, validator, identity, user-test, semantic-review,
+  evidence-chain, and final-state artifacts; do not re-arm recurring execution.
+
+The read-only commissioning report is
+`../linux-utilities-agent-orch-runs/commissioning-readonly-final-20260802.json`.
+
+## Repaired post-hardening commissioning closeout — 2026-08-01
+
+- [x] Launch exactly one authorized governed run: `c5b4699e5cdb`.
+- [x] Preserve and verify repository identity and the sealed evidence chain.
+- [x] Confirm the authoritative validators are green and distinguish their
+  product result from the worker sandbox failure.
+- [x] Confirm no product changes, push, re-arm, cron restoration, timeout
+  change, routing/provider change, or second run occurred.
+- [ ] Before another separately authorized supervised run, remove duplicated
+  long-suite execution from the producer/reporting task and pass preserved
+  system-validator evidence into that bounded report step.
+- [ ] Resolve the `git worktree add` test's need to mutate the shared Git common
+  directory without broadening worker filesystem access or weakening identity
+  protection. Keep the explicit paused-state feature as a separate Auto-Orch
+  backlog item.
+
+Recommendation: **Ready after specific follow-up**. Do not increase the worker
+timeout based on this run and do not resume `c5b4699e5cdb`.
+
+## Scheduler reconciliation — 2026-08-01
+
+- [x] Verify the Linux Utilities autonomous loop is not scheduled: its exact
+  `#5 * * * * ... loop linux-utilities` entry is preserved as a comment.
+- [x] Confirm no Linux Utilities worker is running and no governed run started
+  during reconciliation; leave the scratch-pruner untouched.
+- [x] Audit other configured autonomous missions without changing them.
+- [ ] Resolve the platform state-model gap: `loop_state: idle` is interpreted
+  as armed, while only real value exhaustion produces a preflight-blocking
+  halt. No supported paused-but-commissioning-ready state exists. Do not add a
+  false halt marker, change counters, restore cron, re-arm, launch, or push.
+
+Evidence: `docs/mission-scheduler-reconciliation.md`. Current recommendation:
+**Ready after specific follow-up**.
+
+## Post-hardening commissioning preparation — 2026-08-01
+
+- [x] Align the commissioning packet with the autonomous worktree under
+  `commissioning/`; do not make the next worker reconstruct unrelated history.
+- [x] Repair stale openunlink fixture size expectations and complete the
+  documentation/contract slice without changing product source behavior.
+- [x] Verify focused 134 passed, full 548 passed / 18 skipped, distribution
+  extraction 1 passed, packet completeness, identity, scratch dry-run, strict
+  prepared-playbook lint, and `git diff --check`.
+- [ ] Before any autonomous re-arm, obtain authorized reconciliation of the
+  still-uncommented Linux Utilities cron line. The mission state is halted and
+  auto-orch preflight no-ops, but the schedule is not cleanly disarmed.
+- [ ] Launch only after separate authorization; keep the mission paused, do not
+  restore cron, re-arm, or push.
+
+## Timeout diagnosis and next governed slices — 2026-08-01
+
+Run `e5e872615eed` remains a terminal failed commissioning attempt, not a
+candidate for resume. The worker timeout was caused by an over-broad
+docs-only commissioning task, missing relative inputs in the autonomous
+worktree, and model-directed exploratory reading; the provider and route did
+execute, identity stayed stable, and no files changed. The current baseline is
+18 failures: one 15-test seam-fixture cluster, one two-test documentation/
+contract cluster, and one distribution cascade. Next order is: align the
+post-hardening baseline and packet, repair the fixture expectations without
+changing product semantics, finish the bounded openunlink documentation and
+authority text, rerun focused/full/distribution tests, then obtain separate
+authorization for another supervised commissioning run. Keep identity,
+deterministic routing, independent user testing, semantic review, evidence
+verification, and the paused mission state intact. Do not increase timeout,
+re-arm, restore cron, push, or suppress tests. Detailed diagnosis:
+`docs/mission-post-hardening-timeout-diagnosis.md`.
+
+## Post-hardening commissioning closeout — 2026-08-01
+
+One supervised commissioning run `e5e872615eed` was launched and reached a
+real terminal `FAILED` result. Identity snapshots and comparisons passed,
+deterministic playbook routing and provider preflight passed, scratch retention
+was clean, and the mission stayed paused. The producing Codex route timed out
+at 600 seconds before the semantic judge and independent `user_tester` gates;
+the full-suite validator also recorded 18 product failures on the known red
+test-first `openunlink` baseline. Keep the sprint recommendation **Not ready**.
+Do not re-arm, restore cron, push, or bypass gates. The complete report is
+`docs/mission-post-hardening-commissioning-report.md`; preserved run evidence
+is outside the workspace under the sibling runs root.
+
 ## Current — Mission Infrastructure Recovery
 
 The bounded recovery sprint is defined in

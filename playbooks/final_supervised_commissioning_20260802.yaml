@@ -1,0 +1,241 @@
+{
+  "playbook_id": "final_supervised_commissioning_20260802",
+  "name": "Linux Utilities final supervised commissioning under platform baseline",
+  "authoring_notes": [
+    "One bounded, read-only commissioning run authorized by the operator.",
+    "The playbook conforms to the linux-utilities mixed-economy governed route mandate.",
+    "System-validator records are authoritative for validation; workers may summarize but may not replace them.",
+    "The audited Auto-Orch pause remains active and autonomous scheduling is never re-armed by this workflow.",
+    "The evaluator is an independent user_tester whose readiness_report is bound to the human readiness_gate."
+  ],
+  "defaults": {
+    "worker": "codex_cli",
+    "routing": {
+      "primary": {
+        "harness": "codex_cli",
+        "model": "gpt-5.6-luna"
+      }
+    },
+    "retry_policy": {
+      "max_attempts": 1,
+      "strategy": "rerun_with_validation_feedback"
+    }
+  },
+  "roles": {
+    "user_tester": [
+      {
+        "harness": "claude_code",
+        "model": "claude-sonnet-5"
+      }
+    ]
+  },
+  "run_policy": {
+    "on_step_failure": "halt",
+    "require_validation_pass_to_advance": true
+  },
+  "steps": [
+    {
+      "step_id": "step_01_final_commissioning_report",
+      "name": "Produce final commissioning report",
+      "mission": "Read only AGENTS.md, commissioning/final-commissioning-packet-2026-08-02.md, the declared authority inputs, and any existing final report. Do not reconstruct broad history and do not inspect or modify Agent-Orch or Auto-Orch source. Write docs/mission-post-hardening-final-commissioning.md with substantive headings Findings, Evidence, Local Verification, Route And Provider Verification, Mission Pause, Failure Classification, and Recommendation; put at least 100 non-whitespace characters under each heading. Use the current audited pause, current mixed-economy route mandate, the external supersession record for 77fc787b8e91, and only facts actually available from the packet and bounded inspection. Do not rerun the long product suites: the independent system validators declared below will execute them after this worker, and their preserved records are authoritative. Do not modify product files, tests, scripts, packets, routing, schedules, remote state, or any file outside docs/. Do not approve or resume any run, re-arm, restore cron, push, or launch another run. The report must remain conservative: an unproven criterion is not a pass, and the recommendation must be one exact allowed vocabulary value.",
+      "inputs": [
+        "AGENTS.md",
+        "commissioning/final-commissioning-packet-2026-08-02.md",
+        "commissioning/final-commissioning-packet-2026-08-02.json",
+        "commissioning/check_packet.py",
+        "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+        "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
+        "/home/lee/projects/auto-orch/config/crews.yaml",
+        "/home/lee/projects/linux-utilities-agent-orch-runs/operator-supersession-77fc787b8e91.json"
+      ],
+      "allowed_paths": [
+        "docs/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "docs/mission-post-hardening-final-commissioning.md",
+            "type": "markdown"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "file_exists",
+            "path": "docs/mission-post-hardening-final-commissioning.md"
+          },
+          {
+            "type": "markdown_headings_present",
+            "path": "docs/mission-post-hardening-final-commissioning.md",
+            "headings": [
+              "Findings",
+              "Evidence",
+              "Local Verification",
+              "Route And Provider Verification",
+              "Mission Pause",
+              "Failure Classification",
+              "Recommendation"
+            ],
+            "min_chars_under_heading": 100
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 commissioning/check_packet.py --workspace /home/lee/projects/linux-utilities-autonomous --manifest commissioning/final-commissioning-packet-2026-08-02.json --json",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --json",
+            "timeout_seconds": 120
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 /home/lee/projects/linux-utilities/scripts/check_repository_identity.py --workspace /home/lee/projects/linux-utilities-autonomous --protect --dry-run --json",
+            "timeout_seconds": 120
+          },
+          {
+            "type": "command_succeeds",
+            "command": "bash -n /home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh --dry-run",
+            "timeout_seconds": 30
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_openunlink.py -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 180
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/ -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 300
+          },
+          {
+            "type": "command_succeeds",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_sysdiff.py::test_dist_extracts_builds_and_tests_outside_workspace -q",
+            "require_collected_tests": true,
+            "timeout_seconds": 360
+          },
+          {
+            "type": "command_succeeds",
+            "command": "git diff --check",
+            "timeout_seconds": 30
+          }
+        ],
+        "semantic": [
+          {
+            "type": "semantic_check",
+            "path": "docs/mission-post-hardening-final-commissioning.md",
+            "mode": "criterion",
+            "reference_path": "commissioning/final-commissioning-packet-2026-08-02.md",
+            "question": "Does this report faithfully apply the final commissioning packet and current platform baseline, distinguish authoritative system-validator results from worker narrative, verify the current mixed-economy routing mandate and provider readiness, record the audited pause and disabled scheduler, preserve the superseded parked run without mutating its evidence, and refuse autonomous re-arm unless every acceptance criterion is actually proven?",
+            "judge_harness": "claude_code"
+          }
+        ]
+      },
+      "on_fail": {
+        "retry_message": "Use only the final commissioning packet and declared authority inputs. Repair only docs/mission-post-hardening-final-commissioning.md; keep at least 100 non-whitespace characters under each required heading; report commands actually run, preserve authoritative validator evidence, and classify any missing criterion precisely. Do not modify product files, tests, scripts, packets, routing, schedules, Agent-Orch, Auto-Orch, or remote state.",
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_02_independent_final_user_tester",
+      "role": "user_tester",
+      "name": "Independently evaluate final commissioning evidence",
+      "mission": "Act as the independent user tester. Read the final commissioning report, final packet, current mission authority inputs, the supersession record, the declared platform commissioning-contract documents, and the platform-supplied evaluator-evidence-packet.json. The packet is the authoritative handoff for route_selection, route_execution, semantic_judge_execution, repository_identity, evidence_chain, validator_authority, and commissioning_recommendation_contract; do not forage for substitute artifacts elsewhere in the run directory. Do not rerun commands and do not modify the report, product files, tests, scripts, packets, routing, schedules, Agent-Orch, Auto-Orch, or remote state. Write only artifacts/final-commissioning-evaluator/result.json. Emit exactly one readiness entry for every playbook criterion, with state verified_true, verified_false, not_evidenced, or verification_failed and a non-empty evidence statement. Use not_evidenced only when the packet marks every named required_evidence class unavailable; use verified_false for contradictory evidence and verification_failed when an attempted check could not complete. Do not emit boolean readiness fields or infer readiness from validator success, provider registration, or a green worker step. The recommendation must be exactly one of Ready for autonomous re-arm, Ready for controlled pilot, Ready after specific follow-up, or Not ready.",
+      "inputs": [
+        "docs/mission-post-hardening-final-commissioning.md",
+        "commissioning/final-commissioning-packet-2026-08-02.md",
+        "commissioning/final-commissioning-packet-2026-08-02.json",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/config.yaml",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/mission.md",
+        "/home/lee/projects/auto-orch/missions/linux-utilities/state.md",
+        "/home/lee/projects/auto-orch/config/crews.yaml",
+        "/home/lee/projects/linux-utilities-agent-orch-runs/operator-supersession-77fc787b8e91.json",
+        "/home/lee/projects/linux-utilities/scripts/check_repository_identity.py",
+        "/home/lee/projects/linux-utilities/scripts/prune-agent-orch-scratch.sh",
+        "commissioning/check_packet.py",
+        "/home/lee/projects/agent-orch/docs/platform-commissioning-contract.md",
+        "/home/lee/projects/agent-orch/docs/commissioning-verdict-contract.md",
+        "/home/lee/projects/auto-orch/docs/auto-orch-commissioning-verdict-contract.md"
+      ],
+      "allowed_paths": [
+        "artifacts/final-commissioning-evaluator/"
+      ],
+      "outputs": {
+        "required": [
+          {
+            "path": "artifacts/final-commissioning-evaluator/result.json",
+            "type": "json"
+          }
+        ]
+      },
+      "validation": {
+        "structural": [
+          {
+            "type": "readiness_report",
+            "path": "artifacts/final-commissioning-evaluator/result.json",
+            "criteria": [
+              "identity",
+              "scratch_retention",
+              "routing_authority",
+              "runtime_route_execution",
+              "user_tester_route",
+              "semantic_judge_execution",
+              "validator_authority",
+              "mission_pause",
+              "evidence_chain_verification",
+              "commissioning_contract"
+            ]
+          }
+        ],
+        "system": [
+          {
+            "type": "command_succeeds",
+            "command": "python3 -c \"import json, pathlib; json.loads(pathlib.Path('artifacts/final-commissioning-evaluator/result.json').read_text())\"",
+            "timeout_seconds": 30
+          }
+        ]
+      },
+      "on_fail": {
+        "after_retries_exhausted": "halt"
+      }
+    },
+    {
+      "step_id": "step_03_final_commissioning_approval",
+      "type": "human_approval",
+      "name": "Human review of final commissioning recommendation",
+      "mission": "Human gate: review docs/mission-post-hardening-final-commissioning.md and the platform-contract readiness report at artifacts/final-commissioning-evaluator/result.json. Approval operates on the readiness report and its declared states, not on validator or worker step success. Approve only if the report recommendation is approvable and every readiness_gate criterion is verified_true; verified_false, not_evidenced, verification_failed, a missing report, or an unreadable report blocks approval. The run remains WAITING_APPROVAL until explicit human approval is recorded; approval must never re-arm scheduling or alter the historical superseded run.",
+      "inputs": [
+        "docs/mission-post-hardening-final-commissioning.md",
+        "artifacts/final-commissioning-evaluator/result.json"
+      ],
+      "readiness_gate": {
+        "path": "artifacts/final-commissioning-evaluator/result.json",
+        "criteria": [
+          "identity",
+          "scratch_retention",
+          "routing_authority",
+          "runtime_route_execution",
+          "user_tester_route",
+          "semantic_judge_execution",
+          "validator_authority",
+          "mission_pause",
+          "evidence_chain_verification",
+          "commissioning_contract"
+        ]
+      }
+    }
+  ]
+}
