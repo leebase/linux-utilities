@@ -112,7 +112,9 @@ Diagnostics go only to stderr and use fixed ASCII reason tokens. Their first
 line is `pathaudit: REASON\n`, or `pathaudit: REASON: "ESCAPED_ROOT"\n` when
 one operand or component caused the error. The reasons are `USAGE`,
 `UNKNOWN_OPTION`, `PATH_UNSET`, `ROOT_COUNT_LIMIT`, `ROOT_LENGTH_LIMIT`,
-`ROOT_BYTES_LIMIT`, `OUT_OF_MEMORY`, `INSPECTION_ERROR_N`, and `STDOUT_WRITE`;
+`ROOT_BYTES_LIMIT`, `OUT_OF_MEMORY`, `SIGNAL_SETUP`, `INSPECTION_ERROR_N`, and
+`STDOUT_WRITE`; `SIGNAL_SETUP` is emitted only when startup `SIGPIPE`
+disposition cannot be installed and is never used for allocation failure;
 `N` is the decimal `errno` from the failed metadata lookup. `UNKNOWN_OPTION`
 and every `USAGE` error are followed by the two-line usage synopsis above; the
 usage lines are not duplicated when the first reason is already `USAGE`.

@@ -183,6 +183,32 @@ pass. Smallest future action to close the gap: share
 `SYSDIFF_UNDER_VALGRIND=1`. This documentation repair does not claim
 `make quality`, `make test-valgrind`, or any other write-producing gate ran.
 
+## Senior Reviewer Lens
+
+Added 2026-09-02 after an external senior-style review of `pathaudit.c`. The
+gating `slice_reviewer` verifies the contract; this lens asks the questions a
+maintainer asks *after* the contract is met. Every reviewer verdict on C
+source must answer each item explicitly (pass, finding, or not applicable):
+
+1. **Lifetime by construction, not by comment.** Where one struct holds a
+   pointer into another's storage, is the free order enforced structurally
+   (single destructor, owned copy, or a debug canary)? A lifetime rule that
+   exists only in a comment is a finding, even when the current code obeys it.
+2. **Ignored-error policy is named and consistent.** Every deliberately
+   ignored return value (`close`, `closedir`, `fclose` on read-only handles)
+   must cite the DECISIONS.md policy it follows, and the policy must be applied
+   the same way at every site.
+3. **One diagnostic reason per cause.** A fixed reason token must map to one
+   category of underlying failure. Reusing `OUT_OF_MEMORY` for a non-allocator
+   failure is a finding.
+4. **Rework is either justified or recorded.** Growth strategies, rehashing,
+   re-sorting, or re-scanning that a purist would call unnecessary must be
+   either bounded by a documented input limit and accepted in DECISIONS.md, or
+   fixed.
+5. **The obscure edge case has a test.** Any comment describing a subtle case
+   (colon-bearing PATH entries, self-basename symlinks, `/dev/full` writes)
+   must point at the test that exercises it.
+
 ## Known Gaps
 
 - Presentation ambiguity: format-1 changed lines use `old -> new`, so values

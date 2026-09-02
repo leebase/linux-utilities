@@ -44,6 +44,25 @@ made.
 
 ## Current Decisions
 
+- Finding text ownership (2026-09-02, external review): every `pathaudit`
+  `Finding` owns a heap copy of its root text. Findings no longer alias into
+  PATH component storage, so the free order between the finding buffer and
+  `PathComponents` cannot cause a use-after-free. The cost is one small
+  allocation per finding (tens at most); the benefit is that the lifetime
+  contract holds by construction instead of by comment.
+- Close errors on read-only descriptors (2026-09-02, external review): after a
+  successful read-only `read` or directory scan, a failed `close`/`closedir`
+  is deliberately not surfaced and never creates or suppresses a finding.
+  Nothing was written, so the close status carries no hazard information.
+  Applied consistently in `probe_exec_image` and the directory scanners.
+- Distinct diagnostic reasons (2026-09-02, external review): `OUT_OF_MEMORY`
+  is reserved for allocator failure. Startup `signal(SIGPIPE)` failure emits
+  `SIGNAL_SETUP` so a field diagnostic names its actual cause.
+- Hash index growth (2026-09-02, external review, accepted as-is): the
+  winners/shadows open-addressing indexes rebuild from scratch on growth
+  rather than resizing incrementally. Inputs are bounded by `ROOT_COUNT_LIMIT`
+  and directory sizes, so the rework is negligible and the simpler code is
+  preferred over an incremental scheme with more state to get wrong.
 - Explicit snapshot comparison only: `sysdiff compare BEFORE AFTER` reads two
   user-provided files and does not capture live system state, walk trees,
   query packages/services, persist data, or use the network. Paths are opened

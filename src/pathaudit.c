@@ -47,9 +47,15 @@ struct Root {
   size_t len;
 };
 
+/*
+ * Every Finding owns its root text. Findings previously aliased into PATH
+ * component storage and relied on callers freeing in the right order; that
+ * lifetime contract now holds by construction (see DECISIONS.md, "Finding
+ * text ownership"), so no free order between FindingBuffer and
+ * PathComponents can introduce a use-after-free.
+ */
 struct Finding {
-  const char *root;
-  char *owned_root; /* non-NULL when root is an owned realpath copy */
+  char *root; /* owned copy, released by findings_free */
   size_t index;
   enum HazardCode code;
 };
@@ -177,7 +183,7 @@ static void emit_diag_reason(const char *reason) {
 
 static int ignore_sigpipe_for_stdout(void) {
   if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
-    emit_diag_reason("OUT_OF_MEMORY");
+    emit_diag_reason("SIGNAL_SETUP");
     return 2;
   }
   return 0;
@@ -267,8 +273,7 @@ static size_t hash_command_shadow_pair(const char *command,
 static void findings_free(struct FindingBuffer *buffer) {
   if (buffer->items != NULL) {
     for (size_t i = 0; i < buffer->len; i++) {
-      free(buffer->items[i].owned_root);
-      buffer->items[i].owned_root = NULL;
+      free(buffer->items[i].root);
       buffer->items[i].root = NULL;
     }
   }
@@ -296,29 +301,13 @@ static bool findings_reserve(struct FindingBuffer *buffer) {
   return true;
 }
 
+/*
+ * Append a finding. The root text is always copied so the finding never
+ * aliases caller storage; findings_free releases the copy.
+ */
 static bool findings_append(struct FindingBuffer *buffer, const char *root,
                             size_t index, enum HazardCode code) {
-  if (!findings_reserve(buffer)) {
-    return false;
-  }
-
-  buffer->items[buffer->len].root = root;
-  buffer->items[buffer->len].owned_root = NULL;
-  buffer->items[buffer->len].index = index;
-  buffer->items[buffer->len].code = code;
-  buffer->len++;
-  return true;
-}
-
-/*
- * Append a finding whose root is an owned copy of text (executable or
- * directory-ownership realpath). findings_free releases the copy. Used when
- * the finding root is not aliased into PATH component storage.
- */
-static bool findings_append_owned(struct FindingBuffer *buffer,
-                                  const char *text, size_t index,
-                                  enum HazardCode code) {
-  char *owned = owned_strdup(text);
+  char *owned = owned_strdup(root);
   if (owned == NULL) {
     return false;
   }
@@ -328,7 +317,6 @@ static bool findings_append_owned(struct FindingBuffer *buffer,
   }
 
   buffer->items[buffer->len].root = owned;
-  buffer->items[buffer->len].owned_root = owned;
   buffer->items[buffer->len].index = index;
   buffer->items[buffer->len].code = code;
   buffer->len++;
@@ -362,7 +350,7 @@ static bool findings_note_unsafe_owner(struct FindingBuffer *buffer,
     }
     return true;
   }
-  return findings_append_owned(buffer, realpath_text, index,
+  return findings_append(buffer, realpath_text, index,
                                HAZARD_UNSAFE_OWNER);
 }
 
@@ -1356,7 +1344,12 @@ static int probe_exec_image(const char *path, bool *is_image) {
   ssize_t n = read(fd, hdr, sizeof(hdr));
   int read_err = errno;
   if (close(fd) != 0 && n >= 0) {
-    /* ignore close errors after a successful read */
+    /*
+     * Policy (DECISIONS.md, "Close errors on read-only descriptors"): a
+     * failed close after a successful read-only read is not surfaced. The
+     * data is already in hand and nothing was written, so the close status
+     * carries no hazard information about the target.
+     */
   }
   if (n < 0) {
     return read_err;
@@ -1537,14 +1530,14 @@ static int append_executable_writability(const char *resolved, size_t index,
                                          mode_t mode,
                                          struct FindingBuffer *findings) {
   if ((mode & S_IWGRP) != 0) {
-    if (!findings_append_owned(findings, resolved, index,
+    if (!findings_append(findings, resolved, index,
                                HAZARD_GROUP_WRITABLE)) {
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
     }
   }
   if ((mode & S_IWOTH) != 0) {
-    if (!findings_append_owned(findings, resolved, index,
+    if (!findings_append(findings, resolved, index,
                                HAZARD_WORLD_WRITABLE)) {
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
@@ -1566,7 +1559,7 @@ static int append_executable_ownership(const char *resolved, size_t index,
   if (owner_uid_is_trusted(owner)) {
     return 0;
   }
-  if (!findings_append_owned(findings, resolved, index, HAZARD_UNSAFE_OWNER)) {
+  if (!findings_append(findings, resolved, index, HAZARD_UNSAFE_OWNER)) {
     emit_diag_reason("OUT_OF_MEMORY");
     return 2;
   }
@@ -1763,7 +1756,8 @@ static int scan_root_executables(const struct Root *root,
   }
 
   if (closedir(dir) != 0) {
-    /* close errors do not invent shadow findings */
+    /* Same close policy as probe_exec_image: read-only close errors do not
+     * invent or suppress findings. */
   }
   return 0;
 }
