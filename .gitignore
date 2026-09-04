@@ -31,3 +31,9 @@ vgcore.*
 dist/
 code-reviews/
 .agent-orch/
+
+# local harness state / macOS residue (estate sweep 2026-09-04)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.DS_Store
