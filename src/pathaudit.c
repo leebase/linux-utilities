@@ -350,8 +350,7 @@ static bool findings_note_unsafe_owner(struct FindingBuffer *buffer,
     }
     return true;
   }
-  return findings_append(buffer, realpath_text, index,
-                               HAZARD_UNSAFE_OWNER);
+  return findings_append(buffer, realpath_text, index, HAZARD_UNSAFE_OWNER);
 }
 
 /*
@@ -1530,15 +1529,13 @@ static int append_executable_writability(const char *resolved, size_t index,
                                          mode_t mode,
                                          struct FindingBuffer *findings) {
   if ((mode & S_IWGRP) != 0) {
-    if (!findings_append(findings, resolved, index,
-                               HAZARD_GROUP_WRITABLE)) {
+    if (!findings_append(findings, resolved, index, HAZARD_GROUP_WRITABLE)) {
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
     }
   }
   if ((mode & S_IWOTH) != 0) {
-    if (!findings_append(findings, resolved, index,
-                               HAZARD_WORLD_WRITABLE)) {
+    if (!findings_append(findings, resolved, index, HAZARD_WORLD_WRITABLE)) {
       emit_diag_reason("OUT_OF_MEMORY");
       return 2;
     }
