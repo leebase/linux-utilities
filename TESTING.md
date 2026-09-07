@@ -13,9 +13,11 @@ of values/paths/commands, closed-stdout `EPIPE` behavior, and snapshot
 byte-limit boundaries. `tests/test_pathaudit.py` encodes the pathaudit contract
 and compiles `src/pathaudit.c` into a pytest-owned temporary directory (or
 honors `PATHAUDIT_BIN` / `PATHAUDIT_UNDER_VALGRIND` when memory gates supply
-them). Smoke (`scripts/smoke.sh` via `make test`, plus
-Agent-Orch `tests/smoke_manifest.json`) exercises the same functional path
-without special privileges. Dynamic analysis is separate: ASan/UBSan rebuild
+them). Smoke (`scripts/smoke.sh` and Agent-Orch `tests/smoke_manifest.json`)
+runs the same bounded `tests/check_sysdiff_smoke.py` check: an incremental
+sysdiff build and tiny unchanged, changed, and malformed snapshot comparisons.
+Both startup and check budgets are ten seconds; full verification uses
+`make test` separately, without special privileges. Dynamic analysis is separate: ASan/UBSan rebuild
 and re-run the suite; Valgrind wraps the shell suite and `tests/test_sysdiff.py`
 with reserved status `99` (not the malformed-fuzz corpus; see Valgrind
 Hostile-Input Coverage). Under `SYSDIFF_UNDER_VALGRIND=1`, the fixture suite
@@ -81,15 +83,17 @@ without a shell, using the governed workspace root as `cwd`; shell operators,
 malformed or unmatched claims, wrong-cwd claims, exit-code or observed-output
 mismatches, and zero verifiable claims fail closed.
 
-The canonical result contains `journeys` and `findings`. Each journey records
-its name, status, concrete `steps_taken`, and `commands_run`; each command
-claim records `command` and integer `exit_code`, with `stdout_contains` only
-when observed. A failed journey needs a complete actionable finding with
-`id`, `severity`, `journey`, `problem`, `reproduction`, `expected`, `actual`,
-and `proposed_fix`, plus only the permitted optional evidence fields.
+The canonical user-test `result.json` artifact contains `journeys` and `findings`.
+Under the user-test `result.json` schema, `commands_run` must be an array of objects and not strings (e.g. `{"command": "build/sysdiff --help", "exit_code": 0}`). Each
+journey records its name, status, concrete `steps_taken`, and `commands_run`;
+each command claim records `command` and integer `exit_code`, with
+`stdout_contains` only when observed. A failed journey needs a complete
+actionable finding with `id`, `severity`, `journey`, `problem`, `reproduction`,
+`expected`, `actual`, and `proposed_fix`, plus only the permitted optional
+evidence fields.
 
-Keep the three evidence types separate: deterministic smoke runs the existing
-aggregate sysdiff compatibility chain; user simulation records and verifies
+Keep the three evidence types separate: deterministic smoke runs bounded
+sysdiff compare fixtures; user simulation records and verifies
 the declared journey claims; diff review independently inspects the contract,
 plan, playbook, tests, and evidence. Passing one does not prove the others.
 This repair changes no utility CLI or user-visible command, so the man-page

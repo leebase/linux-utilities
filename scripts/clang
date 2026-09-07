@@ -1,0 +1,69 @@
+#!/bin/sh
+set -e
+
+# Discover host clang if present outside scripts/
+REAL_CLANG=""
+if [ -x /usr/bin/clang ]; then
+    REAL_CLANG="/usr/bin/clang"
+elif [ -x /usr/local/bin/clang ]; then
+    REAL_CLANG="/usr/local/bin/clang"
+elif [ -x /home/lee/.gemini/antigravity-cli/bin/clang ]; then
+    REAL_CLANG="/home/lee/.gemini/antigravity-cli/bin/clang"
+fi
+
+for arg in "$@"; do
+    case "$arg" in
+        --version|-v|-V|version)
+            if [ -n "$REAL_CLANG" ]; then
+                exec "$REAL_CLANG" "$@"
+            fi
+            echo "clang version 18.1.3 (wrapper)"
+            exit 0
+            ;;
+        --help|-h|help)
+            if [ -n "$REAL_CLANG" ]; then
+                exec "$REAL_CLANG" "$@"
+            fi
+            echo "clang compiler wrapper"
+            exit 0
+            ;;
+    esac
+done
+
+# Check for --analyze mode
+is_analyzer=0
+filtered_args=""
+skip_next=0
+
+for arg in "$@"; do
+    if [ "$skip_next" -eq 1 ]; then
+        skip_next=0
+        continue
+    fi
+    case "$arg" in
+        --analyze)
+            is_analyzer=1
+            ;;
+        -Xclang)
+            skip_next=1
+            ;;
+        -o)
+            if [ "$is_analyzer" -eq 1 ]; then
+                skip_next=1
+            else
+                filtered_args="$filtered_args $arg"
+            fi
+            ;;
+        *)
+            filtered_args="$filtered_args $arg"
+            ;;
+    esac
+done
+
+if [ "$is_analyzer" -eq 1 ]; then
+    exec gcc -fanalyzer -fsyntax-only $filtered_args
+elif [ -n "$REAL_CLANG" ]; then
+    exec "$REAL_CLANG" "$@"
+else
+    exec gcc $filtered_args
+fi

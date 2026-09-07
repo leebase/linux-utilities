@@ -211,22 +211,56 @@ clang-strict:
 	clang $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
 
 clang-syntax:
-	clang $(STRICT_WARNINGS) -fsyntax-only $(SRC)
-	clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC)
-	clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC)
-	clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC)
+	@set -e; \
+	if ! command -v clang >/dev/null 2>&1; then \
+		if [ -x scripts/clang ]; then \
+			scripts/clang $(STRICT_WARNINGS) -fsyntax-only $(SRC); \
+			scripts/clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC); \
+			scripts/clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC); \
+			scripts/clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC); \
+		else \
+			printf 'error: clang is required for make clang-syntax\n' >&2; \
+			exit 1; \
+		fi; \
+	else \
+		clang $(STRICT_WARNINGS) -fsyntax-only $(SRC); \
+		clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC); \
+		clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC); \
+		clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC); \
+	fi
 
 format-check:
 	clang-format --dry-run --Werror $(ALL_SRCS)
 
 clang-tidy-check:
-	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS)
-	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS)
-	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS)
-	clang-tidy --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(OPENUNLINK_SRC) -- $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS)
+	@set -e; \
+	if ! command -v clang-tidy >/dev/null 2>&1; then \
+		if [ -x scripts/clang-tidy ]; then \
+			CLANG_TIDY_CMD=scripts/clang-tidy; \
+		else \
+			printf 'error: clang-tidy is required for make clang-tidy-check\n' >&2; \
+			exit 1; \
+		fi; \
+	else \
+		CLANG_TIDY_CMD=clang-tidy; \
+	fi; \
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS); \
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS); \
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS); \
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(OPENUNLINK_SRC) -- $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS)
 
 cppcheck-check:
-	cppcheck --quiet --enable=all --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS)
+	@set -e; \
+	if ! command -v cppcheck >/dev/null 2>&1; then \
+		if [ -x scripts/cppcheck ]; then \
+			scripts/cppcheck --quiet --enable=all --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS); \
+		else \
+			printf 'error: cppcheck is required for make cppcheck-check\n' >&2; \
+			exit 1; \
+		fi; \
+	else \
+		cppcheck --quiet --enable=all --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 $(ALL_SRCS); \
+	fi
 
 # Clang static analyzer via clang --analyze (no scan-build / report dir required).
 # analyzer-werror makes findings fail the gate; output stays under mktemp.

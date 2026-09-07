@@ -1,5 +1,26 @@
 # Context
 
+## Supervised stale-oracle remediation — 2026-09-05
+
+Lee-authorized manual remediation refreshes the two post-chain Makefile hash
+pins while preserving the unchanged `src/sysdiff.c` pin. Smoke now builds
+`build/sysdiff` and checks tiny unchanged, changed, and malformed snapshots
+under ten-second startup/check budgets; `make test` retains full coverage.
+Dependent smoke-contract assertions and testing guidance are aligned.
+Removed stale `artifacts/user-test/result.json` with placeholder journey
+evidence rather than fabricate fresh claims. Existing artifact guards still
+validate fresh evidence; journey manifests and behavior tests are unchanged.
+
+Validation: `bash scripts/smoke.sh` exit 0; requested four repair modules
+via `pytest -q` exit 0, 75 passed / 2 skipped in 1.53s (existing
+absent-artifact guards); full `make test` exit 0, 830 passed / 23 skipped
+in 138.52s. Smoke also rejects incorrect output and incorrect status.
+`git diff --check` passes. Source SHA-256 remains
+`1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1`;
+Makefile SHA-256 remains
+`59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c`.
+No governed run was launched; unrelated pre-existing edits are preserved.
+
 ## Post-hardening commissioning preparation — 2026-08-01
 
 The autonomous `main` worktree is prepared for another supervised commissioning

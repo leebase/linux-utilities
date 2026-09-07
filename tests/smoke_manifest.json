@@ -11,11 +11,6 @@
       "command": ["bash", "scripts/smoke.sh"]
     },
     {
-      "name": "deterministic fixture suite",
-      "path": "tests/test_sysdiff_fixture.sh",
-      "command": ["bash", "tests/test_sysdiff_fixture.sh"]
-    },
-    {
       "name": "smoke check script",
       "path": "tests/check_sysdiff_smoke.py",
       "command": ["python3", "tests/check_sysdiff_smoke.py"]
@@ -26,5 +21,5 @@
   "startup_delay_seconds": 0,
   "startup_timeout_seconds": 10,
   "poll_interval_seconds": 0.25,
-  "check_timeout_seconds": 300
+  "check_timeout_seconds": 10
 }

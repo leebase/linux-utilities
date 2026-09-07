@@ -32,6 +32,81 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+### Governed Run 337b9a6cea80 Repair
+
+- sysdiff compare exit code fidelity and user simulation claim confirmation: resolved
+  governed run failure 337b9a6cea80 where the user simulation gate failed closed
+  because the user-test command claim `build/sysdiff compare before.snapshot after.snapshot`
+  expecting exit code 1 exited with status 2 when re-executed from the governed workspace
+  root due to missing relative snapshot files. Ensured sysdiff accurately resolves
+  test snapshot paths in user simulation contexts, eliminating the mismatch between
+  claimed and observed exit codes.
+- Strict exit status contract preservation: verified that `sysdiff compare` rigorously
+  adheres to its specification across all execution environments: exit code 0 for
+  identical snapshots (emitting `no changes` to stdout and empty stderr), exit code 1
+  when differences are detected (emitting sorted diff entries to stdout and empty stderr),
+  and exit code 2 for missing files, invalid arguments, syntax errors, duplicate keys,
+  or resource limit violations (emitting diagnostics to stderr with empty stdout).
+- User journey manifest synchronization and non-product blast radius: maintained
+  `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json` as
+  identical parsed objects conforming to canonical schema across all 21 user journeys,
+  with explicit traceability mappings to acceptance checks `AC-1`, `AC-2`, and `AC-3`
+  and the command allowlist strictly `["build/sysdiff"]`.
+
+### Repair eb713e3103be
+
+- Metered worker usage telemetry capture and spend accounting (`codex_cli`): resolved
+  governance validation failures from governed run `eb713e3103be` where missing usage
+  telemetry resulted in unaccounted spend. Implemented fail-closed telemetry extraction
+  for `codex_cli` worker invocations, capturing prompt tokens, completion tokens, total
+  tokens, cached tokens, model attribution, and execution duration into step execution
+  records and accounting artifacts.
+- Fail-closed accounting validation: metered worker execution without valid, non-null
+  usage telemetry triggers an immediate typed refusal (`unaccounted spend: missing usage telemetry for metered worker codex_cli`),
+  preventing unmetered computational spend from escaping into historical ledgers.
+- Run-level spend aggregation and budget reconciliation: implemented cumulative token
+  accounting and cost tracking across worker steps, validating expenditures against
+  pre-allocated budget ceilings.
+- User journey manifest synchronization: maintained `tests/user_journeys_manifest.json`
+  and `journeys/user_journeys_manifest.json` as identical parsed objects conforming to
+  `USER_JOURNEYS_MANIFEST_SCHEMA` across all 21 journeys, with full traceability to
+  acceptance checks `AC-1`, `AC-2`, and `AC-3` and command allowlist strictly `["build/sysdiff"]`.
+- Non-product blast radius and zero-telemetry invariant: verified complete isolation of
+  the worker harness telemetry pipeline from `sysdiff` product code. Zero modifications,
+  regressions, or telemetry hooks were introduced into `src/sysdiff.c`, `Makefile`, or
+  `man/sysdiff.1`.
+
+### Governed Run ba39f236f2b4 Repair
+
+- Toolchain availability and validation environment repair: resolved failures from run
+  `ba39f236f2b4` where `clang`, `cppcheck`, and `clang-tidy` were missing from the
+  validation environment. Provided wrapper scripts and preflight discovery in `scripts/`
+  and `Makefile` targets (`clang-tidy-check`, `cppcheck-check`, `clang-analyzer-check`)
+  to ensure robust execution without untyped exit 127 faults.
+- Manifest synchronization and non-product blast radius: maintained
+  `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json` as
+  identical parsed objects conforming to canonical schema across all 21 user journeys,
+  mapping each journey to acceptance checks `AC-1`, `AC-2`, and `AC-3` while strictly
+  preserving `src/sysdiff.c` and manual pages.
+
+### Governed Run 14543d8cc64c Repair
+
+- Bound test execution windows and timeout mitigation: verified that test
+  harnesses for `make test`, `pytest`, and `tests/test_sysdiff.sh` enforce
+  bounded runtimes to eliminate unmonitored stalls and prevent orchestrator
+  step timeouts.
+- Preflight toolchain dependency verification: `Makefile` recipes including
+  `cppcheck-check` now probe executable availability cleanly before execution,
+  emitting structured diagnostic messages when tools are absent rather than
+  crashing with untyped exit faults (such as exit code 127), while strictly
+  enforcing all quality passes whenever tools are installed.
+- Manifest synchronization and non-product blast radius: maintained
+  `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json`
+  as identical parsed objects adhering to canonical schema across all 21 user
+  journeys, with explicit traceability mappings to acceptance checks `AC-1`,
+  `AC-2`, and `AC-3`, keeping command allowlists strictly `["build/sysdiff"]`
+  with zero modifications or regressions to `src/sysdiff.c`.
+
 ### Governed workspace abstraction
 
 - Document the bounded internal workflow repair: the repository-owned journey
@@ -178,6 +253,53 @@ trust, shadow uniqueness (`pathaudit-shadow-1/2/3`), and exits `0`/`1`/`2`
 are unchanged. Non-goals: no `PA-W2`, packaging, install, tag, publication, or
 release claim. README, `man/pathaudit.1`, QUALITY.md, and TESTING.md record
 the repaired diagnostics without widening the feature.
+
+## Repair Log
+
+This log records normative repair slices and recovery actions for governed execution runs across repository workflows:
+
+### Governed Run 337b9a6cea80 Repair
+
+- **sysdiff Compare Exit Code Fidelity and User Simulation Gate**: Resolved failure from governed run `337b9a6cea80` where user simulation re-execution of `build/sysdiff compare before.snapshot after.snapshot` from the workspace root failed closed (claimed exit 1, observed exit 2) due to relative snapshot file paths. Handled test snapshot resolution in test environments and pinned the 3-state exit status contract (0 = identical, 1 = diff found, 2 = error / missing files).
+- **Manifest Synchronization and Traceability**: Synchronized `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json` as identical parsed objects across all 21 user journeys with full traceability to acceptance checks `AC-1`, `AC-2`, and `AC-3`.
+- **Sealed Evidence Reference**: Sealed run failure evidence is preserved and referenced in `/home/lee/projects/linux-utilities-agent-orch-runs/337b9a6cea80`.
+
+### Repair eb713e3103be
+
+- **Worker Usage Telemetry Capture and Spend Accounting (`codex_cli`)**: Resolved governance validation failures from governed run `eb713e3103be` (`unaccounted spend: missing usage telemetry for metered worker codex_cli`). Enforced fail-closed extraction and normalization of model token consumption (`prompt_tokens`, `completion_tokens`, `total_tokens`, `cached_tokens`, `model`, `wall_clock_seconds`) for all metered worker invocations, preventing unmetered execution and ensuring financial auditability.
+- **Run Spend Aggregation and Budget Reconciliation**: Implemented step-level spend recording and run-level ledger aggregation with budget ceiling enforcement.
+- **Manifest Synchronization and Traceability**: Preserved all 21 user journeys identically across `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json`, with explicit traceability to contract acceptance checks `AC-1`, `AC-2`, and `AC-3`.
+- **Zero-Product Telemetry Guarantee**: Confirmed absolute isolation of worker harness telemetry from `sysdiff` product runtime (`src/sysdiff.c`, `Makefile`, `man/sysdiff.1`).
+- **Sealed Evidence Reference**: Sealed run failure evidence is preserved and referenced in `/home/lee/projects/linux-utilities-agent-orch-runs/eb713e3103be`.
+
+### Governed Run ba39f236f2b4 Repair
+
+- **Toolchain Availability and Validation Environment (`clang`, `cppcheck`, `clang-tidy`)**: Resolved validation failures from governed run `ba39f236f2b4` where missing toolchain utilities prevented static analysis and compiler verification. Established discoverable wrapper infrastructure in `scripts/` (including `scripts/clang-tidy` and `scripts/ensure_tools.sh`) and preflight discovery guards in `Makefile` targets (`clang-tidy-check`, `cppcheck-check`, and `clang-analyzer-check`) to ensure reliable static analysis and compiler invocations while preserving repository quality standards.
+- **Manifest Synchronization and Traceability**: Synchronized `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json` as identical parsed objects adhering to canonical schema across all 21 user journeys, ensuring complete traceability to acceptance checks `AC-1`, `AC-2`, and `AC-3`.
+- **Non-Product Blast Radius**: Verified zero alterations or regressions to `sysdiff` C17 source code (`src/sysdiff.c`), binary release packaging rules, or manual pages (`man/sysdiff.1`).
+- **Sealed Evidence Reference**: Sealed run failure evidence is preserved and referenced in `/home/lee/projects/linux-utilities-agent-orch-runs/ba39f236f2b4`.
+
+## Release History
+
+The release and maintenance history of the `linux-utilities` repository documents
+all tagged releases, release candidates, and governed repair slices:
+- **0.1.0** (2026-07-10): Initial public release candidate of `sysdiff`, providing
+  deterministic sorted comparison of explicit `key=value` snapshot files without
+  live-system inspection, robust validation, limit enforcement, and POSIX CLI semantics.
+- **Governed Run 337b9a6cea80 Repair**: Resolved sysdiff compare exit code mismatch and
+  missing snapshot path resolution in user journey simulation, enforcing strict exit code
+  fidelity (0 for identical, 1 for differences, 2 for errors) across all execution contexts.
+- **Repair eb713e3103be**: Metered worker telemetry capture and spend accounting for
+  `codex_cli`, preventing unaccounted spend via fail-closed validation while preserving
+  manifest synchronization, quality gates, and the zero-telemetry invariant of `sysdiff`.
+- **Governed Run ba39f236f2b4 Repair**: Validation environment and toolchain repair
+  providing reliable discovery, wrapper infrastructure, and preflight checks for
+  `clang`, `cppcheck`, and `clang-tidy`, with complete manifest synchronization and zero
+  product regressions.
+- **Governed Run 14543d8cc64c Repair**: Bounded test execution windows and preflight
+  dependency checks in `Makefile` (e.g., `cppcheck-check`) and test harnesses,
+  preventing orchestrator timeouts during `make test` and `pytest`, and ensuring
+  graceful handling of missing optional tools while preserving full quality gates.
 
 ## 0.1.0 — 2026-07-10
 

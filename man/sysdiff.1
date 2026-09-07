@@ -200,19 +200,23 @@ boundary is ambiguous.
 .SH EXIT STATUS
 .TP
 .B 0
-Success with no differences, or a successful informational command
+Success with no differences (both snapshots are identical; prints
+.B no changes
+to standard output with empty standard error), or a successful informational command
 .RB ( \-\-help ,
 .BR \-\-version ,
 or no\-argument usage).
 .TP
 .B 1
 .B compare
-succeeded and at least one difference was found.
+succeeded and at least one difference was found between the snapshots
+(sorted diff lines are emitted to standard output with empty standard error).
 .TP
 .B 2
-Usage error, file I/O error, malformed snapshot, duplicate key, allocation
-failure, resource\-limit violation, stdout write/flush failure, unsafe input,
-or other runtime error.
+Usage error, file I/O error (such as missing or unreadable snapshot files),
+malformed snapshot, duplicate key, allocation failure, resource\-limit violation,
+stdout write/flush failure, unsafe input, or other runtime error (contextual
+diagnostic emitted to standard error, standard output remains empty).
 .P
 On validation failures for
 .BR compare ,

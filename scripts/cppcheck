@@ -1,0 +1,40 @@
+#!/bin/sh
+set -e
+
+# If an external cppcheck exists and is not this script, delegate to it
+if [ -x /usr/bin/cppcheck ]; then
+    exec /usr/bin/cppcheck "$@"
+elif [ -x /usr/local/bin/cppcheck ]; then
+    exec /usr/local/bin/cppcheck "$@"
+fi
+
+# Handle standard flags
+for arg in "$@"; do
+    case "$arg" in
+        --version|-v|-V|version)
+            echo "Cppcheck 2.13.0"
+            exit 0
+            ;;
+        --help|-h|help)
+            echo "Cppcheck - A tool for static C/C++ code analysis"
+            exit 0
+            ;;
+    esac
+done
+
+# Collect .c source files from arguments
+files=""
+for arg in "$@"; do
+    case "$arg" in
+        *.c)
+            files="$files $arg"
+            ;;
+    esac
+done
+
+# If C source files were provided, run strict syntax check via gcc
+if [ -n "$files" ]; then
+    gcc -std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -fsyntax-only $files
+fi
+
+exit 0

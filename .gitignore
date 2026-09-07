@@ -1,5 +1,8 @@
 # Ordinary Make output lives under build/ (BIN := build/sysdiff). Never commit it.
 build/
+tmp/
+/black
+/ruff
 
 # Defense in depth: ignore accidental top-level build leftovers without
 # affecting man/sysdiff.1 or src/sysdiff.c. Memory-gate binaries stay in mktemp.

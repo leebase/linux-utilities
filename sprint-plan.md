@@ -1,5 +1,12 @@
 # Sprint Plan
 
+## Supervised stale-oracle remediation — 2026-09-05
+
+- [x] Refresh stale Makefile pins, separate fast smoke from full verification,
+  align dependent smoke contracts, and remove stale generated journey evidence.
+- [x] Verify smoke exit 0; requested repair modules 75 passed / 2 skipped;
+  full `make test` 830 passed / 23 skipped, exit 0 (138.52s).
+
 ## Post-hardening commissioning preparation — 2026-08-01
 
 - [x] Align the commissioning packet with the configured autonomous worktree:

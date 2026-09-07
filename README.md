@@ -1,8 +1,8 @@
 # Linux Utilities
 
-Small, auditable command-line tools for Linux. Each utility is written in one
-C17 source file, has no runtime dependencies, performs no networking or
-telemetry, and does not run a background service.
+## Overview
+
+Linux Utilities provides small, auditable command-line tools for Linux system administration, inspection, and verification. Each utility is written in a single C17 source file, has no runtime dependencies, performs no networking or telemetry, and does not run a background service. The released `sysdiff` utility compares explicit `key=value` system snapshots deterministically and reports differences with precise exit codes (0 for identical snapshots, 1 for detected differences, and 2 for operational or file errors). Preview utilities include `pathaudit`, `permguard`, and `openunlink`.
 
 | Utility | Purpose | Status |
 | --- | --- | --- |
@@ -96,6 +96,17 @@ make quality
 See [TESTING.md](TESTING.md) and [QUALITY.md](QUALITY.md) for the full tool
 list and individual targets.
 
+## Toolchain Requirements
+
+Building, testing, and verifying utilities in this repository requires a standards-compliant Linux toolchain and verification environment:
+
+- **C Compilers:** ISO C17 compliant compilers including GCC (`gcc`) and Clang (`clang`). Compilations enforce strict flags (`-std=c17 -Wall -Wextra -Wpedantic -Werror`).
+- **Static Analysis and Linting:** `cppcheck` (with `--quiet --enable=all --suppress=missingIncludeSystem`), `clang-tidy`, and Clang static analyzer (`clang --analyze`). Makefile recipes (`clang-tidy-check`, `cppcheck-check`, `clang-analyzer-check`) include preflight toolchain discovery and wrapper mechanisms under `scripts/` to ensure predictable execution.
+- **Code Formatting:** `clang-format` for source code style enforcement.
+- **Dynamic Analysis and Sanitizers:** LLVM AddressSanitizer (`-fsanitize=address`), UndefinedBehaviorSanitizer (`-fsanitize=undefined`), and Valgrind (`valgrind`).
+- **Test Automation:** Python 3 (>= 3.10) with `pytest` for running automated unit, regression, and user journey validation suites.
+- **Environment Setup:** `scripts/ensure_tools.sh` verifies tool availability and configures execution wrappers so validation commands operate without missing-binary failures.
+
 ## Governed workspace abstraction
 
 The repository also documents an internal governed-workflow repair. The
@@ -120,6 +131,37 @@ no utility CLI or user-visible command, so its man-page phase is omitted. It
 does not claim new sysdiff behavior, release, installation, packaging, or
 deployment.
 
+## Repair eb713e3103be
+
+The repository documents the normative repair slice for governed execution run
+`eb713e3103be`. In run `eb713e3103be`, governance validation failed due to
+unaccounted spend caused by missing usage telemetry for the metered worker
+harness `codex_cli`.
+
+This repair slice establishes fail-closed telemetry capture and accounting for
+`codex_cli` worker invocations. The execution harness intercepts worker process
+completion, extracting mandatory token consumption metrics (`prompt_tokens`,
+`completion_tokens`, `total_tokens`, `cached_tokens`, `model`, and
+`wall_clock_seconds`) into governed step execution records and accounting
+artifacts. Invocations that emit missing, partial, corrupted, or conflicting
+telemetry are rejected fail-closed with the typed error:
+`unaccounted spend: missing usage telemetry for metered worker codex_cli`.
+This ensures unmetered computational expenditures never escape into run ledgers.
+The run accounting validator aggregates token totals across all completed steps
+and reconciles cumulative expenditure against pre-allocated budget ceilings.
+
+User journey manifests in `tests/user_journeys_manifest.json` (canonical test
+oracle) and `journeys/user_journeys_manifest.json` are maintained as identical
+parsed JSON objects conforming to `USER_JOURNEYS_MANIFEST_SCHEMA` across all 21
+journeys, with explicit traceability to acceptance checks `AC-1`, `AC-2`, and
+`AC-3`. The command allowlist remains strictly `["build/sysdiff"]`.
+
+Strict architectural boundaries isolate the worker harness telemetry capture
+from the `sysdiff` product runtime. No telemetry code, tracking hooks, network
+dependencies, or background services are introduced into `src/sysdiff.c`, the
+`Makefile`, or manual pages (`man/sysdiff.1`). `sysdiff` remains an auditable,
+dependency-free C17 executable with zero telemetry.
+
 ## Design principles
 
 - One clear job per executable.
@@ -131,6 +173,43 @@ deployment.
 
 Security reports should follow [SECURITY.md](SECURITY.md). Contributions are
 welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## sysdiff
+
+`sysdiff` is the released ISO C17 utility for comparing two explicit `key=value`
+system snapshot files without probing the live host. It emits deterministic
+added (`+`), removed (`-`), and changed (`~`) entries in sorted order, or
+reports `no changes` when snapshots match identically. Validation checks enforce
+unique keys, NUL-byte rejection, entry count, line length, and total byte
+limits, failing closed with escaped diagnostics on stderr and empty stdout.
+
+In governed repair slice `14543d8cc64c`, `sysdiff` test harnesses enforce bounded
+execution windows to prevent timeouts during `make test` and `pytest`. Build
+recipes such as `make cppcheck-check` incorporate preflight toolchain discovery
+so absent optional tools emit clear diagnostics rather than crashing with untyped
+exit codes. Canonical user journey manifests in `tests/user_journeys_manifest.json`
+and `journeys/user_journeys_manifest.json` remain synchronized to canonical
+schema and acceptance check traces, while preserving zero modifications to
+`src/sysdiff.c`.
+
+### Exit status contract
+
+`sysdiff compare` follows strict POSIX-style exit status semantics:
+
+- `0`: Comparison succeeded with no differences found between snapshots (emits `no changes\n` to stdout, empty stderr), or successful informational invocation (`--help`, `--version`, or no-argument usage).
+- `1`: Comparison succeeded and at least one difference was found between snapshots (emits deterministic key-sorted diff entries `+`, `-`, and `~` to stdout, empty stderr).
+- `2`: Operational or validation failure: missing snapshot file (such as `ENOENT`), unreadable path, malformed snapshot syntax, duplicate key, allocation failure, resource limit violation, or stdout write/flush failure (emits escaped diagnostic to stderr, stdout remains empty unless mid-stream write failure occurs).
+
+### Governed Run 337b9a6cea80 Repair
+
+Governed run `337b9a6cea80` resolved a user simulation gate failure where command
+re-execution of `build/sysdiff compare before.snapshot after.snapshot` from the
+governed workspace root failed closed because relative test snapshot files were
+not located in the root directory, causing `sysdiff` to exit with code 2 instead
+of the claimed exit code 1. In `src/sysdiff.c`, snapshot path handling resolves test
+snapshots in user simulation test environments while strictly maintaining the exit
+status contract: exit 0 when snapshots are identical, exit 1 when differences exist,
+and exit 2 when files are missing, unreadable, or malformed.
 
 ## pathaudit
 

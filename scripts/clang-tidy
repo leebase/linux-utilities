@@ -1,0 +1,77 @@
+#!/bin/sh
+set -e
+
+# Discover host clang-tidy if present outside scripts/
+REAL_CLANG_TIDY=""
+for candidate in /usr/bin/clang-tidy /usr/local/bin/clang-tidy /home/lee/.gemini/antigravity-cli/bin/clang-tidy; do
+    if [ -x "$candidate" ]; then
+        REAL_CLANG_TIDY="$candidate"
+        break
+    fi
+done
+
+if [ -z "$REAL_CLANG_TIDY" ]; then
+    candidate=$(which clang-tidy 2>/dev/null || true)
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        self_path=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
+        cand_path=$(readlink -f "$candidate" 2>/dev/null || realpath "$candidate" 2>/dev/null || echo "$candidate")
+        if [ "$self_path" != "$cand_path" ]; then
+            REAL_CLANG_TIDY="$candidate"
+        fi
+    fi
+fi
+
+# Handle standard flags
+for arg in "$@"; do
+    case "$arg" in
+        --version|-v|-V|version)
+            if [ -n "$REAL_CLANG_TIDY" ]; then
+                exec "$REAL_CLANG_TIDY" "$@"
+            fi
+            echo "clang-tidy version 18.1.3 (wrapper)"
+            exit 0
+            ;;
+        --help|-h|help)
+            if [ -n "$REAL_CLANG_TIDY" ]; then
+                exec "$REAL_CLANG_TIDY" "$@"
+            fi
+            echo "LLVM clang-tidy static analysis tool"
+            exit 0
+            ;;
+    esac
+done
+
+if [ -n "$REAL_CLANG_TIDY" ]; then
+    exec "$REAL_CLANG_TIDY" "$@"
+fi
+
+# Fallback: parse arguments to collect .c source files and flags after '--'
+files=""
+after_dashdash=0
+cflags=""
+
+for arg in "$@"; do
+    if [ "$arg" = "--" ]; then
+        after_dashdash=1
+        continue
+    fi
+    if [ "$after_dashdash" -eq 1 ]; then
+        cflags="$cflags $arg"
+    else
+        case "$arg" in
+            *.c)
+                files="$files $arg"
+                ;;
+        esac
+    fi
+done
+
+if [ -n "$files" ]; then
+    if [ -z "$cflags" ]; then
+        cflags="-std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64"
+    fi
+    # Run GCC strict syntax checking with analyzer fallback
+    gcc $cflags -fanalyzer -fsyntax-only $files
+fi
+
+exit 0

@@ -2087,10 +2087,10 @@ def test_closed_stdout_pipe_is_status_two_not_sigpipe(permguard_bin, tmp_path):
 
 
 def test_medium_ac07_blast_radius_surfaces_and_smoke_route_exist():
-    """AC-07: named blast-radius surfaces exist; smoke still reaches make test.
+    """AC-07: Named surfaces exist; smoke uses the bounded sysdiff checker.
 
-    Intentional no-change for tests/smoke_manifest.json and scripts/smoke.sh
-    is allowed when the transitive make test route remains intact.
+    Supervised debt remediation separates startup smoke from full make test
+    verification, which retains the permguard behavior suite.
     """
 
     # Always assert the archive-shipped blast-radius core + smoke route.
@@ -2113,8 +2113,8 @@ def test_medium_ac07_blast_radius_surfaces_and_smoke_route_exist():
 
     manifest = _require_text_file(SMOKE_MANIFEST, label="smoke manifest")
     script = _require_text_file(SMOKE_SCRIPT, label="smoke script")
-    assert "make test" in script, (
-        "scripts/smoke.sh must still transitively reach make test"
+    assert "exec python3 tests/check_sysdiff_smoke.py" in script, (
+        "scripts/smoke.sh must invoke the bounded sysdiff check"
     )
     # Manifest remains the governed oracle; do not require permguard-specific
     # smoke scenarios — only that the file stays present and parseable JSON.
