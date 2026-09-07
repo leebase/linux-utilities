@@ -50,36 +50,66 @@ re-arm, or launch the prepared playbook without authorization.
 
 ## Snapshot
 
+Governed repair run `ec1d95cebdc9` (`repair_governed_run_a868a10e150e`) has
+successfully repaired and verified the failure from governed run `a868a10e150e`.
+Origin `a868a10e150e` remains **FAILED** in the historical record
+(`/home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e`): it failed
+validation when executing regression check `python3 -m pytest
+tests/test_repair_a187b2fa74c9.py: test_user_test_result_commands_run_are_objects_not_bare_strings`
+because `artifacts/user-test/result.json` recorded user journey command claims
+as bare strings rather than structured objects with required `command` and
+`exit_code` properties under Draft 2020-12 `USER_JOURNEYS_RESULT_SCHEMA`.
+Recovery run `ec1d95cebdc9` established normative repair contract
+`docs/repair-a868a10e150e-contract.md` (AC-1, AC-2, AC-3), comprehensive
+regression suite `tests/test_repair_a868a10e150e.py`, repair implementation
+`src/repair_a868a10e150e.py`, and synchronized user journey manifests in
+`tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json`
+preserving all 21 required journeys. Orchestrator validation under step 3
+attempt 2 passed all gates: pytest recorded 49 passed in 1.64s (duration
+2.493474s, exit 0), black check exit 0 (duration 0.020066s), and ruff check
+exit 0 (duration 0.0188s). Independent review artifacts
+`code-reviews/review-repair-a868a10e150e.md` and
+`code-reviews/review-repair-a868a10e150e.verdict.json` record verdict `pass`
+with zero findings (0 Critical, 0 High, 0 Medium, 0 Low). Blast radius was
+strictly contained: source hash for `src/sysdiff.c` remains
+`1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1` and
+Makefile hash remains
+`59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c`. Live
+portfolio remains three implemented utilities plus planning-only `inodealias`,
+`shebangcheck`, and `openunlink`, with reviewed `sparsemap` selection evidence only.
+
+## What's Happening Now
+
+Recovery run `ec1d95cebdc9` is closing out handoff after independent review
+verdict `pass` confirmed resolution of the result schema and bare string
+command claims defect without regressions or product modifications. Origin run
+`a868a10e150e` (and ancestor `a187b2fa74c9`) remains labeled Failed in the
+historical run archive; recovery `ec1d95cebdc9` provides the authoritative
+verified repair and review evidence. Prior visible debt stays open: pathaudit
+Medium `PAW1-DOC-901` and Lows from `c9e3de33f46b`; PA-6CA-4 and PA-6CA-1/2/3;
+permguard recovery/bootstrap Lows; FUM5 Mediums/Lows; `openunlink` `SIXTH2-M1`–`M3`
+and Lows; seventh-mission `SEV7R-*`. Planning order is unchanged: `inodealias` →
+`shebangcheck` → `openunlink` ahead of any seventh-utility CODE. Host crontab
+retains an uncommented Linux Utilities loop line, serving as a governance
+blocker to autonomous re-arm until authorized scheduling reconciliation. Runs
+root: `/home/lee/projects/linux-utilities-agent-orch-runs`.
+
+## Prior snapshot — governed run af89bd4b8fcd repair (f4d805b7b217)
+
 Documentation-only repair of AgentFlow records for failed governed run
-`af89bd4b8fcd` (`repair_governed_run_9add44496178`) is in progress under
+`af89bd4b8fcd` (`repair_governed_run_9add44496178`) was recorded under
 recovery run `f4d805b7b217`. Origin `af89bd4b8fcd` stays **FAILED** after
 step_03_code_repair HALTed on an authoring-contract path-scope defect:
 attempt 2 changed `tests/test_governed_run_9add44496178.py` and
 `tests/test_sysdiff.sh` outside step_03 `allowed_paths` (`src`,
 `Makefile`, `dist`), even though that attempt's clang `-fsyntax-only` and
-focused pytest recorded 74 passed in orchestrator validation. This slice
-updates only `context.md` and `result-review.md`; it does not author a new
-contract, plan, source file, test, or smoke oracle, and it does not claim
+focused pytest recorded 74 passed in orchestrator validation. That slice
+updated only `context.md` and `result-review.md`; it did not author a new
+contract, plan, source file, test, or smoke oracle, and it did not claim
 fresh smoke, full quality, sanitizers, Valgrind, or independent review for
-this documentation step. Live portfolio remains three implemented utilities
+that documentation step. Live portfolio remains three implemented utilities
 plus planning-only `inodealias`, `shebangcheck`, and `openunlink`, with
 reviewed `sparsemap` selection evidence only.
-
-## What's Happening Now
-
-Recovery `f4d805b7b217` is repairing the Failed-run narrative for
-`af89bd4b8fcd` in AgentFlow handoff docs so later smoke and independent
-review can judge the authoring-contract halt without inventing product
-gates that this step did not run. Keep origin `af89bd4b8fcd` labeled
-Failed; treat interleaved `src/sysdiff.c` / regression / shell-oracle
-residue as dirty candidate work needing a separately allowlisted replay,
-not as a passed delivery. Prior visible debt stays open: pathaudit Medium
-`PAW1-DOC-901` and Lows from `c9e3de33f46b`; PA-6CA-4 and PA-6CA-1/2/3;
-permguard recovery/bootstrap Lows; FUM5 Mediums/Lows; `openunlink`
-`SIXTH2-M1`–`M3` and Lows; seventh-mission `SEV7R-*`. Planning order is
-unchanged: `inodealias` → `shebangcheck` → `openunlink` ahead of any
-seventh-utility CODE. Runs root:
-`/home/lee/projects/linux-utilities-agent-orch-runs`.
 
 ## Prior snapshot — pathaudit PA-W1 open-repair `c9e3de33f46b`
 

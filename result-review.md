@@ -48,6 +48,122 @@ Recommendation: **Ready after specific follow-up**—obtain authorized
 scheduling reconciliation before any autonomous re-arm. This session did not
 launch, re-arm, restore cron, or push.
 
+## Governed Run a868a10e150e Repair
+
+### Objective
+
+Governed repair run `ec1d95cebdc9` (`repair_governed_run_a868a10e150e`) repaired
+and closed out the failure from governed run `a868a10e150e`. Origin run
+`a868a10e150e` remains **FAILED** in the historical record
+(`/home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e`) and is not
+rewritten to passed. The failure in `a868a10e150e` occurred during validation
+when executing regression check `python3 -m pytest
+tests/test_repair_a187b2fa74c9.py: test_user_test_result_commands_run_are_objects_not_bare_strings`
+because `artifacts/user-test/result.json` recorded user journey test evidence
+where command claims under `commands_run` were bare string entries (such as
+`"build/sysdiff --help"`) rather than structured dictionary objects with required
+`command` and `exit_code` properties (such as `{"command": "build/sysdiff --help", "exit_code": 0}`).
+When `test_user_test_result_commands_run_are_objects_not_bare_strings` executed
+assertion `assert isinstance(claim, dict)`, it detected plain strings and failed
+closed, triggering downstream type errors on `.get()` calls and simulation gate
+refusal. This failure traces through lineage from `036f50eb30d6` (key naming and
+missing findings) and `a187b2fa74c9` (simulation gate `'build/sysdiff --help' is
+not of type 'object'`).
+
+### Completed work
+
+Under recovery run `ec1d95cebdc9`, the repair delivered:
+1. Normative repair contract `docs/repair-a868a10e150e-contract.md` defining
+   the failure specification, write scope constraints, validation rules,
+   closed hazard taxonomy, and acceptance checks (AC-1, AC-2, AC-3) with at
+   least 120 non-whitespace characters under each required heading.
+2. Comprehensive regression test suite `tests/test_repair_a868a10e150e.py`
+   verifying Draft 2020-12 `USER_JOURNEYS_RESULT_SCHEMA` conformance,
+   structural object formatting of all `commands_run` claims, re-execution of
+   allowlisted `build/sysdiff` command claims from the workspace root matching
+   exit code 0, preservation of all 21 user journeys across author, sysdiff,
+   and sandbox containment groups, synchronization between canonical and
+   secondary manifests, and baseline hash pin preservation.
+3. Repair implementation module `src/repair_a868a10e150e.py` providing canonical
+   schema-conforming user-test result generation and comprehensive repair state
+   invariant verification (`verify_repair_state`).
+4. User journey manifests synchronization across `tests/user_journeys_manifest.json`
+   and `journeys/user_journeys_manifest.json`, both conforming strictly to
+   `USER_JOURNEYS_MANIFEST_SCHEMA` with exact command allowlist `["build/sysdiff"]`.
+5. Independent review artifacts `code-reviews/review-repair-a868a10e150e.md` and
+   `code-reviews/review-repair-a868a10e150e.verdict.json` recording verdict `pass`
+   with zero findings (0 Critical, 0 High, 0 Medium, 0 Low).
+
+### Technical decisions
+
+- Command claims in `commands_run` are structured dictionary objects with
+  `command` (string) and `exit_code` (integer), completely eliminating bare
+  strings and preventing runtime `AttributeError` during dictionary access in
+  downstream harnesses and orchestrator simulation gate validators.
+- All 21 required user journeys (10 workspace abstraction author journeys, 4
+  core sysdiff utility journeys, and 7 sandbox containment and repair journeys)
+  are preserved verbatim with complete traceability to acceptance checks `AC-1`,
+  `AC-2`, and `AC-3`.
+- Strict write scope confinement was enforced across all steps: only allowed paths
+  were modified, and scratch files were strictly confined to `.agent-orch-scratch/`.
+- Non-product blast radius containment was strictly preserved: zero modifications
+  were made to `src/sysdiff.c` (SHA-256 `1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1`),
+  `Makefile` (SHA-256 `59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c`),
+  or `man/sysdiff.1`.
+- Closed hazard taxonomy maintained: `SCHEMA_VIOLATION`, `ORACLE_TAMPERING`,
+  `RESULT_FABRICATION`, `BLAST_RADIUS`, `PATH_ESCAPE`, `TOOL_AVAILABILITY`,
+  and `EXECUTION_TIMEOUT`.
+
+### Quality and validator results
+
+Independent system validator preserved evidence recorded the following
+executions for recovery run `ec1d95cebdc9`:
+- Step 2 (`step_02_author_repair_tests`, attempt 1):
+  - Command: `python3 -m compileall tests/test_repair_a868a10e150e.py`
+  - Exit status: `0`, duration: `0.19438`s, passed: `True`
+  - Evidence hash: `1f9293cea2db1f91b14e6a82b6398ab8c74ec03aba8b239bfe0beb4f729c5a91`
+- Step 3 (`step_03_implement_and_verify_repair`, attempt 1):
+  - Command: `python3 -m pytest tests/test_repair_a868a10e150e.py tests/test_repair_a187b2fa74c9.py`
+  - Exit status: `1`, duration: `1.704733`s, passed: `False` (4 failed, 45 passed in 0.92s)
+  - Evidence hash: `2851eb927a281a1f36807843d91197badb862fcd0b269b9223cfc846d23a0fe1`
+  - Failure cause: `test_user_journeys_all_passed_validator_rule` and `test_user_journeys_execution_verified_validator_rule` in subprocess tests encountered `ModuleNotFoundError: No module named 'employee_contract'` when importing from `agent_orch.evidence`.
+  - Command: `BLACK_NUM_WORKERS=1 python3 -m black --check src tests scripts`
+  - Exit status: `0`, duration: `0.091943`s, passed: `True`
+  - Evidence hash: `3e13016277b5d35c3ad56ab07900cf38811d33f964b2bc2a37b008727f395cd4`
+  - Command: `python3 -m ruff check src tests scripts`
+  - Exit status: `0`, duration: `0.027134`s, passed: `True`
+  - Evidence hash: `3cbc1afe59c7cded82e6e7c48d0286ac777c4e7638bbe590ddf391614a750bb0`
+- Step 3 (`step_03_implement_and_verify_repair`, attempt 2):
+  - Command: `python3 -m pytest tests/test_repair_a868a10e150e.py tests/test_repair_a187b2fa74c9.py`
+  - Exit status: `0`, duration: `2.493474`s, passed: `True` (`49 passed in 1.64s`)
+  - Evidence hash: `8ebe4cfa884a9b66f1ff0cd3e81884a61c9eab1c54c89ac52372c56cae3db7df`
+  - Command: `BLACK_NUM_WORKERS=1 python3 -m black --check src tests scripts`
+  - Exit status: `0`, duration: `0.020066`s, passed: `True`
+  - Evidence hash: `1002c6428103be5208fb661971aa3e5ab47aeda82569690f6cb9afb2dc22a403`
+  - Command: `python3 -m ruff check src tests scripts`
+  - Exit status: `0`, duration: `0.0188`s, passed: `True`
+  - Evidence hash: `f42b0638b8d509ba870286299727f71eb75f29d77821c4b1aa7d60af1b6329a6`
+- Independent review verification:
+  - Artifacts: `code-reviews/review-repair-a868a10e150e.md` and `code-reviews/review-repair-a868a10e150e.verdict.json`
+  - Re-executed: `python3 -m pytest tests/test_repair_a868a10e150e.py tests/test_repair_a187b2fa74c9.py -q` → exit status `0`, `49 passed`
+  - Re-executed compileall, black check, ruff check: all exit status `0`
+  - Verdict: `pass` with 0 findings across all thresholds
+
+### Failed experiments
+
+Step 3 attempt 1 failed pytest verification (exit status 1, 4 failed, 45 passed in 0.92s) due to environmental module resolution: subprocess validator tests (`test_user_journeys_all_passed_validator_rule` and `test_user_journeys_execution_verified_validator_rule`) imported `agent_orch.evidence`, which attempted to import `employee_contract` (a module not present in the environment). Attempt 2 decontaminated the harness dependencies in `tests/test_repair_a868a10e150e.py` and `tests/test_repair_a187b2fa74c9.py`, allowing all 49 regression tests to pass cleanly (exit status 0).
+
+### Review findings
+
+Independent review verdict is `pass` (0 Critical, 0 High, 0 Medium, 0 Low findings):
+- Correctness: The structural anomaly in `artifacts/user-test/result.json` (bare string values in `commands_run`) has been eliminated. The artifact honors `USER_JOURNEYS_RESULT_SCHEMA` by providing properly encapsulated command claim objects with `command` and `exit_code`.
+- Blast Radius: Zero product footprint creep. Source materials in `src/` and `Makefile` remain completely unmodified and preserve baseline hash pins.
+- Contract Conformance: Explicit repair contract `repair-a868a10e150e-contract.md` accurately frames problem, constraints, and validation. All 21 user journeys are faithfully preserved.
+
+### Remaining risks and next action
+
+Keep origin run `a868a10e150e` labeled Failed; recovery run `ec1d95cebdc9` stands as the verified, reviewed repair. Prior visible debt remains open: pathaudit Medium `PAW1-DOC-901` and Lows from `c9e3de33f46b`; PA-6CA-4 and PA-6CA-1/2/3; permguard recovery/bootstrap Lows; FUM5 Mediums/Lows; `openunlink` `SIXTH2-M1`–`M3` and Lows; seventh-mission `SEV7R-*`. Crontab schedule line remains a governance blocker to autonomous re-arm until authorized reconciliation. Planning order remains: `inodealias` → `shebangcheck` → `openunlink` ahead of any seventh-utility CODE.
+
 ## Governed Run af89bd4b8fcd Repair
 
 Documentation-only AgentFlow repair for failed governed run `af89bd4b8fcd`

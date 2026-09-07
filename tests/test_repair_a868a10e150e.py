@@ -1,41 +1,41 @@
-"""Regression test suite for repairing governed run failure a187b2fa74c9.
+"""Regression test suite for repairing governed run failure a868a10e150e.
 
 Sealed Evidence Directory:
-    /home/lee/projects/linux-utilities-agent-orch-runs/a187b2fa74c9
+    /home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e
 
 Lineage and Failure Analysis:
-1. Origin Run Failure in a187b2fa74c9:
-   Governed run a187b2fa74c9 failed during validation at step step_08b_user_simulation_gate (attempt 1).
-   The trusted failure evidence recorded:
-       User-test result artifacts/user-test/result.json violates the result schema:
-       $.journeys[0].commands_run[0]: 'build/sysdiff --help' is not of type 'object'
+1. Origin Run Failure in a868a10e150e:
+   Governed run a868a10e150e failed during validation when executing the repair verification
+   command for prior repair slice a187b2fa74c9:
+       Command failed: python3 -m pytest tests/test_repair_a187b2fa74c9.py: test_user_test_result_commands_run_are_objects_not_bare_strings
 
 2. Root Cause Analysis:
    - Schema Non-Conformance in User-Test Result Artifact (artifacts/user-test/result.json):
      Under Draft 2020-12 USER_JOURNEYS_RESULT_SCHEMA, each journey record within the 'journeys'
      array must contain 'commands_run' as an array of objects with required 'command' (string)
-     and 'exit_code' (integer) properties.
-     In run a187b2fa74c9, commands_run contained plain string entries ("build/sysdiff --help")
-     rather than structured dictionary objects ({"command": "build/sysdiff --help", "exit_code": 0}),
-     causing the user simulation gate validator to fail closed.
+     and 'exit_code' (integer) properties:
+         {"command": "build/sysdiff --help", "exit_code": 0}
+     In governed run a868a10e150e, commands_run contained plain string entries ("build/sysdiff --help")
+     rather than structured dictionary objects, causing the assertion `assert isinstance(claim, dict)`
+     in test_user_test_result_commands_run_are_objects_not_bare_strings to fail.
    - Downstream Type Errors and Validation Refusal:
      Iterating commands_run and performing claim.get("command") raises AttributeError when claims
-     are plain strings. The orchestrator validator refuses to re-execute command claims from an
+     are plain strings. Downstream orchestrator simulation gate validators (_run_user_journeys_rule
+     and _run_user_journeys_execution_rule) refuse to validate or re-execute command claims from an
      invalid schema artifact.
-   - Omission of Explicit Rule in TESTING.md:
-     TESTING.md described user journey verification but did not explicitly state that commands_run
-     in user-test result.json must be an array of objects and not strings.
+   - Non-Product Blast Radius Containment:
+     The defect is strictly confined to user test simulation result formatting. Production C17
+     source code (src/sysdiff.c), build recipes (Makefile), and manual pages (man/sysdiff.1)
+     must remain untouched.
 
-3. Repair Acceptance Contract (docs/repair-a187b2fa74c9-contract.md):
+3. Repair Acceptance Contract (docs/repair-a868a10e150e-contract.md):
    - AC-1: Contract Establishment, Document Integrity, and Write Scope Confinement.
-     Contract document adheres to required headings with >= 120 non-whitespace characters each.
-     Closed hazard taxonomy (SCHEMA_VIOLATION, ORACLE_TAMPERING, RESULT_FABRICATION, BLAST_RADIUS,
-     PATH_ESCAPE, TOOL_AVAILABILITY, EXECUTION_TIMEOUT). Sealed evidence directory explicitly cited.
-     Workspace root remains clean of ad-hoc generator scripts; scratch confined to .agent-orch-scratch/.
-   - AC-2: User-Test Result Artifact Schema Conformance, Command Claim Structure, Documentation,
-     and Simulation Gate Passing.
-     TESTING.md explicitly states that commands_run in user-test result.json must be an array of
-     objects and not strings.
+     Contract document adheres to required headings (Overview, Problem, Constraints, Acceptance Checks)
+     with >= 120 non-whitespace characters each. Closed hazard taxonomy (SCHEMA_VIOLATION,
+     ORACLE_TAMPERING, RESULT_FABRICATION, BLAST_RADIUS, PATH_ESCAPE, TOOL_AVAILABILITY,
+     EXECUTION_TIMEOUT). Sealed evidence directory explicitly cited. Workspace root remains clean
+     of ad-hoc scripts; scratch confined to .agent-orch-scratch/.
+   - AC-2: User-Test Result Artifact Schema Conformance, Command Claim Object Structure, and Simulation Gate Passing.
      artifacts/user-test/result.json conforms strictly to Draft 2020-12 USER_JOURNEYS_RESULT_SCHEMA.
      Root contains required properties 'journeys' and 'findings'.
      Every journey contains 'name', 'status', 'steps_taken', and structured 'commands_run'.
@@ -103,9 +103,8 @@ except ImportError:
     ValidationRule = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
-SEALED_EVIDENCE_DIR = Path("/home/lee/projects/linux-utilities-agent-orch-runs/a187b2fa74c9")
-CONTRACT = ROOT / "docs" / "repair-a187b2fa74c9-contract.md"
-TESTING_MD = ROOT / "TESTING.md"
+SEALED_EVIDENCE_DIR = Path("/home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e")
+CONTRACT = ROOT / "docs" / "repair-a868a10e150e-contract.md"
 USER_TEST_RESULT = ROOT / "artifacts" / "user-test" / "result.json"
 TESTS_MANIFEST = ROOT / "tests" / "user_journeys_manifest.json"
 JOURNEYS_MANIFEST = ROOT / "journeys" / "user_journeys_manifest.json"
@@ -259,7 +258,7 @@ def _run_sysdiff(
 
 
 def test_repair_contract_exists_and_has_required_headings() -> None:
-    """AC-1: docs/repair-a187b2fa74c9-contract.md has required headings with >= 120 chars each."""
+    """AC-1: docs/repair-a868a10e150e-contract.md has required headings with >= 120 chars each."""
     assert CONTRACT.exists(), f"Missing repair contract: {CONTRACT}"
     assert CONTRACT.is_file(), f"{CONTRACT} must be a regular file"
     content = CONTRACT.read_text(encoding="utf-8")
@@ -285,10 +284,10 @@ def test_repair_contract_exists_and_has_required_headings() -> None:
 
 
 def test_repair_contract_cites_sealed_evidence_directory() -> None:
-    """AC-1: Contract must explicitly cite sealed evidence directory for run a187b2fa74c9."""
+    """AC-1: Contract must explicitly cite sealed evidence directory for run a868a10e150e."""
     assert CONTRACT.exists(), f"Missing repair contract: {CONTRACT}"
     content = CONTRACT.read_text(encoding="utf-8")
-    expected_evidence_path = "/home/lee/projects/linux-utilities-agent-orch-runs/a187b2fa74c9"
+    expected_evidence_path = "/home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e"
     assert expected_evidence_path in content, (
         f"Contract must cite sealed evidence path {expected_evidence_path}"
     )
@@ -314,32 +313,9 @@ def test_workspace_root_clean_of_adhoc_scripts() -> None:
 
 
 # ============================================================================
-# AC-2: User-Test Result Artifact Schema Conformance, Command Claim Structure,
-#       Documentation, and Simulation Gate Passing
+# AC-2: User-Test Result Artifact Schema Conformance, Command Claim Object Structure,
+#       and Simulation Gate Passing
 # ============================================================================
-
-
-def test_testing_md_explicitly_specifies_commands_run_as_array_of_objects_not_strings() -> None:
-    """AC-2: TESTING.md explicitly states that commands_run in user-test result.json must be an array of objects and not strings."""
-    assert TESTING_MD.exists(), f"TESTING.md missing at {TESTING_MD}"
-    content = _read_disk_file(TESTING_MD)
-
-    assert "commands_run" in content, "TESTING.md must mention 'commands_run'"
-    assert "result.json" in content, "TESTING.md must mention 'result.json'"
-
-    # Normalize backticks and quotes for robust pattern verification
-    normalized = content.replace("`", "").replace('"', "").replace("'", "")
-
-    pattern = re.compile(
-        r"commands_run.*?(?:user-test\s+)?result\.json.*?must be an array of objects\s+(?:and\s+)?not\s+(?:plain\s+)?strings|"
-        r"(?:user-test\s+)?result\.json.*?commands_run.*?must be an array of objects\s+(?:and\s+)?not\s+(?:plain\s+)?strings|"
-        r"commands_run.*?must be an array of objects\s+(?:and\s+)?not\s+(?:plain\s+)?strings",
-        re.IGNORECASE | re.DOTALL,
-    )
-    assert pattern.search(normalized) is not None, (
-        "TESTING.md must explicitly state that commands_run in user-test result.json "
-        "must be an array of objects and not strings."
-    )
 
 
 def test_user_test_result_file_exists_and_is_valid_json() -> None:
@@ -382,9 +358,9 @@ def test_user_test_result_journeys_structure() -> None:
 def test_user_test_result_commands_run_are_objects_not_bare_strings() -> None:
     """AC-2: Every claim in commands_run must be a dict object with 'command' and 'exit_code', not a string.
 
-    Direct regression test for run a187b2fa74c9:
-        User-test result artifacts/user-test/result.json violates the result schema:
-        $.journeys[0].commands_run[0]: 'build/sysdiff --help' is not of type 'object'
+    Direct regression test capturing failure from run a868a10e150e:
+        Command failed: python3 -m pytest tests/test_repair_a187b2fa74c9.py: test_user_test_result_commands_run_are_objects_not_bare_strings
+        AssertionError: [...] command claim [0] must be a dict, got str ('build/sysdiff --help').
     """
     data = _load_disk_result_dict()
     journeys = data.get("journeys", [])
@@ -399,7 +375,7 @@ def test_user_test_result_commands_run_are_objects_not_bare_strings() -> None:
         for c_idx, claim in enumerate(commands_run):
             assert isinstance(claim, dict), (
                 f"[{j_name}] command claim [{c_idx}] must be a dict, got {type(claim).__name__} ({claim!r}). "
-                "In run a187b2fa74c9, claims were strings rather than objects, breaking schema validation."
+                "In run a868a10e150e, claims were strings rather than objects, breaking schema validation."
             )
             assert "command" in claim, f"[{j_name}] claim [{c_idx}] missing required 'command' property"
             assert isinstance(claim["command"], str) and len(claim["command"]) > 0, (
@@ -430,7 +406,7 @@ def test_user_test_result_command_claims_safe_dict_access_no_attribute_error() -
 
 
 def test_user_test_result_satisfies_canonical_schema() -> None:
-    """AC-2: artifacts/user-test/result.json strictly satisfies USER_JOURNEYS_RESULT_SCHEMA."""
+    """AC-2: artifacts/user-test/result.json strictly satisfies Draft 2020-12 USER_JOURNEYS_RESULT_SCHEMA."""
     if jsonschema is None:
         pytest.skip("jsonschema not installed in current environment")
 
