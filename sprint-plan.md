@@ -1,5 +1,19 @@
 # Sprint Plan
 
+## Linux Utilities truth validation — 2026-09-07 UTC
+
+- [x] Explain the original six oracle failures from preserved evidence and test
+  current disk artifacts without synthetic read interception.
+- [x] Repair the independently reproduced source-distribution dependency defect;
+  retain complete checkout tests and exact archive membership assertions.
+- [x] Complete fresh governed run `187272ea3090` with all 21 journeys, allowlist
+  and re-execution gates, independent review, and verified evidence chain.
+- [x] Final `make test`: 944 passed / 22 skipped / 0 failed. Native Clang-dependent
+  sanitizer checks remain unavailable and visible; no wrapper success claimed.
+- [ ] Separate follow-up only: investigate the deferred release-policy mismatch
+  recorded in `tmp/linux-utilities-contract-validation/ask-lee.md` before any
+  release work. No release or mission scheduling change is part of this task.
+
 ## Supervised stale-oracle remediation — 2026-09-05
 
 - [x] Refresh stale Makefile pins, separate fast smoke from full verification,

@@ -719,32 +719,63 @@ def test_snapshot_byte_limit_boundary(sysdiff_bin, tmp_path):
 DIST_ARCHIVE_NAME = "sysdiff-source.tar.gz"
 DIST_CHECKSUM_NAME = "sysdiff-source.tar.gz.sha256"
 DIST_EPOCH = "946684800"
-REQUIRED_ARCHIVE_MEMBERS = (
-    "sysdiff/Makefile",
-    "sysdiff/LICENSE",
-    "sysdiff/README.md",
-    "sysdiff/CHANGELOG.md",
-    "sysdiff/src/sysdiff.c",
-    "sysdiff/man/sysdiff.1",
-    "sysdiff/tests/test_sysdiff.sh",
-    "sysdiff/tests/test_sysdiff.py",
-    "sysdiff/tests/test_sysdiff_fixture.sh",
-    "sysdiff/scripts/check_tools.py",
-    "sysdiff/docs/sysdiff-snapshot-format-and-scope.md",
-    # The dist ships tests/test_commissioning_dependencies.py, so it must also
-    # ship every file that test loads or reads. Omitting them made the extract
-    # fail collection with FileNotFoundError while the source tree passed.
-    # See docs/commissioning-validator-ownership.md.
-    "sysdiff/AGENTS.md",
-    "sysdiff/commissioning/check_packet.py",
-    "sysdiff/commissioning/check_repository_expectations.py",
-    "sysdiff/commissioning/final-commissioning-packet-2026-08-02.json",
-    "sysdiff/commissioning/final-commissioning-packet-2026-08-02.md",
-    "sysdiff/playbooks/final_supervised_commissioning_20260802.yaml",
+DIST_PRODUCT_FILES = (
+    "Makefile",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    ".gitignore",
+    "src/sysdiff.c",
+    "src/pathaudit.c",
+    "src/permguard.c",
+    "src/openunlink.c",
+    "man/sysdiff.1",
+    "man/pathaudit.1",
+    "man/permguard.1",
+    "man/openunlink.1",
+    "scripts/benchmark_sysdiff.py",
+    "scripts/check_tools.py",
+    "scripts/clang",
+    "scripts/clang-tidy",
+    "scripts/cppcheck",
+    "scripts/ensure_tools.sh",
+    "scripts/install_tools.sh",
+    "scripts/smoke.sh",
+    "tests/check_sysdiff_smoke.py",
+    "tests/smoke_manifest.json",
+    "tests/smoke_start.py",
+    "tests/test_check_tools.py",
+    "tests/test_openunlink.py",
+    "tests/test_pathaudit.py",
+    "tests/test_permguard.py",
+    "tests/test_sysdiff.py",
+    "tests/test_sysdiff.sh",
+    "tests/test_sysdiff_benchmark.py",
+    "tests/test_sysdiff_c_craftsmanship.py",
+    "tests/test_sysdiff_fixture.sh",
+    "tests/test_sysdiff_malformed_fuzz.py",
+    "docs/AI_DEVELOPMENT.md",
+    "docs/DECISIONS.md",
+    "docs/DESIGN.md",
+    "docs/malformed-snapshot-fuzz-regression-contract.md",
+    "docs/openunlink.md",
+    "docs/pathaudit-contract.md",
+    "docs/pathaudit.md",
+    "docs/permguard-bootstrap-contract.md",
+    "docs/permguard-first-vertical-slice-contract.md",
+    "docs/permguard-hostile-filesystem-fixtures-contract.md",
+    "docs/permguard-medium-repairs-contract.md",
+    "docs/permguard.md",
+    "docs/sixth-utility-capability-contract.md",
+    "docs/snapshot-format-decision.md",
+    "docs/sysdiff-c-source-contract.md",
+    "docs/sysdiff-fixture-slice-contract.md",
+    "docs/sysdiff-snapshot-format-and-scope.md",
+    "docs/sysdiff.md",
 )
-# playbooks/ is no longer banned wholesale: the one commissioning playbook is a
-# shipped-contract input. Its authoring surfaces stay development-tree-only, and
-# the exact-membership pin below keeps the rest of the directory out.
+EXPECTED_ARCHIVE_FILES = {f"sysdiff/{path}" for path in DIST_PRODUCT_FILES}
 EXCLUDED_ARCHIVE_FRAGMENTS = (
     ".git/",
     "code-reviews/",
@@ -973,39 +1004,12 @@ def test_dist_archive_layout_and_normalized_metadata():
                     assert member.mode & 0o777 == 0o644
 
     name_set = set(_archive_member_names(archive))
-    for required in REQUIRED_ARCHIVE_MEMBERS:
-        assert required in name_set
+    file_names = {member.name for member in members if member.isfile()}
+    assert file_names == EXPECTED_ARCHIVE_FILES
 
     joined = "\n".join(name_set)
     for fragment in EXCLUDED_ARCHIVE_FRAGMENTS:
         assert fragment not in joined
-    assert "sysdiff/code-reviews" not in joined
-    assert "sysdiff/plans" not in joined
-    # Exactly one playbook ships. A directory pathspec would sweep in the
-    # templates and the starter proof, so DIST_PATHSPECS names this file.
-    shipped_playbooks = sorted(
-        name
-        for name in name_set
-        if name.startswith("sysdiff/playbooks/") and not name.endswith("/")
-    )
-    assert shipped_playbooks == [
-        "sysdiff/playbooks/final_supervised_commissioning_20260802.yaml"
-    ], shipped_playbooks
-    # commissioning/ ships as a directory, but only tracked mission artifacts
-    # may appear: no run evidence, caches, or credentials.
-    shipped_commissioning = sorted(
-        name
-        for name in name_set
-        if name.startswith("sysdiff/commissioning/") and not name.endswith("/")
-    )
-    assert shipped_commissioning == [
-        "sysdiff/commissioning/check_packet.py",
-        "sysdiff/commissioning/check_repository_expectations.py",
-        "sysdiff/commissioning/final-commissioning-packet-2026-08-02.json",
-        "sysdiff/commissioning/final-commissioning-packet-2026-08-02.md",
-        "sysdiff/commissioning/post-hardening-commissioning-packet.json",
-        "sysdiff/commissioning/post-hardening-commissioning-packet.md",
-    ], shipped_commissioning
 
 
 def test_dist_excludes_untracked_files():

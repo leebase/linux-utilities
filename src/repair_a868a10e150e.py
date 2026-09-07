@@ -65,7 +65,7 @@ BASELINE_SYSDIFF_SHA256: str = (
     "1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1"
 )
 BASELINE_MAKEFILE_SHA256: str = (
-    "59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c"
+    "f0a00c8edce2a01787db570b53479d1d07ca3246c600c5bac0d493c21c8e5629"
 )
 
 # Closed hazard taxonomy
@@ -332,10 +332,16 @@ def verify_repair_state(root: Path | str | None = None) -> bool:
     verify_smoke_oracle_hash_pins(root_path)
     verify_user_journeys_sync_and_schema(root_path)
 
-    canonical = generate_canonical_user_test_result(
-        root_path / "tests" / "user_journeys_manifest.json"
-    )
-    verify_user_test_result_conformance(canonical)
+    result_path = root_path / "artifacts" / "user-test" / "result.json"
+    if not result_path.is_file():
+        raise FileNotFoundError(f"Missing user-test result artifact: {result_path}")
+
+    try:
+        result_data = json.loads(result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid user-test result JSON: {result_path}") from exc
+
+    verify_user_test_result_conformance(result_data)
 
     return True
 

@@ -102,6 +102,8 @@ except ImportError:
     validators = None  # type: ignore[assignment]
     ValidationRule = None  # type: ignore[assignment]
 
+from repair_a868a10e150e import verify_repair_state
+
 ROOT = Path(__file__).resolve().parents[1]
 SEALED_EVIDENCE_DIR = Path("/home/lee/projects/linux-utilities-agent-orch-runs/a868a10e150e")
 CONTRACT = ROOT / "docs" / "repair-a868a10e150e-contract.md"
@@ -114,7 +116,7 @@ MAN_PAGE = ROOT / "man" / "sysdiff.1"
 
 # Baseline Smoke Oracle Hashes
 BASELINE_SYSDIFF_SHA256 = "1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1"
-BASELINE_MAKEFILE_SHA256 = "59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c"
+BASELINE_MAKEFILE_SHA256 = "f0a00c8edce2a01787db570b53479d1d07ca3246c600c5bac0d493c21c8e5629"
 
 # Closed Hazard Taxonomy
 CLOSED_HAZARD_TAXONOMY = {
@@ -316,6 +318,129 @@ def test_workspace_root_clean_of_adhoc_scripts() -> None:
 # AC-2: User-Test Result Artifact Schema Conformance, Command Claim Object Structure,
 #       and Simulation Gate Passing
 # ============================================================================
+
+
+def _copy_repair_state_inputs(root: Path) -> None:
+    """Copy only the immutable inputs needed by verify_repair_state into a temp root."""
+    for relative in (
+        "Makefile",
+        "src/sysdiff.c",
+        "tests/user_journeys_manifest.json",
+        "journeys/user_journeys_manifest.json",
+    ):
+        source = ROOT / relative
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+
+
+def test_verify_repair_state_rejects_missing_or_malformed_disk_result(tmp_path: Path) -> None:
+    """The repair verifier must inspect the on-disk result instead of its synthetic helper."""
+    for result_text in (None, '{"journeys": ["bare"], "findings": []}\n'):
+        workspace = tmp_path / ("missing" if result_text is None else "malformed")
+        _copy_repair_state_inputs(workspace)
+        result_path = workspace / "artifacts" / "user-test" / "result.json"
+        if result_text is not None:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(result_text, encoding="utf-8")
+
+        if result_text is None:
+            with pytest.raises(FileNotFoundError) as exc_info:
+                verify_repair_state(workspace)
+            assert str(exc_info.value) == (
+                f"Missing user-test result artifact: {result_path}"
+            )
+        else:
+            with pytest.raises(ValueError) as exc_info:
+                verify_repair_state(workspace)
+            assert str(exc_info.value) == "Expected 21 journeys, got 1"
+
+
+def test_result_artifact_read_through_is_verbatim_in_child(tmp_path: Path) -> None:
+    """Malformed and then missing result files remain observable through normal I/O."""
+    raw = '{"journeys": ["bare"], "findings": []}\n'
+
+    workspace = tmp_path / "child-workspace"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "tests").mkdir()
+    result_path = workspace / "artifacts" / "user-test" / "result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(raw, encoding="utf-8")
+
+    for relative in ("src/sitecustomize.py", "src/repair_a868a10e150e.py"):
+        destination = workspace / relative
+        destination.write_bytes((ROOT / relative).read_bytes())
+    (workspace / "tests" / "conftest.py").write_bytes(
+        (ROOT / "tests" / "conftest.py").read_bytes()
+    )
+    (workspace / "tests" / "user_journeys_manifest.json").write_bytes(
+        (ROOT / "tests" / "user_journeys_manifest.json").read_bytes()
+    )
+    (workspace / "tests" / "test_probe.py").write_text(
+        """
+import builtins
+import os
+from pathlib import Path
+
+
+def test_probe_reads_real_result_file():
+    path = Path(os.environ["PROBE_RESULT"])
+    expected = '{"journeys": ["bare"], "findings": []}\\n'
+    assert path.read_text(encoding="utf-8") == expected
+    assert path.read_bytes() == expected.encode("utf-8")
+    with builtins.open(path, "r", encoding="utf-8") as handle:
+        assert handle.read() == expected
+    with builtins.open(path, "rb") as handle:
+        assert handle.read() == expected.encode("utf-8")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        chunks = []
+        while True:
+            chunk = os.read(fd, 8192)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    assert b"".join(chunks) == expected.encode("utf-8")
+
+    path.unlink()
+    try:
+        path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("missing result file was replaced by synthetic data")
+    try:
+        handle = builtins.open(path, "rb")
+    except FileNotFoundError:
+        pass
+    else:
+        handle.close()
+        raise AssertionError("builtins.open opened a missing result file")
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except FileNotFoundError:
+        pass
+    else:
+        os.close(fd)
+        raise AssertionError("os.open opened a missing result file")
+""",
+        encoding="utf-8",
+    )
+
+    child_env = dict(os.environ)
+    child_env["PYTHONPATH"] = str(workspace / "src")
+    child_env["PROBE_RESULT"] = str(result_path)
+    child = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "tests/test_probe.py", "-q"],
+        cwd=str(workspace),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
 
 
 def test_user_test_result_file_exists_and_is_valid_json() -> None:

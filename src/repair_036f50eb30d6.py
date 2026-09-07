@@ -65,7 +65,7 @@ BASELINE_SYSDIFF_SHA256: str = (
     "1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1"
 )
 BASELINE_MAKEFILE_SHA256: str = (
-    "59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c"
+    "f0a00c8edce2a01787db570b53479d1d07ca3246c600c5bac0d493c21c8e5629"
 )
 
 # Closed hazard taxonomy

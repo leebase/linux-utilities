@@ -1,5 +1,62 @@
 # Result Review
 
+## Linux Utilities truth validation — 2026-09-07 UTC
+
+Lee-authorized validation started on clean, synchronized `main` at
+`02f20e81b0bf519b7bf72b454fc01dd6247df7cb`, after the reported `8877370`
+checkpoint. The six historical failures in `tests/test_repair_a187b2fa74c9.py`
+were four malformed bare-string command-claim failures and two child-interpreter
+`employee_contract` import failures. Their exact historical diagnostics remain
+in run `a868a10e150e`, step 05, attempt 2. The six already passed against actual
+starting disk bytes, but global result-read interception could hide later bad
+or missing evidence. Removed that interception and made the current repair
+verifier read the disk artifact; added negative read-through regressions.
+
+Initial `make test` reproduced a separate source-distribution defect:
+941 passed, 22 skipped, 1 failed. The archive included mission/governance tests
+without their workspace dependencies. Its explicit product inventory now
+contains the four utilities and their required product tests/dependencies;
+full-checkout governance coverage remains enabled. Updated exact Makefile pins
+and current packaging documentation. C sources, manual pages, journey manifests,
+and release recipes are unchanged.
+
+Fresh governed run `187272ea3090` completed all three steps using clean
+Agent-Orch `88af416b4667aa27d786e5fc1a6b87bab8a1f6d5`. Its new
+`artifacts/user-test/result.json` covers all 21 manifest journeys, with nonempty
+steps and object command claims carrying observed integer exits. Both journey
+rules passed: 21 verified claims, zero skipped, four distinct command executions.
+Nine fresh supporting captures and live stdin/readonly probes establish the
+substantive observations beyond repeated help commands. Astra Low independently
+reviewed the sealed evidence; the governed review passed with no findings and
+its full-suite claim passed orchestrator re-execution. Run evidence verification:
+6 chain entries, 94 artifacts, no divergence.
+Standalone copied-artifact probes confirm valid evidence passes, missing
+name/steps/commands and bare strings fail with exact-path diagnostics, a false
+exit claim fails observed-exit comparison, and a non-allowlisted claim is not
+executed and fails journey verification. The original six focused cases passed
+again (6 passed, 0 skipped, 0 failed, 0.71s); actual artifact bytes are unchanged.
+
+Verification: final `make test` 944 passed / 22 skipped / 0 failed (138.21s);
+related six repair modules 125 passed; independent governed reviewer pytest
+946 passed / 20 skipped / 0 failed (144.94s); clean-environment `make distcheck`
+514 passed / 35 skipped / 0 failed, exit 0. GCC strict compilation and actual
+GCC analyzer compilation passed for all four C sources; man and benchmark
+checks passed. `make test-sanitize` remains visibly unavailable because native
+Clang is absent. Native clang-format, clang-tidy, cppcheck, Valgrind, Ruff and
+Black are also unavailable; local fallback wrappers/shims are not native-tool
+passes. No tools were installed.
+
+Earlier fresh run `bf791d975135` remains failed for insufficient semantic
+proof; `9965e95fc78e` remains failed for a task-harness import error corrected
+before the final new run. Expected-negative retry probe `a347573853b6` remains
+failed by design: its complete stderr and bounded retry feedback were verified
+without claiming model consumption. No failed run was resumed or relabeled.
+Historical failed run artifacts were not modified and no live-run recovery is
+claimed. Agent-Orch and unrelated repositories were not modified. Deferred
+release-policy investigation is recorded in
+`tmp/linux-utilities-contract-validation/ask-lee.md`; it does not block this
+bounded validation or authorize a release or scheduling change.
+
 ## Supervised stale-oracle remediation — 2026-09-05
 
 Lee-authorized manual remediation refreshes the two post-chain Makefile hash

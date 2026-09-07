@@ -122,7 +122,7 @@ MAN_PAGE = ROOT / "man" / "sysdiff.1"
 
 # Baseline Smoke Oracle Hashes (unmodified HEAD commits)
 BASELINE_SYSDIFF_SHA256 = "1cb1d154a8594c6bc7e81e19c3bfc5d15c6dce2f9e91dffe172c549dec8f01b1"
-BASELINE_MAKEFILE_SHA256 = "59b45e65b60b70520a56ce35dfa779dc980a46d9a0a708424ebebbf6692b698c"
+BASELINE_MAKEFILE_SHA256 = "f0a00c8edce2a01787db570b53479d1d07ca3246c600c5bac0d493c21c8e5629"
 
 # 10 Preserved Workspace Abstraction Author Journeys
 PRESERVED_AUTHOR_JOURNEYS = {

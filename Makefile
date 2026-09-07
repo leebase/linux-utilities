@@ -46,37 +46,18 @@ DIST_CHECKSUM := $(DIST_DIR)/sysdiff-source.tar.gz.sha256
 SOURCE_DATE_EPOCH ?= 0
 DIST_PREFIX := sysdiff
 DISTCHECK_EPOCH := 946684800
-# Tracked release pathspecs only (source, tests, build metadata, docs, license).
-# The dist must also carry every file the shipped tests import or read, or the
-# extract fails collection while the source tree passes. tests/
-# test_commissioning_dependencies.py loads commissioning/
-# check_repository_expectations.py and reads the final commissioning packet and
-# its playbook, so those ship as product rather than being skipped when absent.
-# AGENTS.md ships because the packet declares it as an input and the same test
-# asserts every workspace-relative declared input resolves.
-# commissioning/ ships whole: all of it is tracked mission-contract material,
-# and `git ls-files` selection means run output, evidence, caches, and
-# credentials can never enter the archive even when they sit in that directory.
-# playbooks/ ships as one exact file, not the directory: only the final
-# supervised commissioning playbook is part of the shipped contract, while
-# playbooks/templates/ and playbooks/starter_proof.yaml are orchestration
-# authoring surfaces that follow the same development-tree-only rule as plans/.
-DIST_PATHSPECS := \
-	Makefile \
-	LICENSE \
-	README.md \
-	CHANGELOG.md \
-	SECURITY.md \
-	CONTRIBUTING.md \
-	AGENTS.md \
-	.gitignore \
-	src \
-	man \
-	tests \
-	scripts \
-	docs \
-	commissioning \
-	playbooks/final_supervised_commissioning_20260802.yaml
+# Explicit product-source inventory for the extracted distribution. Keep this
+# list file-granular: recursive source/test/doc pathspecs also select governance
+# harnesses, run evidence, and development-only orchestration material. The
+# full checkout still runs every tracked test; the archive carries only the
+# product tests and their source/build/documentation dependencies.
+DIST_PRODUCT_ROOTS := Makefile LICENSE README.md CHANGELOG.md SECURITY.md CONTRIBUTING.md .gitignore
+DIST_PRODUCT_SOURCES := src/sysdiff.c src/pathaudit.c src/permguard.c src/openunlink.c
+DIST_PRODUCT_MANPAGES := man/sysdiff.1 man/pathaudit.1 man/permguard.1 man/openunlink.1
+DIST_PRODUCT_SCRIPTS := scripts/benchmark_sysdiff.py scripts/check_tools.py scripts/clang scripts/clang-tidy scripts/cppcheck scripts/ensure_tools.sh scripts/install_tools.sh scripts/smoke.sh
+DIST_PRODUCT_TESTS := tests/check_sysdiff_smoke.py tests/smoke_manifest.json tests/smoke_start.py tests/test_check_tools.py tests/test_openunlink.py tests/test_pathaudit.py tests/test_permguard.py tests/test_sysdiff.py tests/test_sysdiff.sh tests/test_sysdiff_benchmark.py tests/test_sysdiff_c_craftsmanship.py tests/test_sysdiff_fixture.sh tests/test_sysdiff_malformed_fuzz.py
+DIST_PRODUCT_DOCS := docs/AI_DEVELOPMENT.md docs/DECISIONS.md docs/DESIGN.md docs/malformed-snapshot-fuzz-regression-contract.md docs/openunlink.md docs/pathaudit-contract.md docs/pathaudit.md docs/permguard-bootstrap-contract.md docs/permguard-first-vertical-slice-contract.md docs/permguard-hostile-filesystem-fixtures-contract.md docs/permguard-medium-repairs-contract.md docs/permguard.md docs/sixth-utility-capability-contract.md docs/snapshot-format-decision.md docs/sysdiff-c-source-contract.md docs/sysdiff-fixture-slice-contract.md docs/sysdiff-snapshot-format-and-scope.md docs/sysdiff.md
+DIST_PATHSPECS := $(DIST_PRODUCT_ROOTS) $(DIST_PRODUCT_SOURCES) $(DIST_PRODUCT_MANPAGES) $(DIST_PRODUCT_SCRIPTS) $(DIST_PRODUCT_TESTS) $(DIST_PRODUCT_DOCS)
 
 # Release-candidate archive under artifacts/ (make clean must not remove).
 # Archive and checksum are co-located; the checksum records the archive

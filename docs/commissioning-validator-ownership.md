@@ -128,43 +128,38 @@ It is not referenced by the final playbook and cannot affect a future run.
 
 Moving the validators into the governed worktree removed the external-checkout
 dependency but created a second one: `tests/test_commissioning_dependencies.py`
-ships in the source distribution while the files it loads did not. The extract
+shipped in the source distribution while the files it loads did not. The extract
 then failed collection with `FileNotFoundError` on
 `commissioning/check_repository_expectations.py` even though the source tree
 passed, because `DIST_PATHSPECS` in the `Makefile` listed neither
 `commissioning/` nor the playbook.
 
-The distribution now carries the whole dependency closure of that test:
+The current distribution has a narrower contract. `Makefile` defines the
+file-granular `DIST_PRODUCT_ROOTS`, `DIST_PRODUCT_SOURCES`,
+`DIST_PRODUCT_MANPAGES`, `DIST_PRODUCT_SCRIPTS`, `DIST_PRODUCT_TESTS`, and
+`DIST_PRODUCT_DOCS`; `DIST_PATHSPECS` is their union. The 54 entries cover the
+four utilities and their manpages, product scripts, smoke/utility/sysdiff
+tests, and the documentation and metadata those tests and users need. No
+recursive `src/`, `tests/`, `scripts/`, or `docs/` pathspec is used, so
+development-only governance material cannot be swept into the archive.
 
-| Shipped path | Why |
-| --- | --- |
-| `commissioning/` | validator modules plus the packets the test reads |
-| `playbooks/final_supervised_commissioning_20260802.yaml` | the playbook whose validators the test resolves |
-| `AGENTS.md` | declared packet input the test asserts resolves |
+The full governed checkout retains every tracked test, including commissioning,
+governance, and repair tests, and `make test` continues to discover that full
+suite. The distribution deliberately excludes those governance harnesses and
+their workspace-only inputs — including
+`tests/test_commissioning_dependencies.py`, `commissioning/`, `playbooks/`,
+`plans/`, `journeys/`, and run/artifact directories — because they validate the
+governed workspace rather than the shipped utility product. No test is globally
+skipped and no expected result is weakened.
 
-Two scoping rules apply. `commissioning/` ships as a directory because every
-tracked file in it is mission-contract material, and because `make dist`
-selects members through `git ls-files` — run output, evidence, caches, and
-credentials cannot enter the archive even while they sit in a packaged
-directory. `playbooks/` ships as one exact file rather than the directory,
-because only the final supervised commissioning playbook is part of the shipped
-contract; `playbooks/templates/` and `playbooks/starter_proof.yaml` are
-orchestration authoring surfaces and stay development-tree-only under the same
-rule as `plans/`.
-
-`tests/test_sysdiff.py` previously banned the `playbooks/` prefix from the
-archive outright. That ban was widened rather than dropped: the fragment list
-now names `playbooks/templates/` and `playbooks/starter_proof.yaml`, and
-`test_dist_archive_layout_and_normalized_metadata` asserts the exact membership
-of both shipped directories — one playbook, six commissioning files — so
-nothing else can leak in behind the directory pathspec.
-
-The correct repair is inclusion, not exemption. Skipping the test when
-`commissioning/` is absent, or special-casing extracted trees, would let the
-distribution keep claiming a commissioning contract it cannot execute.
-`tests/test_sysdiff.py::test_dist_extracts_builds_and_tests_outside_workspace`
-runs `make test` inside the extract, so it is the standing regression guard for
-this whole class of packaging omission.
+`tests/test_sysdiff.py::test_dist_archive_layout_and_normalized_metadata`
+asserts exact equality between archive regular files and the same 54-file
+inventory, while retaining checks for normalized metadata and forbidden
+fragments. The extracted distribution is therefore self-contained for its
+product contract: `test_dist_extracts_builds_and_tests_outside_workspace`
+builds outside the worktree and runs `make test` from the extracted tree. This
+keeps the historical omission regression visible without shipping the
+governance test's workspace dependencies.
 
 The release archive is a separate surface. `RELEASE_PATHSPECS` is unchanged and
 still excludes `playbooks/`, `plans/`, and `AGENTS.md`: it carries the product
