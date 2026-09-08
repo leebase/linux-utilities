@@ -260,9 +260,9 @@ def test_preflight_probe_cppcheck_when_absent() -> None:
     if check_tools is None:
         pytest.skip("scripts/check_tools.py is not importable")
 
-    # In the current host environment, cppcheck is not installed.
-    # Probing it must return available=False with a clear detail message, not an exception.
-    result = check_tools.probe_executable("cppcheck")
+    # Probe cppcheck with an empty PATH so the assertion does not depend on
+    # whether the host happens to have cppcheck installed.
+    result = check_tools.probe_executable("cppcheck", env={"PATH": ""})
     assert not result.available, f"Expected cppcheck to be absent, found: {result}"
     assert "cppcheck was not found on PATH" in result.detail
 
