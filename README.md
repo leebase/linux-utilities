@@ -2,7 +2,7 @@
 
 ## Overview
 
-Linux Utilities provides small, auditable command-line tools for Linux system administration, inspection, and verification. Each utility is written in a single C17 source file, has no runtime dependencies, performs no networking or telemetry, and does not run a background service. The released `sysdiff` utility compares explicit `key=value` system snapshots deterministically and reports differences with precise exit codes (0 for identical snapshots, 1 for detected differences, and 2 for operational or file errors). Preview utilities include `pathaudit`, `permguard`, `openunlink`, and `treehash`.
+Linux Utilities provides small, auditable command-line tools for Linux system administration, inspection, and verification. Each utility is written in a single C17 source file, has no runtime dependencies, performs no networking or telemetry, and does not run a background service. The released `sysdiff` utility compares explicit `key=value` system snapshots deterministically and reports differences with precise exit codes (0 for identical snapshots, 1 for detected differences, and 2 for operational or file errors). Preview utilities include `pathaudit`, `permguard`, `openunlink`, `treehash`, and `snslice`.
 
 | Utility | Purpose | Status |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ Linux Utilities provides small, auditable command-line tools for Linux system ad
 | [`permguard`](docs/permguard.md) | Report dangerous permission bits on explicitly named paths | Preview |
 | [`openunlink`](docs/openunlink.md) | Report stable zero-link regular files held open by one process | Preview |
 | [`treehash`](docs/treehash-first-slice-contract.md) | Compute deterministic SHA-256 Merkle tree root hash and pin manifest | Preview |
+| [`snslice`](docs/snslice-first-slice-contract.md) | Partition NDJSON and CSV streams on complete record boundaries | Preview |
 
 The preview tools are available as reviewed source with tests and manual
 pages. They are intentionally not included in the `sysdiff` installation or
@@ -38,6 +39,9 @@ cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
 cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
   -D_POSIX_C_SOURCE=200809L \
   -o build/treehash src/treehash.c
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
+  -o build/snslice src/snslice.c
 ```
 
 Try the built-in help:
@@ -48,6 +52,7 @@ Try the built-in help:
 ./build/permguard --help
 ./build/openunlink --help
 ./build/treehash --help
+./build/snslice --help
 ```
 
 `make` remains the supported build and installation path for the released
@@ -73,6 +78,8 @@ for staged or custom installations.
   zero-link semantics, output, and limitations.
 - [treehash contract](docs/treehash-first-slice-contract.md) — deterministic
   Merkle root hash, .gitignore traversal, symlink safety, and SHA-256 pin manifest.
+- [snslice contract](docs/snslice-first-slice-contract.md) — streaming
+  NDJSON and RFC 4180 multiline CSV partitioner, bounded memory, and atomic chunking.
 
 Traditional section-1 manual pages are also included:
 
@@ -82,6 +89,7 @@ man -l man/pathaudit.1
 man -l man/permguard.1
 man -l man/openunlink.1
 man -l man/treehash.1
+man -l man/snslice.1
 ```
 
 ## Test and inspect
@@ -530,6 +538,189 @@ build/treehash --version
   `Makefile` targets (`make quality`, `make test`, `make install`) is deferred
   to subsequent repository build integration slices, following preview utility
   policy (consistent with `pathaudit`, `permguard`, and `openunlink`).
+
+## snslice
+
+`snslice` is a preview ISO C17 command-line utility for Linux systems that
+partitions structured streaming datasets—specifically Newline-Delimited JSON
+(NDJSON) and Comma-Separated Values (CSV)—into bounded, deterministically named
+chunk files strictly on complete record boundaries without loading the entire
+input or whole chunks into memory.
+
+The first release-quality vertical slice is compiled from `src/snslice.c` and is
+completely dependency-free, relying exclusively on standard ISO C17 library
+facilities and POSIX.1-2008 system interfaces (`read`, `write`, `open`, `close`,
+`stat`, `lstat`, `unlink`). In accordance with repository constraints, `snslice`
+performs pure stream partitioning: it runs no background services, daemons, IPC,
+telemetry, or network connections, and avoids in-memory DOM or AST parsing.
+
+### Command-line interface and option parsing
+
+`snslice` implements the strict CLI form:
+
+```sh
+snslice [OPTIONS] [INPUT_FILE]
+```
+
+- `INPUT_FILE`: An optional single operand specifying the input file path. When
+  omitted or passed as `-`, `snslice` reads from standard input (`stdin`).
+  Supplying more than one file operand triggers an arity violation resulting in
+  `USAGE_ERROR` and exit status `2`.
+- Informational options: Sole-argument `--help` outputs command synopsis and
+  option guidance to stdout and exits status `0`. Sole-argument `--version`
+  outputs version metadata (`snslice 0.1.0`) to stdout and exits status `0`.
+  Combining `--help` or `--version` with other arguments fails closed with
+  `USAGE_ERROR` and exit status `2`.
+- Option terminator: `--` terminates option parsing; any subsequent argument is
+  treated as `INPUT_FILE`.
+- Chunk sizing thresholds (at least one threshold must be provided):
+  - `--bytes BYTES` or `-b BYTES`: Slices chunks when accumulated bytes reach or
+    exceed `BYTES` (positive integer in `1..SIZE_MAX`).
+  - `--records COUNT` or `-r COUNT`: Slices chunks when accumulated records
+    reach or exceed `COUNT` (positive integer in `1..SIZE_MAX`).
+  - If both thresholds are specified, a chunk boundary is cut as soon as either
+    threshold is reached or exceeded upon completing a record.
+  - Omitting both `--bytes` and `--records` is a usage error resulting in
+    exit status `2`.
+- Format selection:
+  - `--format <ndjson|csv>` or `-f <ndjson|csv>`: Sets the stream parser.
+    Defaults to `ndjson`. Values other than `ndjson` or `csv` fail closed with
+    `INVALID_FORMAT` and exit status `2`.
+- Output directory and naming:
+  - `--out-dir DIR` or `-d DIR`: Directory where chunk files are emitted.
+    Defaults to `.` (current working directory). Must exist and be a directory.
+  - `--prefix PREFIX` or `-p PREFIX`: Filename prefix for output chunks.
+    Defaults to `chunk_`. The prefix must not contain path separators (`/`) or
+    directory traversal escapes (`..`).
+
+### Streaming architecture and memory bounds
+
+- **Fixed 64 KiB I/O Buffer**: Input is consumed in static 64 KiB chunks
+  (`SNSLICE_IO_BUFFER_SIZE = 65536`).
+- **Constant Resident Memory ($O(1)$ RSS)**: Operates with a constant resident
+  memory footprint regardless of whether the input stream is 10 megabytes,
+  10 gigabytes, or multiple terabytes. Zero dynamic heap allocations (`malloc`,
+  `calloc`, `free`) are performed for record or dataset buffering.
+- **Record Length Safety Limit**: Individual records are bounded to 16 MiB
+  (`SNSLICE_MAX_RECORD_BYTES = 16777216`). If an unclosed record exceeds this
+  bound without encountering a record boundary, `snslice` terminates fail-closed
+  with diagnostic `snslice: RECORD_LENGTH_LIMIT: record exceeds 16 MiB limit` and
+  exit status `2`.
+
+### Format parsing and record preservation
+
+- **NDJSON Record Semantics**: Logical records are delimited by LF (`\n`) or
+  CRLF (`\r\n`). Slicing decisions occur strictly immediately after the terminating
+  newline. Blank lines containing only newline characters are valid NDJSON
+  records and are preserved verbatim without desynchronizing chunk metrics.
+  Embedded NUL bytes (`\0`) fail closed with `MALFORMED_NDJSON`. Unterminated
+  lines at EOF without a trailing newline fail closed with `MALFORMED_NDJSON`.
+- **RFC 4180 CSV Multiline Integrity**: Implements an explicit finite state
+  machine tracking double-quoted field states. Embedded newlines (`\n`, `\r\n`),
+  commas (`,`), and escaped quotes (`""`) inside quotes are treated as literal
+  field payload data and never trigger field or record delimiters. A record
+  boundary is recognized if and only if an unquoted newline is encountered outside
+  quotes. Multiline CSV records are guaranteed never to be severed across chunk
+  files. Embedded NUL bytes fail closed with `MALFORMED_CSV`. Unterminated quoted
+  fields reaching EOF fail closed with `MALFORMED_CSV`.
+- **Empty Stream Handling**: An empty input stream (0 bytes read from file or
+  stdin) exits cleanly with status `0`, creates zero chunk files on disk, and leaves
+  stdout and stderr empty.
+
+### Deterministic output naming and atomic collision defense
+
+- **Deterministic Naming Pattern**: Chunks are emitted in `--out-dir` following
+  the template `<prefix>%05zu.<ext>`, using a 1-indexed, five-digit zero-padded
+  decimal counter starting at `00001` (e.g. `chunk_00001.ndjson`, `chunk_00002.ndjson`).
+  The extension `<ext>` is `ndjson` or `csv`.
+- **Lazy Chunk Creation**: The first chunk file is opened lazily upon reading the
+  first byte of input. Empty streams create zero files on disk.
+- **Atomic Collision Defense**: Every chunk file is opened using `open()` with
+  `O_CREAT | O_EXCL | O_WRONLY` and mode `0644`. If an intended chunk file
+  already exists (`EEXIST`), `snslice` immediately aborts fail-closed with
+  `snslice: OUTPUT_COLLISION: "..."` and exit status `2`. Pre-existing files are
+  never overwritten, truncated, or appended to.
+
+### Transactional failure cleanup
+
+- On fatal operational errors during execution (such as write errors `ENOSPC`,
+  read errors `EIO`, malformed stream syntax, record length limit violations, or
+  directory errors), the active incomplete chunk file is closed and immediately
+  unlinked (`unlink()`) from the filesystem.
+- Previously completed chunk files are preserved intact on disk.
+- File descriptor discipline ensures at most two descriptors are open
+  concurrently (`input_fd` and `active_chunk_fd`).
+
+### Closed hazard taxonomy and sanitized diagnostics
+
+All operational and usage failures map deterministically to a closed 16-member
+hazard taxonomy, exiting status `2` with stderr diagnostics formatted as
+`snslice: <HAZARD_CODE>: <details>\n`:
+
+- `USAGE_ERROR`: Invalid CLI syntax, arity violation, missing limits, or invalid prefix.
+- `UNKNOWN_OPTION`: Unrecognized option flag.
+- `INVALID_LIMIT`: `--bytes` or `--records` is non-numeric, `<= 0`, or overflows `SIZE_MAX`.
+- `INVALID_FORMAT`: `--format` is neither `ndjson` nor `csv`.
+- `INPUT_NOT_FOUND`: Input file operand does not exist or cannot be accessed.
+- `INPUT_IS_DIRECTORY`: Input file operand references a directory.
+- `INPUT_READ_ERROR`: Operating system I/O read failure on input stream.
+- `RECORD_LENGTH_LIMIT`: A single record exceeds 16 MiB without a delimiter.
+- `MALFORMED_NDJSON`: Unterminated line at EOF or embedded NUL byte.
+- `MALFORMED_CSV`: Unterminated quoted field at EOF, bad quote escape, or embedded NUL byte.
+- `OUTPUT_DIR_ERROR`: Output directory does not exist, is not a directory, or lacks write permissions.
+- `OUTPUT_COLLISION`: Output chunk file already exists (preventing overwrite).
+- `CHUNK_OPEN_ERROR`: OS error opening chunk file (other than collision).
+- `CHUNK_WRITE_ERROR`: Write failure or flush failure when writing chunk.
+- `OUT_OF_MEMORY`: Dynamic memory allocation failure.
+- `BROKEN_PIPE`: Output stream pipe closed prematurely (`EPIPE`).
+
+Untrusted strings and paths in stderr diagnostics are sanitized by converting
+non-printable ASCII bytes (< `0x20` or > `0x7E`), double quotes, and backslashes
+into uppercase `\xHH` hexadecimal sequences, preventing ANSI terminal control
+injection.
+
+### Exit status contract
+
+- `0`: Success: complete input stream partitioned into valid chunk files, or sole
+  informational invocation (`--help`, `--version`).
+- `1`: Reserved for future advisory or non-fatal findings.
+- `2`: Operational or usage failure: command-line error, syntax violation, limit
+  exceeded, collision detected, or I/O error.
+- POSIX `SIGPIPE` is ignored via `signal(SIGPIPE, SIG_IGN)` at startup, ensuring
+  closed downstream pipes surface as checked stdio errors (`BROKEN_PIPE`) with
+  exit status `2` and clean partial chunk removal.
+
+### Examples
+
+Partition an NDJSON log stream into 10 MiB chunks:
+
+```sh
+build/snslice --bytes 10485760 server.ndjson
+```
+
+Partition an NDJSON stream into chunks of at most 50,000 records each:
+
+```sh
+build/snslice --records 50000 events.ndjson
+```
+
+Partition a multiline CSV export from stdin using both thresholds:
+
+```sh
+cat database_export.csv | build/snslice --format csv --bytes 5242880 --records 10000
+```
+
+Specify a custom output directory and chunk filename prefix:
+
+```sh
+build/snslice -f ndjson -b 1048576 -d /var/data/chunks -p part_ stream.ndjson
+```
+
+Stream and slice a compressed dataset via external Unix pipeline:
+
+```sh
+gzip -dc large_export.csv.gz | build/snslice -f csv -b 50000000
+```
 
 ## License
 

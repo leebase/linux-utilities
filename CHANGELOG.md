@@ -32,6 +32,69 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+### snslice first vertical slice
+
+- **Initial preview vertical slice delivery**: Authored `src/snslice.c`, an
+  intentionally small, auditable, dependency-free ISO C17 command-line utility
+  for Linux systems that partitions structured streaming datasets—specifically
+  Newline-Delimited JSON (NDJSON) and Comma-Separated Values (CSV)—into bounded,
+  deterministically named chunk files strictly on complete record boundaries
+  without loading the entire input or individual chunks into memory.
+- **Strict command-line interface and option parsing**: Implemented
+  `snslice [OPTIONS] [INPUT_FILE]`, reading from standard input when `INPUT_FILE`
+  is omitted or passed as `-`. Supports `--format <ndjson|csv>` (`-f`, defaulting
+  to `ndjson`), `--bytes <BYTES>` (`-b`), `--records <COUNT>` (`-r`),
+  `--out-dir <DIR>` (`-d`, defaulting to `.`), and `--prefix <PREFIX>` (`-p`,
+  defaulting to `chunk_`). Enforces threshold requirements (at least one of
+  `--bytes` or `--records` is mandatory; omitting both fails closed with exit
+  status 2). Supports sole-argument `--help` and `--version` (`snslice 0.1.0`),
+  exiting status 0 with empty stderr. Rejects invalid prefixes (containing `/`
+  or `..`), multiple positional arguments, negative/non-numeric limits, and
+  combining informational flags with operands fail-closed with exit status 2.
+- **Bounded-memory streaming and RFC 4180 record integrity**: Consumes input
+  through a fixed 64 KiB static streaming buffer (`SNSLICE_IO_BUFFER_SIZE = 65536`)
+  with constant O(1) resident set size (RSS) memory, performing zero dynamic
+  heap allocations for record or dataset buffering. Enforces a 16 MiB record length
+  limit (`RECORD_LENGTH_LIMIT`). Recognizes NDJSON line boundaries across LF (`\n`)
+  and CRLF (`\r\n`), preserving blank lines without desynchronizing chunk metrics.
+  Implements an explicit RFC 4180 finite state machine that tracks double-quoted
+  fields, commas, and escaped quotes (`""`), treating embedded newlines as literal
+  field payload data so multiline CSV rows are never fragmented across chunk files.
+  On 0-byte empty inputs, exits cleanly with status 0, empty stdout/stderr, and
+  zero chunk files created on disk.
+- **Deterministic chunk naming and atomic collision defense**: Creates output
+  chunk files in `--out-dir` named deterministically as `<prefix>%05zu.<ext>`
+  using a 1-indexed, five-digit zero-padded decimal counter starting at `00001`
+  (`chunk_00001.ndjson`, `chunk_00002.ndjson`). Opens chunk files lazily upon
+  reading the first byte of input. Uses `open()` with flags
+  `O_CREAT | O_EXCL | O_WRONLY` and mode `0644`; if an intended chunk file
+  already exists on disk, `snslice` immediately aborts fail-closed with
+  `OUTPUT_COLLISION` and exit status 2 without overwriting or truncating data.
+- **Closed hazard taxonomy and transactional fault cleanup**: Enforces an
+  explicit 16-member closed hazard taxonomy (`USAGE_ERROR`, `UNKNOWN_OPTION`,
+  `INVALID_LIMIT`, `INVALID_FORMAT`, `INPUT_NOT_FOUND`, `INPUT_IS_DIRECTORY`,
+  `INPUT_READ_ERROR`, `RECORD_LENGTH_LIMIT`, `MALFORMED_NDJSON`, `MALFORMED_CSV`,
+  `OUTPUT_DIR_ERROR`, `OUTPUT_COLLISION`, `CHUNK_OPEN_ERROR`, `CHUNK_WRITE_ERROR`,
+  `OUT_OF_MEMORY`, `BROKEN_PIPE`). On operational failure (e.g. disk exhaustion
+  `ENOSPC`, read error, malformed input, record limit exceeded), the active
+  incomplete chunk file is closed and immediately unlinked (`unlink()`), while
+  previously completed chunks remain intact. Non-printable ASCII control bytes,
+  quotes, and backslashes in stderr diagnostics are escaped to uppercase `\xHH`
+  hexadecimal sequences. `signal(SIGPIPE, SIG_IGN)` is installed at startup so
+  early pipe closures surface as checked `EPIPE` (`BROKEN_PIPE`) with exit
+  status 2.
+- **Manual page documentation**: Created `man/snslice.1` documenting command
+  synopsis, options, formats, chunk-size semantics, output naming, exit status,
+  failure cleanup, examples, limitations, and resource behavior. Linted cleanly
+  with `groff -man -Tutf8 -ww -z` with zero warnings.
+- **Quality floor execution and verification**: Preserves repository quality
+  standards; verified with strict multi-compiler builds under GCC and Clang
+  with `-std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64`,
+  validated syntax with Clang `-fsyntax-only`, and validated functionality with
+  independent pytest suite in `tests/test_snslice.py` (157 passed). Integration
+  into aggregate top-level `Makefile` targets is deferred per preview utility
+  policy.
+
 ### treehash first vertical slice
 
 - **Initial preview vertical slice delivery**: Authored `src/treehash.c`, a
@@ -382,6 +445,10 @@ This log records normative repair slices and recovery actions for governed execu
 
 The release and maintenance history of the `linux-utilities` repository documents
 all tagged releases, release candidates, and governed repair slices:
+- **snslice first vertical slice** (2026-09-08): Initial preview vertical slice
+  delivery of `snslice`, providing deterministic record-boundary streaming
+  partitioning for NDJSON and RFC 4180 multiline CSV, constant O(1) resident
+  memory, atomic chunk creation, and transactional failure cleanup.
 - **treehash first vertical slice** (2026-09-08): Initial preview vertical slice
   delivery of `treehash`, providing deterministic SHA-256 Merkle tree root
   hashing and canonical pin manifest generation, hierarchical `.gitignore`

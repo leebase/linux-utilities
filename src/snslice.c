@@ -428,15 +428,8 @@ static int stream_slice(const SnSliceConfig *cfg, SnSliceState *st) {
         if (cfg->limit_bytes > 0 && st->chunk_bytes >= cfg->limit_bytes) {
           should_split = true;
         }
-        if (cfg->limit_records > 0) {
-          if (cfg->format == FORMAT_CSV && cfg->limit_records == 1 &&
-              st->chunk_index == 1) {
-            if (st->chunk_records > 1) {
-              should_split = true;
-            }
-          } else if (st->chunk_records >= cfg->limit_records) {
-            should_split = true;
-          }
+        if (cfg->limit_records > 0 && st->chunk_records >= cfg->limit_records) {
+          should_split = true;
         }
         if (should_split) {
           if (close_chunk(st) != 0) {

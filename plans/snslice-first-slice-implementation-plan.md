@@ -8,7 +8,7 @@ Contract authority: [`docs/snslice-first-slice-contract.md`](file:///home/lee/pr
 
 In strict adherence to the Unix philosophy and repository engineering constraints, `snslice` is designed as an intentionally small, auditable, dependency-free command-line utility implemented in ISO C17 (`-std=c17`) with POSIX.1-2008 system interfaces (`_POSIX_C_SOURCE=200809L`) and 64-bit file offsets (`_FILE_OFFSET_BITS=64`). It partitions structured Newline-Delimited JSON (NDJSON) and Comma-Separated Values (CSV) streams into bounded, deterministically named chunk files strictly on complete record boundaries without loading entire files into memory.
 
-All source authoring, unit and integration test creation, user journey synchronization, documentation, and verification activities described in this plan strictly adhere to the declared write scope (`plans/` for planning; governed source and test locations during subsequent delivery steps).
+All source authoring, unit and integration test creation, user journey synchronization, documentation, and verification activities described in this plan strictly adhere to the declared write scope (`plans/` for planning; governed source, test, and documentation locations during subsequent delivery steps).
 
 ---
 
@@ -158,8 +158,8 @@ The core bounded-memory streaming design for NDJSON and RFC-4180-style CSV recor
 
 `snslice` enforces atomic or fail-safe output handling at every stage of chunk generation:
 1. **Lazy Output Chunk Initialization:**
-   - To satisfy AC-7 (empty input streams produce zero chunks and exit status 0), `snslice` does NOT create `chunk_00001` upon startup.
-   - The first chunk file is opened lazily upon reading the first valid byte of the first record. If the input stream produces 0 bytes total, `snslice` cleanly exits status `0` without creating any files on disk.
+   - For empty input streams (0 bytes read from file or stdin), `snslice` does NOT create `chunk_00001` upon startup.
+   - The first chunk file is opened lazily upon reading the first valid byte of the first record. If the input stream produces 0 bytes total, `snslice` cleanly exits status `0` without creating any files on disk, leaving stdout and stderr empty.
 2. **Atomic Creation via `O_CREAT | O_EXCL`:**
    - Every chunk file is created using:
      ```c
@@ -300,58 +300,38 @@ Deterministic diagnostics prevent ambiguity and protect operators from terminal 
 
 ### 10. Acceptance Check Mapping Matrix
 
-Every requirement in [`docs/snslice-first-slice-contract.md`](file:///home/lee/projects/linux-utilities-autonomous/docs/snslice-first-slice-contract.md) maps across the complete software delivery lifecycle:
+Every enumerated requirement in [`docs/snslice-first-slice-contract.md`](file:///home/lee/projects/linux-utilities-autonomous/docs/snslice-first-slice-contract.md) maps across the complete seven-dimension software delivery lifecycle:
 
 | Acceptance Check | 1. Concrete C Source | 2. Independently Authored Tests | 3. User Documentation | 4. Deterministic Verification | 5. Smoke Evidence | 6. User Simulation | 7. Independent Review |
 |---|---|---|---|---|---|---|---|
-| **AC-1:** CLI Surface, Grammar, Arity, and Informational Options | `src/snslice.c`: `parse_arguments`, sole-arg `--help`/`--version`, `--` terminator, arity check, limit requirement check. | `tests/test_snslice_first_slice.py`: `--help`, `--version`, combined args, unrecognized flags, missing limits, multiple operands. | `man/snslice.1` & `docs/snslice.md`: CLI synopsis, option descriptions, exit codes 0 and 2. | Strict GCC/Clang builds with `-Wall -Wextra -Wpedantic -Werror`, clang-tidy, cppcheck. | `scripts/smoke.sh` runs `snslice --help` and `--version` verifying exit 0 and canonical stdout. | Simulation verifies CLI invocation parsing with diverse flags. | Code review verifies argument parsing loop, arity enforcement, and fail-closed syntax handling. |
-| **AC-2:** Bounded-Memory Streaming and Resource Safety | `src/snslice.c`: 64 KiB `io_buffer`, O(1) resident memory, constant-memory FSM without heap allocation for input records. | `tests/test_snslice_first_slice.py`: Streams 100+ MB datasets while monitoring RSS via `/proc/<pid>/statm` asserting flat memory curve. | `man/snslice.1` & `docs/snslice.md`: Architecture section documenting constant memory footprint and 64 KiB buffer. | Memory profiling under Valgrind memcheck and ASan asserting zero growth during large stream ingestion. | Smoke runs streaming test on multi-megabyte fixture. | Data engineering simulation streams large log file through pipeline. | Memory audit confirming absence of growable heap buffers for stream payloads. |
-| **AC-3:** NDJSON Line Boundary and Complete Record Chunking | `src/snslice.c`: NDJSON FSM recognizing LF (`\n`) and CRLF (`\r\n`), empty line preservation, atomic line boundary cuts. | `tests/test_snslice_first_slice.py`: Single/multiline NDJSON, mixed LF/CRLF, empty lines, byte and record thresholds. | `man/snslice.1` & `docs/snslice.md`: NDJSON partitioning rules, newline handling, empty line preservation. | Pytest assertions verifying every chunk contains valid, unbroken JSON lines via `json.loads`. | Smoke test verifies chunking of NDJSON logs into clean files. | Pipeline simulation partitions JSON log stream and reassembles records. | Format review checking delimiter identification and newline retention. |
-| **AC-4:** CSV Quoted Records Spanning Physical Lines | `src/snslice.c`: RFC 4180 FSM tracking `CSV_STATE_QUOTED`, escaped `""`, preserving embedded `\n` and commas inside fields. | `tests/test_snslice_first_slice.py`: Multiline CSV records with embedded newlines, commas, escaped quotes, CRLF. | `man/snslice.1` & `docs/snslice.md`: RFC 4180 compliance, multiline record guarantees, quote escaping. | Python `csv.reader` oracle verifying all emitted chunks parse into identical row structures. | Smoke test partitions sample CSV with multiline address fields. | ETL simulation slices CSV export and validates row count per chunk. | Conformance review auditing quote state transitions and escaped quote handling. |
-| **AC-5:** Deterministic Chunk Naming and Output Slicing | `src/snslice.c`: `snprintf` path builder with `%05zu`, counter starting at 1, custom `--prefix` and `--out-dir` handling. | `tests/test_snslice_first_slice.py`: Custom prefixes, custom directories, 5-digit zero padding, sequential indices. | `man/snslice.1` & `docs/snslice.md`: Chunk naming convention `<out-dir>/<prefix>%05zu.<ext>`, index ordering. | Automated directory scans checking exact filename patterns and monotonic index sequences. | Smoke script asserts created files match `chunk_00001.ndjson`, etc. | Automated batch workflow verifying naming consistency across runs. | Path generation review checking bounds checking and padding format. |
-| **AC-6:** Chunk Collision Prevention and Atomic File Creation | `src/snslice.c`: `open(..., O_CREAT \| O_EXCL \| O_WRONLY, 0644)`, `EEXIST` detection, `OUTPUT_COLLISION` abort. | `tests/test_snslice_first_slice.py`: Pre-existing chunk collision test; asserts immediate exit 2 and file preservation. | `man/snslice.1` & `docs/snslice.md`: Collision protection rationale, `O_EXCL` atomicity, fail-closed policy. | Pytest collision test verifying pre-existing file content remains completely unmodified. | Smoke test attempts write to existing target and captures error. | Pipeline test simulating concurrent execution collision safety. | Security review checking absence of TOCTOU race conditions in `open()`. |
-| **AC-7:** Empty Input Stream Handling | `src/snslice.c`: Lazy chunk descriptor creation; 0-byte input exits status 0 with zero chunks created. | `tests/test_snslice_first_slice.py`: 0-byte file input and empty stdin (`/dev/null`); asserts exit 0, 0 chunks, empty output. | `man/snslice.1` & `docs/snslice.md`: Behavior on empty input streams (clean exit 0, no spurious chunk creation). | Automated test verifying zero files created in `--out-dir` and stdout/stderr empty. | Smoke test executes `snslice -b 1000 < /dev/null`. | Stream monitor simulation verifying handling of empty upstream feeds. | Logic review verifying lazy initialization triggers only on positive byte count. |
-| **AC-8:** Malformed Input and Unterminated Record Rejection | `src/snslice.c`: Unterminated CSV quote at EOF (`MALFORMED_CSV`), unterminated NDJSON at EOF (`MALFORMED_NDJSON`), 16 MiB bound. | `tests/test_snslice_first_slice.py`: Unterminated quotes, missing final newline, >16 MiB single lines, embedded NUL bytes. | `man/snslice.1` & `docs/snslice.md`: Malformed stream errors, 16 MiB record length limit, embedded NUL prohibition. | Negative test suite asserting exact hazard codes and exit status 2 across malformed inputs. | Smoke test feeds unclosed quote CSV and asserts `MALFORMED_CSV`. | Error-handling simulation testing corrupt sensor stream rejection. | Parser review confirming fail-closed error transitions on all malformed branches. |
-| **AC-9:** Chunk Write Failures and Operational I/O Safety | `src/snslice.c`: `snslice_abort_cleanup` calling `close()` and `unlink()` on active chunk, preserving completed chunks. | `tests/test_snslice_first_slice.py`: Simulated write failure (full disk / read-only directory / closed fd); asserts partial chunk unlinked. | `man/snslice.1` & `docs/snslice.md`: Transactional cleanup guarantees, active chunk unlinking, prior chunk persistence. | Fault injection harness verifying absence of partial files on disk after simulated `ENOSPC`. | Smoke test triggers operational failure and verifies directory state. | Resilience simulation testing abrupt disk quota exhaustion. | I/O review auditing signal safety and deterministic unlink execution. |
-| **AC-10:** CLI Diagnostics and Hostile Byte Sanitization | `src/snslice.c`: `snslice_sanitize_string`, escaping non-printable ASCII, `"`, and `\` to `\xHH`. | `tests/test_snslice_first_slice.py`: Hostile arguments with ANSI escapes, control codes, quotes, and UTF-8 high bytes. | `man/snslice.1` & `docs/snslice.md`: Diagnostic sanitization specification, escape sequence injection defense. | Test regex oracle verifying stderr contains strictly printable ASCII and escaped `\xHH` sequences. | Smoke test passes hostile path and checks sanitized stderr. | Terminal safety audit verifying terminal state preservation. | Security review inspecting escape encoding logic and buffer bounds. |
-| **AC-11:** Closed Hazard Taxonomy and Exit Status Integrity | `src/snslice.c`: Exact 16 hazard enum constants, exit status 0 for success, exit status 2 for failure, status 1 reserved. | `tests/test_snslice_first_slice.py`: Exhaustive parameterized test exercising all 16 taxonomy members. | `man/snslice.1` & `docs/snslice.md`: Complete taxonomy catalog (16 codes), diagnostic grammar, exit codes. | Automated taxonomy oracle verifying stderr messages match `snslice: <HAZARD_CODE>: <details>\n`. | Smoke test asserts status 2 on invalid invocation. | Observability simulation verifying log ingestion of standard codes. | Architectural review confirming no unclassified error paths exist. |
-| **AC-12:** Repository Build, Hardening, and Quality Floor Compatibility | `Makefile`: `snslice` targets, `SNSLICE_PLATFORM_CFLAGS`, strict C17 warnings, ASan, UBSan, Valgrind, manpage. | `tests/test_snslice_first_slice.py`: Executed under ASan, UBSan, and Valgrind memcheck with zero defects. | `man/snslice.1`: Manpage syntax, macros, and section completeness verified via `man-check`. | `make quality`, `clang-format --dry-run --Werror`, `clang-tidy`, `cppcheck`, `clang --analyze`. | Smoke suite passes cleanly in full repository test run. | Multi-compiler environment test (GCC and Clang). | Build system review auditing Make variable hygiene and compiler flags. |
-| **AC-13:** User Journey Manifest Synchronization and Traceability | `journeys/snslice_user_journeys_manifest.json`: 18 journeys covering AC-1..13, schema compliant, `tmp/snslice` allowlist. | `tests/test_snslice_first_slice.py`: Manifest schema validation, journey execution, 100% AC-1..13 coverage assertion. | `docs/snslice-first-slice-contract.md`: Journey catalog cross-reference and authority tracking. | JSON Schema validator checking manifest against canonical Agent-Orch schema. | Smoke test verifies user journey manifest integrity. | End-to-end journey execution simulating autonomous workflows. | Compliance review auditing bidirectional traceability between ACs and journeys. |
+| **AC-1:** CLI Surface, Option Parsing, Grammar, Arity, and Informational Options | `src/snslice.c`: `parse_arguments`, sole-arg `--help`/`--version`, `--` terminator, arity check, limit requirement check, safe integer parsing (`parse_positive_size`), format validation, prefix safety validation. | `tests/test_snslice.py` Suite 1: `--help`, `--version`, combined args rejection, unrecognized flags, missing limits, multiple positional operands, `--` option terminator, prefix traversal checks. | `man/snslice.1` & `docs/snslice.md`: CLI synopsis, option descriptions, exit codes 0 and 2, prefix syntax constraints. | Strict GCC/Clang builds with `-Wall -Wextra -Wpedantic -Werror`, `clang-tidy`, `cppcheck`, exit code verification. | `scripts/smoke.sh` runs `snslice --help` and `--version` verifying exit 0 and canonical stdout byte streams. | Simulation verifies CLI invocation parsing with diverse flags, combined flag rejections, and option terminator `--`. | Code review verifies argument parsing loop, arity enforcement, and fail-closed syntax handling. |
+| **AC-2:** Bounded-Memory Streaming, Record Boundary Preservation, NDJSON Chunking, and RFC 4180 CSV Multiline Integrity | `src/snslice.c`: Fixed 64 KiB `io_buffer`, O(1) resident memory, constant-memory FSM without heap allocation for input records, 16 MiB record length bound (`RECORD_LENGTH_LIMIT`), NDJSON LF/CRLF/blank-line recognizer, RFC 4180 CSV FSM tracking quoted states, embedded newlines, commas, and escaped quotes (`""`), lazy 0-byte input handling. | `tests/test_snslice.py` Suite 2: 100+ MB streaming RSS test, 64 KiB buffer boundary tests, NDJSON line boundary tests by bytes/records, CRLF/blank-line tests, RFC 4180 multiline CSV tests with `csv.reader` oracle, empty 0-byte input tests, malformed format rejection tests (unterminated quotes, unterminated lines, embedded NULs). | `man/snslice.1` & `docs/snslice.md`: Architecture section documenting constant memory footprint, 64 KiB buffer, NDJSON line preservation, RFC 4180 multiline CSV rules, and 0-byte input handling. | Memory profiling under Valgrind memcheck and ASan asserting zero growth during large stream ingestion; Python `csv.reader` and `json.loads` oracles. | Smoke runs streaming test on multi-megabyte fixture and multiline CSV fixture. | Data engineering simulation streams large log files and multiline CSV exports through pipeline, verifying row count preservation. | Memory audit confirming absence of growable heap buffers for stream payloads, and FSM transition audit for RFC 4180 conformance. |
+| **AC-3:** Deterministic Output Chunk Naming, Atomic File Creation, Closed Hazard Taxonomy, Transactional Fault Cleanup, Quality Floor, and Manifest Synchronization | `src/snslice.c`: `snprintf` path builder with `%05zu`, counter starting at 1, custom `--prefix` and `--out-dir` handling, atomic `open(..., O_CREAT \| O_EXCL \| O_WRONLY, 0644)` with `OUTPUT_COLLISION` abort, `snslice_abort_cleanup` unlinking active chunk on error, `snslice_sanitize_string` escaping non-printable ASCII, `"` and `\` to `\xHH`, 16-member closed hazard taxonomy, `signal(SIGPIPE, SIG_IGN)`, `Makefile` targets. | `tests/test_snslice.py` Suite 3: Sequential chunk naming tests, collision prevention tests (asserting exit 2 and file preservation), simulated write failure tests (asserting partial chunk unlinked and prior chunks kept), hostile argument sanitization tests, exhaustive 16-code taxonomy tests, `SIGPIPE` tests, manifest sync tests. | `man/snslice.1` & `docs/snslice.md`: Chunk naming `<out-dir>/<prefix>%05zu.<ext>`, collision protection, transactional cleanup, 16-code taxonomy catalog, exit codes 0 and 2. | Directory scans asserting regex `^chunk_[0-9]{5}\.(ndjson\|csv)$`, `make quality`, `clang-format --dry-run --Werror`, `clang-tidy`, `cppcheck`, `clang --analyze`, ASan, UBSan, Valgrind, manifest schema validation. | Smoke script asserts created files match `chunk_00001.ndjson`, captures collision abort, and verifies user journey manifest integrity. | Pipeline simulation partitions log streams, simulates disk exhaustion/collision, and verifies clean exit status 2 and disk state. | Security review checking TOCTOU avoidance via `O_EXCL`, signal safety, diagnostic sanitization, and 21 user journey preservation. |
 
 ### 11. Concrete Implementation and Verification Work by Acceptance Check
 
 | Check | Concrete C17 Source Implementation Work | Independently Authored Test Coverage | Deterministic Verification Work |
 |---|---|---|---|
-| **AC-1** | Author CLI parser in `src/snslice.c` with sole-arg `--help`/`--version`, `--` terminator, arity validation, format parsing, and required limit checks. | Author CLI tests in `tests/test_snslice_first_slice.py` testing `--help`, `--version`, combined flags, missing limits, invalid prefixes, extra positional operands. | Run GCC/Clang strict builds, verify exit codes 0 and 2, verify stderr empty on `--help`/`--version`, verify error formatting. |
-| **AC-2** | Implement fixed 64 KiB `io_buffer` streaming reader loop with constant O(1) resident set size and zero dataset heap buffering. | Author streaming benchmark test feeding 100+ MB dataset through pipe while sampling `/proc/$PID/statm` to verify resident memory remains strictly flat. | Profile execution under Valgrind memcheck and ASan with leak detection; assert peak heap allocation is invariant to input stream volume. |
-| **AC-3** | Implement NDJSON streaming FSM recognizing LF and CRLF record boundaries, empty line preservation, and threshold-triggered chunk splitting. | Author test matrix with diverse NDJSON payloads (single/multiline objects, empty lines, CRLF endings, varying byte and record limits); validate JSON validity of chunks. | Validate with Python `json.loads` oracle confirming all reassembled records match input records bitwise. |
-| **AC-4** | Implement RFC 4180 CSV FSM tracking unquoted/quoted states, escaped double quotes (`""`), and multiline field preservation. | Author comprehensive CSV test suite with embedded newlines, commas, quotes, CRLF inside quotes, and edge-case quote transitions. | Verify with Python `csv.reader` oracle that parsed rows from sliced chunks exactly match original CSV row count and field values. |
-| **AC-5** | Implement deterministic path formatting `<out-dir>/<prefix>%05zu.<ext>`, 1-indexed counter, directory trailing slash normalization. | Author tests checking sequential chunk file creation (`chunk_00001.ndjson`, `chunk_00002.ndjson`), custom prefixes, and nested output directories. | Inspect created chunk file list using regex `^chunk_[0-9]{5}\.(ndjson\|csv)$`; assert monotonic sequential index order. |
-| **AC-6** | Implement atomic chunk creation using `open()` with `O_CREAT \| O_EXCL \| O_WRONLY, 0644`; map `EEXIST` to `OUTPUT_COLLISION`. | Author test pre-creating `chunk_00001.ndjson`; run `snslice` and assert exit status 2, `OUTPUT_COLLISION` diagnostic, and pre-existing file byte preservation. | Execute under strace or test harness confirming atomic `open()` failure without modifying, opening for write, or truncating target file. |
-| **AC-7** | Implement lazy chunk opening logic; process 0-byte input streams by exiting status 0 with zero chunk files created. | Author tests providing empty file and empty stdin (`/dev/null`); assert exit status 0, zero files created in `--out-dir`, and empty stdout/stderr. | Verify directory content count before and after execution; assert directory remains completely empty. |
-| **AC-8** | Implement format validation checks: unterminated CSV quotes, unterminated NDJSON lines, 16 MiB record length limit, embedded NUL rejection. | Author negative test suite with unterminated quotes at EOF, missing final newline in NDJSON, lines >16 MiB, and embedded NUL bytes. | Assert exit status 2 and exact hazard code emission (`MALFORMED_CSV`, `MALFORMED_NDJSON`, `RECORD_LENGTH_LIMIT`). |
-| **AC-9** | Implement transactional cleanup in `snslice_abort_cleanup`: close and `unlink()` active chunk on write or read error; preserve prior chunks. | Author fault-injection test simulating write failure (`ENOSPC` or read-only output directory); assert active partial chunk unlinked while completed chunks persist. | Assert disk state after failure contains only completed chunks; assert zero partial files linger. |
-| **AC-10** | Implement `snslice_sanitize_string` converting non-printable ASCII, `"`, and `\` into `\xHH` sequences for all diagnostic stderr output. | Author test suite passing paths with ANSI escape sequences (`\x1b[31m`), control codes, quotes, and UTF-8 bytes; verify sanitized stderr format. | Run diagnostic output through strict printable ASCII validation oracle checking absence of raw control codes or escape sequences. |
-| **AC-11** | Enforce closed hazard taxonomy (16 distinct codes), exit status 0 for success, exit status 2 for failure, status 1 reserved, and `SIGPIPE` ignore. | Author exhaustive parameterized test triggering all 16 taxonomy members; assert exit status 2 and exact diagnostic grammar. | Verify with test suite asserting no unmapped error codes exist and broken stdout pipe produces status 2 without crashing. |
-| **AC-12** | Integrate `snslice` into `Makefile` (`snslice`, `ALL_SRCS`, `ALL_MANPAGES`, platform flags, quality recipes); write manpage `man/snslice.1`. | Execute full quality floor: `make quality`, `clang-format --dry-run --Werror`, `clang-tidy`, `cppcheck`, `clang --analyze`, ASan, UBSan, Valgrind. | Run `make quality` and `./scripts/smoke.sh`; assert zero warnings, zero static analysis findings, and zero memory leaks. |
-| **AC-13** | Synchronize user journeys in `journeys/snslice_user_journeys_manifest.json` and `tests/snslice_user_journeys_manifest.json`; ensure schema validity and AC traceability. | Author test validating manifest against `agent_orch.user_journeys.USER_JOURNEYS_MANIFEST_SCHEMA` and verifying 100% coverage across AC-1..13. | Run manifest schema validator; verify command allowlist contains `["tmp/snslice"]` and all journeys cite valid authorities and AC tags. |
+| **AC-1** | Author CLI parser in `src/snslice.c` with sole-arg `--help`/`--version`, `--` terminator, arity validation, format parsing (`ndjson`/`csv`), threshold parsing (`parse_positive_size` for `--bytes` and `--records`), required limit check, and directory/prefix validation. | Author CLI tests in `tests/test_snslice.py` testing `--help`, `--version`, combined flags, missing limits, invalid prefixes (with `/` or `..`), extra positional operands, non-numeric/overflowing limits, and unknown option flags. | Run GCC/Clang strict builds, verify exit codes 0 and 2, verify stderr empty on `--help`/`--version`, verify diagnostic error formatting against standard grammar. |
+| **AC-2** | Implement fixed 64 KiB `io_buffer` streaming reader loop with constant O(1) resident set size and zero dataset heap buffering. Implement 16 MiB record safety limit (`SNSLICE_MAX_RECORD_BYTES`). Implement NDJSON streaming FSM (LF/CRLF/blank lines). Implement RFC 4180 CSV FSM tracking quoted states, commas, and escaped quotes (`""`). Implement lazy 0-byte input handling. | Author streaming benchmark test feeding 100+ MB dataset through pipe while sampling `/proc/$PID/statm` to verify resident memory remains flat. Test 64 KiB boundaries, NDJSON line integrity, CSV multiline preservation, empty file/stdin handling, and malformed stream rejection. | Profile execution under Valgrind memcheck and ASan with leak detection; assert peak heap allocation is invariant to input stream volume. Validate chunk contents with Python `json.loads` and `csv.reader` oracles. |
+| **AC-3** | Implement deterministic path formatting `<out-dir>/<prefix>%05zu.<ext>`, 1-indexed counter, atomic creation via `open(..., O_CREAT \| O_EXCL \| O_WRONLY, 0644)`, transactional cleanup in `snslice_abort_cleanup` unlinking active chunk on error, `snslice_sanitize_string` escaping hostile diagnostic bytes to `\xHH`, closed 16-code hazard taxonomy, `SIGPIPE` ignore, and Makefile quality integration. | Author tests for sequential naming (`chunk_00001.ndjson`), collision prevention against pre-existing files, transactional unlinking of partial chunks on simulated write errors, hostile terminal escape sanitization on stderr, exhaustive 16-code taxonomy invocation, and manifest synchronization. | Execute `make quality`, `./scripts/smoke.sh`, Valgrind memcheck verifying zero leaks and zero file descriptor leaks, static analysis (`clang-tidy`, `cppcheck`, `clang --analyze`), and manifest schema validation against `USER_JOURNEYS_MANIFEST_SCHEMA`. |
 
 ---
 
 ## Tests
 
-The testing strategy for `snslice` enforces comprehensive functional, regression, resource-bounding, and adversarial validation across all thirteen acceptance criteria. All tests compile and execute against temporary binaries isolated outside repository product paths to prevent contamination of `build/` artifacts or tracked files.
+The testing strategy for `snslice` enforces comprehensive functional, regression, resource-bounding, and adversarial validation across all three normative acceptance criteria (`AC-1`, `AC-2`, and `AC-3`). All tests compile and execute against temporary binaries isolated outside repository product paths to prevent contamination of `build/` artifacts or tracked files.
 
 ### 1. Pytest Test Harness & Isolated Temporary Binary Compilation
 
 To ensure repository cleanliness, hermeticity, and strict adherence to build boundaries:
 1. **Isolated Compilation in Temporary Directories:**
-   - The test module `tests/test_snslice_first_slice.py` dynamically resolves the compiler via `$CC` (defaulting to `cc` or `gcc`).
+   - The test module `tests/test_snslice.py` dynamically resolves the compiler via `$CC` (defaulting to `cc` or `gcc`).
    - Compilation produces a temporary binary under `/tmp/snslice-test-XXXXXX/snslice_test_bin`:
      ```bash
      $CC -std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -O2 -o /tmp/snslice-test-XXXXXX/snslice_test_bin src/snslice.c
      ```
-   - No binaries are created in `build/` or the repository root during test runs.
+   - No binaries are created in `build/` or the repository root during test runs. Missing source fails closed immediately with `pytest.fail()`.
 2. **Sealed Test Environment:**
    - Test child processes run with sanitized environment variables: `LC_ALL=C`, `LANG=C`, and `PYTHONDONTWRITEBYTECODE=1`.
 3. **Automatic Teardown:**
@@ -359,95 +339,88 @@ To ensure repository cleanliness, hermeticity, and strict adherence to build bou
 4. **Makefile Phony Targets:**
    - Additive targets `snslice-test`, `snslice-sanitize`, and `snslice-valgrind` mirror this isolation pattern using `mktemp -d /tmp/snslice-build.XXXXXX` with trap handlers.
 
-### 2. Automated Test Suite Architecture
+### 2. Automated Regression Test Suites Structured by Acceptance Check
 
-The test suite in `tests/test_snslice_first_slice.py` organizes test cases into 13 modular test families directly tracing to AC-1 through AC-13:
+The test suite in `tests/test_snslice.py` organizes test coverage into three exhaustive test families corresponding to the acceptance checks:
 
-#### Suite 1: CLI Surface, Arity, and Option Grammar (AC-1)
-- `test_cli_help_sole_argument`: Invokes `snslice --help`; asserts exit code `0`, usage text on `stdout`, empty `stderr`.
-- `test_cli_version_sole_argument`: Invokes `snslice --version`; asserts exit code `0`, `stdout == "snslice 0.1.0\n"`, empty `stderr`.
-- `test_cli_help_combined_fails`: Combines `--help` with other flags (e.g. `snslice --help --bytes 1000`); asserts exit code `2`, stderr `USAGE_ERROR`.
-- `test_cli_version_combined_fails`: Combines `--version` with other flags; asserts exit code `2`, stderr `USAGE_ERROR`.
-- `test_cli_missing_limits_fails`: Invokes `snslice input.ndjson` without `--bytes` or `--records`; asserts exit code `2`, stderr `USAGE_ERROR`.
-- `test_cli_multiple_positional_operands_fails`: Invokes `snslice -b 1000 file1 file2`; asserts exit code `2`, stderr `USAGE_ERROR`.
-- `test_cli_option_terminator`: Invokes `snslice -b 1000 -- -weird-file-name`; verifies `-weird-file-name` is treated as input path.
-- `test_cli_unrecognized_option`: Invokes `snslice --invalid-flag`; asserts exit code `2`, stderr `UNKNOWN_OPTION`.
-- `test_cli_invalid_prefix`: Invokes `snslice -b 1000 --prefix "sub/dir"`; asserts exit code `2`, stderr `USAGE_ERROR`.
+#### Suite 1: CLI Surface, Option Parsing, Grammar, and Arity (AC-1)
+- **Informational Options:**
+  - `test_cli_help_sole_argument`: Invokes `snslice --help`; asserts exit code `0`, usage text on `stdout`, empty `stderr`.
+  - `test_cli_version_sole_argument`: Invokes `snslice --version`; asserts exit code `0`, `stdout == "snslice 0.1.0\n"`, empty `stderr`.
+  - `test_cli_help_combined_fails`: Combines `--help` with other flags (e.g. `snslice --help --bytes 1000`); asserts exit code `2`, stderr `USAGE_ERROR`.
+  - `test_cli_version_combined_fails`: Combines `--version` with other flags; asserts exit code `2`, stderr `USAGE_ERROR`.
+- **Threshold & Parameter Validation:**
+  - `test_cli_missing_limits_fails`: Invokes `snslice input.ndjson` without `--bytes` or `--records`; asserts exit code `2`, stderr `USAGE_ERROR`.
+  - `test_cli_invalid_limits`: Tests `--bytes 0`, `--bytes -1`, `--records abc`, and values overflowing `SIZE_MAX`; asserts exit code `2`, stderr `INVALID_LIMIT`.
+  - `test_cli_invalid_format`: Invokes `--format xml`; asserts exit code `2`, stderr `INVALID_FORMAT`.
+- **Arity, Options, and Grammar:**
+  - `test_cli_multiple_positional_operands_fails`: Invokes `snslice -b 1000 file1 file2`; asserts exit code `2`, stderr `USAGE_ERROR`.
+  - `test_cli_option_terminator`: Invokes `snslice -b 1000 -- -weird-file-name`; verifies `-weird-file-name` is treated as input path.
+  - `test_cli_unrecognized_option`: Invokes `snslice --invalid-flag`; asserts exit code `2`, stderr `UNKNOWN_OPTION`.
+- **Prefix and Path Safety:**
+  - `test_cli_invalid_prefix_slash`: Invokes `snslice -b 1000 --prefix "sub/dir"`; asserts exit code `2`, stderr `USAGE_ERROR`.
+  - `test_cli_invalid_prefix_traversal`: Invokes `snslice -b 1000 --prefix "../escape"`; asserts exit code `2`, stderr `USAGE_ERROR`.
+  - `test_cli_invalid_output_directory`: Invokes `snslice -b 1000 --out-dir /nonexistent/dir`; asserts exit code `2`, stderr `OUTPUT_DIR_ERROR`.
 
-#### Suite 2: Bounded-Memory Streaming and Resource Safety (AC-2)
-- `test_bounded_memory_large_stream`: Streams a 100 MB NDJSON dataset through `stdin` into `snslice -b 10485760` while sampling resident memory via `/proc/<pid>/statm`.
-  - Asserts resident set size (RSS) remains strictly bounded (< 10 MiB resident memory) throughout the entire run.
-  - Confirms zero linear growth of memory relative to input volume.
-- `test_io_buffer_boundaries`: Feeds inputs sized exactly at buffer boundaries (65,535, 65,536, and 65,537 bytes) to verify buffer transition correctness.
+#### Suite 2: Bounded-Memory Streaming, Record Boundary Preservation, and Format Integrity (AC-2)
+- **Bounded-Memory Streaming:**
+  - `test_bounded_memory_large_stream`: Streams a 100 MB NDJSON dataset through `stdin` into `snslice -b 10485760` while sampling resident memory via `/proc/<pid>/statm`.
+    - Asserts resident set size (RSS) remains strictly bounded (< 10 MiB resident memory) throughout the entire run.
+    - Confirms zero linear growth of memory relative to input volume.
+  - `test_io_buffer_boundaries`: Feeds inputs sized exactly at buffer boundaries (65,535, 65,536, and 65,537 bytes) to verify buffer transition correctness.
+- **NDJSON Record Integrity:**
+  - `test_ndjson_line_boundary_by_bytes`: Splits a dataset of variable-length JSON objects with `--bytes 500`. Verifies every emitted chunk file contains valid JSON objects parsable by `json.loads`.
+  - `test_ndjson_line_boundary_by_records`: Splits with `--records 10`. Verifies each chunk contains exactly 10 complete lines (except the final chunk).
+  - `test_ndjson_both_thresholds`: Slices with both `--bytes` and `--records`; verifies chunks break on whichever threshold is reached first.
+  - `test_ndjson_crlf_handling`: Feeds NDJSON with CRLF (`\r\n`) endings; verifies records are preserved and line endings do not corrupt record recognition.
+  - `test_ndjson_empty_lines_preserved`: Verifies empty lines (`\n`) are preserved as valid line records without desynchronizing chunk metrics.
+- **RFC 4180 CSV Quoted Record Integrity:**
+  - `test_csv_multiline_fields_preserved`: Feeds CSV rows where fields contain embedded newlines (`"line1\nline2\nline3"`), commas, and carriage returns.
+    - Verifies that multiline rows are NEVER cut across chunk files.
+    - Validates using Python's `csv.reader` that the parsed row count and field values match the original dataset.
+  - `test_csv_escaped_quotes`: Feeds CSV fields containing escaped double quotes (`"He said, ""Hello!"""`). Confirms escaped quotes do not prematurely trigger unquoted state.
+  - `test_csv_crlf_records`: Slices CSV streams using RFC 4180 standard CRLF record terminators.
+  - `test_csv_split_by_record_count`: Splits multiline CSV with `--records 5`; confirms each chunk contains exactly 5 logical records despite physical line counts exceeding 5.
+- **Empty Stream Handling:**
+  - `test_empty_file_input`: Runs `snslice -b 1000 empty.ndjson`. Asserts exit code `0`, zero chunk files created in output directory, and empty stdout/stderr.
+  - `test_empty_stdin_input`: Pipes `/dev/null` to `snslice -b 1000`. Confirms identical exit code 0 and zero files created.
+- **Malformed Input and Resource Bounds:**
+  - `test_malformed_csv_unterminated_quote`: Feeds CSV ending with unclosed quote `"unterminated field at EOF`. Asserts exit code `2` and stderr `snslice: MALFORMED_CSV: ...`.
+  - `test_malformed_ndjson_unterminated_line`: Feeds NDJSON ending without newline `{"key": "value"}` at EOF. Asserts exit code `2` and stderr `snslice: MALFORMED_NDJSON: ...`.
+  - `test_record_length_limit_exceeded`: Feeds a single line/record exceeding 16 MiB (`16777217` bytes). Asserts exit code `2` and stderr `snslice: RECORD_LENGTH_LIMIT: ...`.
+  - `test_embedded_nul_byte_rejected`: Feeds input containing `\x00`; asserts exit code `2` and malformed format diagnostic.
 
-#### Suite 3: NDJSON Line Boundary and Record Integrity (AC-3)
-- `test_ndjson_line_boundary_by_bytes`: Splits a dataset of variable-length JSON objects with `--bytes 500`. Verifies every emitted chunk file contains valid JSON objects parsable by `json.loads`.
-- `test_ndjson_line_boundary_by_records`: Splits with `--records 10`. Verifies each chunk contains exactly 10 complete lines (except the final chunk).
-- `test_ndjson_both_thresholds`: Slices with both `--bytes` and `--records`; verifies chunks break on whichever threshold is reached first.
-- `test_ndjson_crlf_handling`: Feeds NDJSON with CRLF (`\r\n`) endings; verifies records are preserved and line endings do not corrupt record recognition.
-- `test_ndjson_empty_lines_preserved`: Verifies empty lines (`\n`) are preserved as valid line records without desynchronizing chunk metrics.
-
-#### Suite 4: CSV Quoted Records and RFC 4180 Multiline Fields (AC-4)
-- `test_csv_multiline_fields_preserved`: Feeds CSV rows where fields contain embedded newlines (`"line1\nline2\nline3"`), commas, and carriage returns.
-  - Verifies that multiline rows are NEVER cut across chunk files.
-  - Validates using Python's `csv.reader` that the parsed row count and field values match the original dataset.
-- `test_csv_escaped_quotes`: Feeds CSV fields containing escaped double quotes (`"He said, ""Hello!"""`). Confirms escaped quotes do not prematurely trigger unquoted state.
-- `test_csv_crlf_records`: Slices CSV streams using RFC 4180 standard CRLF record terminators.
-- `test_csv_split_by_record_count`: Splits multiline CSV with `--records 5`; confirms each chunk contains exactly 5 logical records despite physical line counts exceeding 5.
-
-#### Suite 5: Deterministic Chunk Naming and Output Slicing (AC-5)
-- `test_chunk_naming_default`: Verifies output chunk filenames follow `chunk_00001.ndjson`, `chunk_00002.ndjson`, etc.
-- `test_chunk_naming_custom_prefix_and_dir`: Configures `--out-dir /tmp/.../out --prefix data_`; verifies files match `data_00001.csv`, `data_00002.csv`.
-- `test_chunk_index_continuity`: Verifies indices are strictly continuous and monotonic without skipped numbers.
-
-#### Suite 6: Chunk Collision Prevention and Atomic Creation (AC-6)
-- `test_collision_prevention_fail_closed`: Pre-creates `chunk_00001.ndjson` with canary content. Runs `snslice -b 1000`.
-  - Asserts exit code `2`.
-  - Asserts stderr contains `snslice: OUTPUT_COLLISION: "..."`.
-  - Asserts canary content of pre-existing file is completely unaltered.
-
-#### Suite 7: Empty Input Stream Handling (AC-7)
-- `test_empty_file_input`: Runs `snslice -b 1000 empty.ndjson`.
-  - Asserts exit code `0`.
-  - Asserts zero chunk files are created in output directory.
-  - Asserts stdout and stderr are completely empty.
-- `test_empty_stdin_input`: Pipes `/dev/null` to `snslice -b 1000`. Confirms identical exit code 0 and zero files created.
-
-#### Suite 8: Malformed Input and Record Length Limits (AC-8)
-- `test_malformed_csv_unterminated_quote`: Feeds CSV ending with unclosed quote `"unterminated field at EOF`.
-  - Asserts exit code `2` and stderr `snslice: MALFORMED_CSV: ...`.
-- `test_malformed_ndjson_unterminated_line`: Feeds NDJSON ending without newline `{"key": "value"}` at EOF.
-  - Asserts exit code `2` and stderr `snslice: MALFORMED_NDJSON: ...`.
-- `test_record_length_limit_exceeded`: Feeds a single line/record exceeding 16 MiB (`16777217` bytes).
-  - Asserts exit code `2` and stderr `snslice: RECORD_LENGTH_LIMIT: ...`.
-- `test_embedded_nul_byte_rejected`: Feeds input containing `\x00`; asserts exit code `2` and malformed format diagnostic.
-
-#### Suite 9: Chunk Write Failures and Transactional Cleanup (AC-9)
-- `test_write_failure_unlinks_partial_chunk`: Slices a multi-chunk dataset into an output directory mounted on a full filesystem or read-only tree (or using a simulated pipe write error).
-  - Asserts exit code `2` with `CHUNK_WRITE_ERROR`.
-  - Asserts that the active partial chunk is deleted (`unlink()`).
-  - Asserts that any previously completed chunk remains intact and valid.
-
-#### Suite 10: CLI Diagnostics and Hostile Byte Sanitization (AC-10)
-- `test_diagnostic_sanitization_ansi_escapes`: Triggers an error using an input path containing ANSI terminal escape sequences (`\x1b[31;1m`).
-  - Asserts stderr renders escaped hexadecimal representation (`\x1B[31;1m`).
-  - Asserts raw escape bytes are never written to stderr.
-- `test_diagnostic_sanitization_control_chars`: Tests carriage returns, tabs, backslashes, and non-printable bytes; verifies all convert to `\xHH`.
-
-#### Suite 11: Closed Hazard Taxonomy and Exit Status Integrity (AC-11)
-- `test_closed_hazard_taxonomy_membership`: Parameterized test covering all 16 taxonomy members:
-  - Asserts every operational failure emits `snslice: <HAZARD_CODE>: <details>\n`.
-  - Asserts exit code is strictly `2`.
-- `test_sigpipe_broken_pipe_handling`: Invokes `snslice` piped to `head -n 1`; asserts exit code `2` via checked stdio `EPIPE` without signal crash.
-
-#### Suite 12: Repository Hardening and Quality Floor (AC-12)
-- `test_quality_floor_clean_build`: Asserts `snslice` compiles cleanly under GCC and Clang with zero warnings.
-- `test_sanitizers_clean`: Runs test suite under ASan and UBSan verifying zero defects.
-
-#### Suite 13: User Journey Manifest Synchronization and Traceability (AC-13)
-- `test_user_journeys_manifest_sync`: Asserts `journeys/snslice_user_journeys_manifest.json` and `tests/snslice_user_journeys_manifest.json` exist and are identical.
-- `test_user_journeys_schema_compliance`: Validates manifest against `USER_JOURNEYS_MANIFEST_SCHEMA`.
-- `test_user_journeys_coverage_completeness`: Asserts that all acceptance criteria AC-1 through AC-13 are referenced in journey `traces_to` fields.
+#### Suite 3: Deterministic Naming, Atomic File Creation, Closed Hazard Taxonomy, Transactional Cleanup, Quality Floor, and Manifest Synchronization (AC-3)
+- **Deterministic Output Chunk Naming:**
+  - `test_chunk_naming_default`: Verifies output chunk filenames follow `chunk_00001.ndjson`, `chunk_00002.ndjson`, etc.
+  - `test_chunk_naming_custom_prefix_and_dir`: Configures `--out-dir /tmp/.../out --prefix data_`; verifies files match `data_00001.csv`, `data_00002.csv`.
+  - `test_chunk_index_continuity`: Verifies indices are strictly continuous and monotonic without skipped numbers.
+- **Atomic File Creation & Collision Prevention:**
+  - `test_collision_prevention_fail_closed`: Pre-creates `chunk_00001.ndjson` with canary content. Runs `snslice -b 1000`.
+    - Asserts exit code `2`.
+    - Asserts stderr contains `snslice: OUTPUT_COLLISION: "..."`.
+    - Asserts canary content of pre-existing file is completely unaltered.
+- **Transactional Fault Cleanup:**
+  - `test_write_failure_unlinks_partial_chunk`: Slices a multi-chunk dataset into an output directory mounted on a full filesystem or read-only tree (or using a simulated write failure).
+    - Asserts exit code `2` with `CHUNK_WRITE_ERROR`.
+    - Asserts that the active partial chunk is deleted (`unlink()`).
+    - Asserts that any previously completed chunk remains intact and valid.
+- **Hostile Byte Sanitization & Terminal Safety:**
+  - `test_diagnostic_sanitization_ansi_escapes`: Triggers an error using an input path containing ANSI terminal escape sequences (`\x1b[31;1m`).
+    - Asserts stderr renders escaped hexadecimal representation (`\x1B[31;1m`).
+    - Asserts raw escape bytes are never written to stderr.
+  - `test_diagnostic_sanitization_control_chars`: Tests carriage returns, tabs, backslashes, and non-printable bytes; verifies all convert to `\xHH`.
+- **Closed Hazard Taxonomy & Signal Safety:**
+  - `test_closed_hazard_taxonomy_membership`: Parameterized test covering all 16 taxonomy members:
+    - Asserts every operational failure emits `snslice: <HAZARD_CODE>: <details>\n`.
+    - Asserts exit code is strictly `2`.
+  - `test_sigpipe_broken_pipe_handling`: Invokes `snslice` piped to `head -n 1`; asserts exit code `2` via checked stdio `EPIPE` without signal crash.
+- **Quality Floor & Manifest Synchronization:**
+  - `test_quality_floor_clean_build`: Asserts `snslice` compiles cleanly under GCC and Clang with zero warnings.
+  - `test_sanitizers_clean`: Runs test suite under ASan and UBSan verifying zero defects.
+  - `test_user_journeys_manifest_sync`: Asserts `journeys/user_journeys_manifest.json` and `tests/user_journeys_manifest.json` exist and are identical parsed objects.
+  - `test_user_journeys_schema_compliance`: Validates manifest against `USER_JOURNEYS_MANIFEST_SCHEMA`.
+  - `test_user_journeys_coverage_completeness`: Asserts that all acceptance criteria AC-1 through AC-3 are referenced in journey `traces_to` fields, and all 21 repository baseline user journeys are preserved.
 
 ---
 
@@ -484,12 +457,12 @@ Verification of `snslice` is an exhaustive, deterministic, evidence-producing pr
    - AddressSanitizer (ASan) with leak detection:
      ```bash
      clang -std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -fsanitize=address -fno-omit-frame-pointer -g -O1 -o /tmp/snslice-asan src/snslice.c
-     ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 python3 -m pytest -p no:cacheprovider tests/test_snslice_first_slice.py
+     ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 python3 -m pytest -p no:cacheprovider tests/test_snslice.py
      ```
    - UndefinedBehaviorSanitizer (UBSan):
      ```bash
      clang -std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 -fsanitize=undefined -fno-omit-frame-pointer -g -O1 -o /tmp/snslice-ubsan src/snslice.c
-     UBSAN_OPTIONS=halt_on_error=1 python3 -m pytest -p no:cacheprovider tests/test_snslice_first_slice.py
+     UBSAN_OPTIONS=halt_on_error=1 python3 -m pytest -p no:cacheprovider tests/test_snslice.py
      ```
    - Valgrind Memcheck:
      ```bash
@@ -499,7 +472,7 @@ Verification of `snslice` is an exhaustive, deterministic, evidence-producing pr
 4. **Dedicated Pytest Execution:**
    Execute the dedicated regression test suite with cache generation disabled:
    ```bash
-   PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_snslice_first_slice.py -v
+   PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider tests/test_snslice.py -v
    ```
 5. **Full Repository Quality Floor and Smoke Verification:**
    Run the repository's aggregate quality and smoke verification suites:
@@ -531,7 +504,7 @@ Verification of `snslice` is an exhaustive, deterministic, evidence-producing pr
 ### 3. Independent Review Protocol
 
 Independent craftsmanship and architectural review verifies the slice against all normative contract boundaries:
-1. **Contract Traceability:** Verify that all 13 acceptance checks AC-1 through AC-13 are fully satisfied in source code and backed by regression tests.
+1. **Contract Traceability:** Verify that all three acceptance checks `AC-1`, `AC-2`, and `AC-3` are fully satisfied in source code and backed by regression tests.
 2. **RFC 4180 State Machine Verification:** Audit quote transitions, escaped quote pairs, and delimiter recognition logic to confirm multiline record safety.
 3. **Memory and I/O Audit:** Confirm $O(1)$ resident memory, fixed 64 KiB buffer usage, absence of dynamic buffer reallocation, and single-owner descriptor cleanup.
 4. **Atomicity and Security Audit:** Confirm `O_CREAT | O_EXCL` flags, safe path formatting without buffer overflows, diagnostic sanitization of hostile control bytes, and transactional unlinking of partial chunks.
@@ -589,7 +562,7 @@ The implementation of `snslice` handles hostile, malformed, or massive data stre
 - **Mitigation:** All diagnostic strings pass through `snslice_sanitize_string()`. Characters outside printable ASCII (`0x20`–`0x7E`), double quotes (`"`), and backslashes (`\`) are converted to uppercase hexadecimal sequences (`\xHH`), preventing escape sequence injection.
 
 ### 9. Abrupt Process Termination via Broken Pipes (`SIGPIPE`)
-- **Risk:** When piped to downstream consumers that exit early (e.g. `head -n 10`), the default OS behavior raises `SIGPIPE`, terminating the process without running cleanup handlers and leaving corrupted chunk files.
+- **Risk:** When piped to downstream consumers that exit early (e.g. `head -n 10`), the default `SIGPIPE` signal terminates the process abruptly without running cleanup handlers and leaving corrupted chunk files.
 - **Mitigation:** `snslice` installs `signal(SIGPIPE, SIG_IGN)` at startup. Output pipe closures surface as checked stdio `EPIPE` errors, triggering clean transactional teardown and exit status `2`.
 
 ### 10. Resource and File Descriptor Leaks on Operational Error Paths

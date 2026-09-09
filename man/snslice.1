@@ -1,0 +1,533 @@
+.\" Copyright (c) 2026 Lee Harrington
+.\" SPDX-License-Identifier: MIT
+.TH SNSLICE 1 "2026-09-08" "snslice 0.1.0" "User Commands"
+.SH NAME
+snslice \(em partition NDJSON and CSV streams on complete record boundaries
+.SH SYNOPSIS
+.B snslice
+.RI [ OPTIONS ]
+.RI [ INPUT_FILE ]
+.P
+.B snslice \-\-help
+.P
+.B snslice \-\-version
+.SH DESCRIPTION
+.B snslice
+is an intentionally small, auditable, dependency\-free ISO C17 command\-line
+utility for Linux systems that partitions structured streaming datasets\(emspecifically
+Newline\-Delimited JSON
+.RB ( NDJSON )
+and Comma\-Separated Values
+.RB ( CSV )\(eminto
+bounded, deterministically named chunk files strictly on complete record boundaries
+without loading the entire input or whole chunks into memory.
+.P
+When
+.I INPUT_FILE
+is omitted or supplied as
+.BR \- ,
+.B snslice
+reads from standard input
+.RB ( stdin ).
+.P
+.B snslice
+guarantees that records are never fractured across chunk files.
+For NDJSON, logical records correspond to newline\-terminated lines.
+For CSV, RFC 4180 multiline rules are enforced: newlines, commas, and escaped quotes
+inside double\-quoted fields are treated as literal field data rather than record delimiters.
+The utility operates with constant O(1) resident set size (RSS) memory, creates chunk files
+atomically to prevent overwrites, and transactionally unlinks incomplete partial chunks
+on operational failures.
+.SH OPTIONS
+.TP
+.BR \-b ", " \-\-bytes =\fIBYTES\fR
+Chunk size threshold in bytes.
+.I BYTES
+must be a strictly positive integer in the range 1 to
+.BR SIZE_MAX .
+At least one threshold
+.RB ( \-\-bytes
+or
+.BR \-\-records )
+must be specified.
+.TP
+.BR \-r ", " \-\-records =\fICOUNT\fR
+Chunk size threshold in record count.
+.I COUNT
+must be a strictly positive integer in the range 1 to
+.BR SIZE_MAX .
+At least one threshold
+.RB ( \-\-bytes
+or
+.BR \-\-records )
+must be specified.
+.TP
+.BR \-f ", " \-\-format =\fIFORMAT\fR
+Stream parsing format:
+.B ndjson
+(the default) or
+.BR csv .
+Any other value is rejected fail\-closed with exit status
+.BR 2 .
+.TP
+.BR \-d ", " \-\-out\-dir =\fIDIR\fR
+Destination directory where output chunk files are created.
+Defaults to the current working directory
+.RB ( . ).
+The directory must exist and be accessible with write and search permissions;
+otherwise
+.B snslice
+fails closed with exit status
+.BR 2 .
+.TP
+.BR \-p ", " \-\-prefix =\fIPREFIX\fR
+Output chunk filename prefix.
+Defaults to
+.BR chunk_ .
+The prefix must not be empty, must not contain directory separators
+.RB ( / ),
+and must not contain directory traversal tokens
+.RB ( .. ).
+Violations fail closed with exit status
+.BR 2 .
+.TP
+.B \-\-
+Option terminator.
+All subsequent command\-line arguments are treated as the positional
+.I INPUT_FILE
+operand.
+.TP
+.B \-\-help
+Print command synopsis and option summary to standard output and exit with status
+.BR 0 .
+Must be supplied as the sole argument; combining
+.B \-\-help
+with any other option or operand fails closed with exit status
+.BR 2 .
+.TP
+.B \-\-version
+Print canonical version information
+.RB ( \(lq "snslice 0.1.0" \(rq )
+to standard output and exit with status
+.BR 0 .
+Must be supplied as the sole argument; combining
+.B \-\-version
+with any other option or operand fails closed with exit status
+.BR 2 .
+.SH FORMATS
+.B snslice
+supports two structured streaming data formats:
+.SS Newline-Delimited JSON (NDJSON)
+.IP \(bu 3
+Selected by
+.B \-\-format ndjson
+(the default).
+.IP \(bu 3
+Each line terminated by LF
+.RB ( \en )
+or CRLF
+.RB ( \er\en )
+is recognized as an atomic record.
+.IP \(bu 3
+Blank lines (lines containing only newline characters) are valid records in NDJSON
+streams and are preserved without modification.
+.IP \(bu 3
+Embedded NUL bytes
+.RB ( \e0 )
+are strictly forbidden and immediately terminate execution fail\-closed with diagnostic
+.B snslice: MALFORMED_NDJSON: embedded NUL byte detected
+and exit status
+.BR 2 .
+.IP \(bu 3
+If the input stream ends with an unterminated line (bytes accumulated without a trailing newline),
+.B snslice
+terminates fail\-closed with diagnostic
+.B snslice: MALFORMED_NDJSON: unterminated record at EOF
+and exit status
+.BR 2 .
+.SS Comma-Separated Values (CSV, RFC 4180)
+.IP \(bu 3
+Selected by
+.BR "\-\-format csv" .
+.IP \(bu 3
+Fields may be enclosed in balanced double quotes
+.RB ( \(dq ).
+.IP \(bu 3
+Embedded newlines
+.RB ( \en
+and
+.BR \er\en ),
+commas
+.RB ( , ),
+and escaped double quotes
+.RB ( \(dq\(dq )
+inside quoted fields are treated as literal field data.
+They do not trigger field or record delimiters.
+.IP \(bu 3
+A true record boundary is recognized if and only if an unquoted LF
+.RB ( \en )
+is encountered outside of quoted fields.
+.IP \(bu 3
+Multiline CSV rows (such as database text exports, JSON payloads, or stack traces)
+remain intact within a single chunk file and are never severed across chunks.
+.IP \(bu 3
+Embedded NUL bytes
+.RB ( \e0 )
+trigger immediate fail\-closed termination with diagnostic
+.B snslice: MALFORMED_CSV: embedded NUL byte detected
+and exit status
+.BR 2 .
+.IP \(bu 3
+If the input stream reaches EOF while still inside a double\-quoted field or expecting
+an escaped quote resolution, execution aborts fail\-closed with diagnostic
+.B snslice: MALFORMED_CSV: unterminated quoted field at EOF
+and exit status
+.BR 2 .
+.SH CHUNK-SIZE SEMANTICS
+.IP \(bu 3
+.B Threshold Requirement:
+At least one chunk size threshold
+.RB ( \-\-bytes
+or
+.BR \-\-records )
+must be specified on the command line.
+Omitting both triggers a fail\-closed usage error with exit status
+.BR 2 .
+.IP \(bu 3
+.B Dual Threshold Evaluation:
+If both
+.B \-\-bytes
+and
+.B \-\-records
+are specified, a chunk split occurs as soon as
+.I either
+threshold is reached or exceeded upon completing a record.
+.IP \(bu 3
+.B Record Boundary Invariant:
+A record is
+.B never
+split across chunk files.
+Slicing decisions take effect strictly at complete record boundaries.
+If a single record exceeds the byte threshold, it is written in its entirety to
+the active chunk, which is closed immediately after the record's terminating newline.
+.IP \(bu 3
+.B Empty Input Handling:
+If the input stream contains 0 bytes (an empty file or empty standard input),
+.B snslice
+exits cleanly with status
+.BR 0 ,
+creates zero chunk files on disk, and leaves standard output and standard error empty.
+.SH OUTPUT NAMING
+.IP \(bu 3
+Output chunk files are created in
+.I DIR
+specified by
+.B \-\-out\-dir
+(default:
+.BR . )
+with the filename pattern:
+.RS 3
+.P
+.BI "<out-dir>/" "<prefix>" "%05zu." "<ext>"
+.RE
+.IP \(bu 3
+The chunk counter
+.RB ( %05zu )
+is a 1\-indexed, five\-digit zero\-padded decimal integer starting at
+.B 00001
+and incrementing sequentially
+.RB ( 00002 ,
+.BR 00003 ,
+\&...).
+.IP \(bu 3
+The filename extension
+.RB ( <ext> )
+is
+.B ndjson
+for NDJSON format and
+.B csv
+for CSV format.
+.IP \(bu 3
+.B Lazy Creation:
+The first chunk file
+.RB ( 00001 )
+is opened lazily upon reading the first valid byte of input.
+If the input stream contains zero bytes, no chunk files are created on disk.
+.IP \(bu 3
+.B Atomic Collision Defense:
+Every chunk file is created using
+.BR open (2)
+with flags
+.BR "O_CREAT | O_EXCL | O_WRONLY"
+and permission mode
+.BR 0644 .
+If a chunk file of the intended name already exists on disk,
+.B snslice
+immediately aborts fail\-closed with diagnostic
+.BI "snslice: OUTPUT_COLLISION: \(dq" PATH "\(dq"
+and exit status
+.BR 2 .
+Pre\-existing files are never overwritten, truncated, or appended to.
+.SH FAILURE CLEANUP
+.IP \(bu 3
+.B Transactional Incomplete Chunk Removal:
+If any operational error occurs during streaming\(emincluding write failures
+.RB ( ENOSPC ,
+disk full), read errors
+.RB ( EIO ),
+malformed stream syntax, record length violations, or memory allocation failures\(emthe
+currently active, partially written chunk file is immediately closed and removed from
+the filesystem via
+.BR unlink (2)
+before process termination.
+.IP \(bu 3
+.B Completed Chunk Preservation:
+Previously completed and closed chunk files are preserved intact on disk; only
+the corrupt partial active chunk is unlinked.
+.IP \(bu 3
+.B Descriptor Discipline:
+At most two file descriptors are open concurrently: the input stream descriptor and
+the single active output chunk descriptor.
+When a chunk finishes, its descriptor is closed before the next chunk file is opened.
+.SH RESOURCE BEHAVIOR
+.IP \(bu 3
+.B Constant Memory (O(1) RSS):
+Input is processed in fixed 64\|KiB streaming buffers
+.RB ( SNSLICE_IO_BUFFER_SIZE\ =\ 65536 ).
+No heap allocations are performed for stream payloads or records.
+Resident set size remains constant whether processing megabytes, gigabytes, or terabytes of data.
+.IP \(bu 3
+.B Record Length Safety Limit:
+Individual records are bounded to a maximum of 16\|MiB
+.RB ( SNSLICE_MAX_RECORD_BYTES\ =\ 16777216 ).
+If a record exceeds 16\|MiB without reaching a valid record boundary,
+.B snslice
+aborts fail\-closed with diagnostic
+.B snslice: RECORD_LENGTH_LIMIT: record exceeds 16 MiB limit
+and exit status
+.BR 2 .
+This prevents memory exhaustion attacks from malformed or unbounded inputs.
+.IP \(bu 3
+.B Path Length Limits:
+Constructed filesystem paths are bounded by
+.B PATH_MAX
+(4096 bytes).
+Any path exceeding this limit fails closed with diagnostic
+.B OUTPUT_DIR_ERROR
+and exit status
+.BR 2 .
+.IP \(bu 3
+.B Signal Handling:
+.B SIGPIPE
+is ignored unconditionally at startup via
+.BR signal (2).
+If an output pipe or downstream consumer closes prematurely (such as when piped to
+.BR head (1)),
+the condition surfaces as a checked stdio write error
+.RB ( EPIPE )
+triggering diagnostic
+.B snslice: BROKEN_PIPE
+and exit status
+.BR 2 ,
+with transactional cleanup of any partial chunk.
+.SH DIAGNOSTICS
+Diagnostic messages are printed strictly to standard error.
+All error messages conform to the canonical format:
+.RS 3
+.P
+.BI "snslice: " HAZARD_CODE ": " details
+.RE
+.P
+Untrusted paths, filenames, and byte sequences rendered in diagnostics are sanitized:
+characters outside printable ASCII (0x20 through 0x7E), double quotes
+.RB ( \(dq ),
+and backslashes
+.RB ( \e )
+are converted to uppercase hexadecimal sequences
+.RB ( \ex HH ),
+preventing ANSI terminal escape injection vulnerabilities.
+.P
+.B snslice
+classifies all errors into a closed 16\-member hazard taxonomy:
+.TP
+.B USAGE_ERROR
+Command\-line syntax error, arity violation, missing limits, invalid prefix, or combining informational flags.
+.TP
+.B UNKNOWN_OPTION
+Unrecognized option flag passed on the command line.
+.TP
+.B INVALID_LIMIT
+Argument for
+.B \-\-bytes
+or
+.B \-\-records
+is zero, negative, non\-numeric, or exceeds
+.BR SIZE_MAX .
+.TP
+.B INVALID_FORMAT
+Argument for
+.B \-\-format
+is neither
+.B ndjson
+nor
+.BR csv .
+.TP
+.B INPUT_NOT_FOUND
+Input file operand does not exist or lacks read permission.
+.TP
+.B INPUT_IS_DIRECTORY
+Input file operand references a directory.
+.TP
+.B INPUT_READ_ERROR
+Operating system read error encountered on the input stream.
+.TP
+.B RECORD_LENGTH_LIMIT
+A single record exceeded the 16\|MiB limit without a delimiter.
+.TP
+.B MALFORMED_NDJSON
+Unterminated line at EOF or embedded NUL byte detected in NDJSON input.
+.TP
+.B MALFORMED_CSV
+Unterminated quoted field at EOF, bad quote escape, or embedded NUL byte in CSV input.
+.TP
+.B OUTPUT_DIR_ERROR
+Output directory does not exist, is not a directory, or lacks write permissions.
+.TP
+.B OUTPUT_COLLISION
+Target chunk file already exists on disk; aborting to prevent overwrite.
+.TP
+.B CHUNK_OPEN_ERROR
+Operating system error creating a chunk file (other than collision).
+.TP
+.B CHUNK_WRITE_ERROR
+Write or flush failure while writing data to a chunk file.
+.TP
+.B OUT_OF_MEMORY
+Dynamic memory allocation failure.
+.TP
+.B BROKEN_PIPE
+Output pipe closed prematurely while writing.
+.SH EXIT STATUS
+.TP
+.B 0
+Success: input stream fully consumed, all complete records partitioned into valid chunk files,
+and all files cleanly flushed and closed; or sole informational option
+.RB ( \-\-help ,
+.BR \-\-version )
+executed successfully.
+.TP
+.B 1
+Reserved for notices or advisory findings in future versions.
+.TP
+.B 2
+Operational or usage failure: command\-line syntax error, malformed input, limit violation,
+file collision, directory error, I/O error, or broken pipe.
+.SH LIMITATIONS
+.IP \(bu 3
+.B Pure Partitioning:
+.B snslice
+partitions streams strictly by records; it does not validate JSON syntax within lines
+or parse JSON values into an abstract syntax tree (AST).
+.IP \(bu 3
+.B No CSV Dialect Transformations:
+.B snslice
+preserves CSV input verbatim; it does not reorder columns, alter delimiters, or convert dialects.
+.IP \(bu 3
+.B No Integrated Compression:
+.B snslice
+does not decompress or compress streams directly.
+Decompression and compression are delegated to standard Unix tools via pipelines
+.RB ( "gzip \-dc input.gz | snslice ..." ).
+.IP \(bu 3
+.B No Cloud Staging or Network Operations:
+.B snslice
+performs no network communication, telemetry, socket operations, or cloud uploads.
+.IP \(bu 3
+.B No Background Services:
+.B snslice
+does not run background daemons, watch directories, or maintain persistent state across runs.
+.IP \(bu 3
+.B Single-Threaded Design:
+.B snslice
+runs as a single thread of execution, avoiding multithreading complexity, race conditions,
+and synchronization overhead.
+.SH EXAMPLES
+Partition an NDJSON log stream into 10\|MiB chunks:
+.P
+.RS
+.nf
+snslice \-\-bytes 10485760 server.ndjson
+.fi
+.RE
+.P
+Partition an NDJSON stream into chunks of at most 50,000 records each:
+.P
+.RS
+.nf
+snslice \-\-records 50000 events.ndjson
+.fi
+.RE
+.P
+Partition a multiline CSV export from standard input with dual thresholds:
+.P
+.RS
+.nf
+cat database_export.csv | snslice \-\-format csv \-\-bytes 5242880 \-\-records 10000
+.fi
+.RE
+.P
+Specify a custom output directory and chunk filename prefix:
+.P
+.RS
+.nf
+snslice \-f ndjson \-b 1048576 \-d /var/data/chunks \-p part_ stream.ndjson
+.fi
+.RE
+.P
+Read from standard input explicitly using
+.BR \- :
+.P
+.RS
+.nf
+snslice \-b 1000000 \- < input.ndjson
+.fi
+.RE
+.P
+Stream and slice a compressed dataset via external Unix pipeline:
+.P
+.RS
+.nf
+gzip \-dc large_export.csv.gz | snslice \-f csv \-b 50000000
+.fi
+.RE
+.P
+Display usage help:
+.P
+.RS
+.nf
+snslice \-\-help
+.fi
+.RE
+.P
+Display version information:
+.P
+.RS
+.nf
+snslice \-\-version
+.fi
+.RE
+.SH SEE ALSO
+.BR split (1),
+.BR sysdiff (1),
+.BR treehash (1),
+.BR jq (1),
+.BR open (2),
+.BR unlink (2)
+.SH AUTHOR
+Lee Harrington
+.SH COPYRIGHT
+Copyright \(co 2026 Lee Harrington.
+.B snslice
+is released under the MIT License.
+.SH VERSION
+snslice 0.1.0 (2026\-09\-08)

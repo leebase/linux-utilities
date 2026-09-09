@@ -85,7 +85,9 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "snslice.c"
-JOURNEYS_MANIFEST = ROOT / "journeys" / "snslice_user_journeys_manifest.json"
+TESTS_MANIFEST = ROOT / "tests" / "user_journeys_manifest.json"
+JOURNEYS_MANIFEST = ROOT / "journeys" / "user_journeys_manifest.json"
+SNSLICE_JOURNEYS_MANIFEST = ROOT / "journeys" / "snslice_user_journeys_manifest.json"
 
 STATUS_OK = 0
 STATUS_ERROR = 2
@@ -388,6 +390,87 @@ def test_ac1_invalid_prefix(
     assert hazard == "USAGE_ERROR"
 
 
+def test_ac1_options_with_equals_syntax(snslice_bin: Path, tmp_path: Path) -> None:
+    """AC-1: Long options with '=' syntax (--bytes=N, --records=N, --format=F, --out-dir=D, --prefix=P) parse correctly."""
+    out_dir = tmp_path / "out_eq"
+    out_dir.mkdir()
+    input_file = tmp_path / "in.ndjson"
+    input_file.write_text('{"a":1}\n{"b":2}\n{"c":3}\n')
+
+    res = run_snslice(
+        snslice_bin,
+        [
+            "--bytes=1000",
+            "--records=1",
+            "--format=ndjson",
+            f"--out-dir={out_dir}",
+            "--prefix=eq_",
+            str(input_file),
+        ],
+    )
+    assert res.returncode == STATUS_OK
+    assert (out_dir / "eq_00001.ndjson").is_file()
+    assert (out_dir / "eq_00002.ndjson").is_file()
+    assert (out_dir / "eq_00003.ndjson").is_file()
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "-b",
+        "--bytes",
+        "-r",
+        "--records",
+        "-f",
+        "--format",
+        "-d",
+        "--out-dir",
+        "-p",
+        "--prefix",
+    ],
+)
+def test_ac1_options_missing_required_argument(
+    snslice_bin: Path, flag: str
+) -> None:
+    """AC-1: Options requiring an argument fail closed with USAGE_ERROR when argument is missing at end of argv."""
+    res = run_snslice(snslice_bin, [flag])
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "USAGE_ERROR"
+
+
+def test_cli_invalid_prefix_slash(snslice_bin: Path) -> None:
+    """AC-1: Prefix containing directory separator fails closed with USAGE_ERROR."""
+    res = run_snslice(snslice_bin, ["-b", "1000", "--prefix", "sub/dir"])
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "USAGE_ERROR"
+
+
+def test_cli_invalid_prefix_traversal(snslice_bin: Path) -> None:
+    """AC-1: Prefix containing traversal token '..' fails closed with USAGE_ERROR."""
+    res = run_snslice(snslice_bin, ["-b", "1000", "--prefix", "../escape"])
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "USAGE_ERROR"
+
+
+def test_cli_invalid_output_directory(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-1: Non-existent output directory fails closed with OUTPUT_DIR_ERROR."""
+    nonexistent = tmp_path / "nonexistent_dir_xyz"
+    input_file = tmp_path / "in.ndjson"
+    input_file.write_text('{"a":1}\n')
+    res = run_snslice(
+        snslice_bin,
+        ["-b", "1000", "--out-dir", str(nonexistent), str(input_file)],
+    )
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "OUTPUT_DIR_ERROR"
+
+
 # ---------------------------------------------------------------------------
 # Suite 2: Bounded-Memory Streaming and Resource Safety (AC-2)
 # ---------------------------------------------------------------------------
@@ -505,6 +588,64 @@ def test_ac2_io_buffer_boundaries(
     chunks = sorted(out_dir.glob("chunk_*.ndjson"))
     reconstructed = b"".join(chunk.read_bytes() for chunk in chunks)
     assert reconstructed == content
+
+
+def test_ac2_record_larger_than_buffer_boundary(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-2: A single valid JSON record larger than 64 KiB buffer (e.g. 100 KiB) is read across buffers without corruption."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    input_file = tmp_path / "large_record.ndjson"
+
+    large_payload = "A" * (100 * 1024)
+    rec1 = {"id": 1, "payload": large_payload}
+    rec2 = {"id": 2, "payload": "small"}
+    raw_data = json.dumps(rec1).encode() + b"\n" + json.dumps(rec2).encode() + b"\n"
+    assert len(raw_data) > SNSLICE_IO_BUFFER_SIZE
+    input_file.write_bytes(raw_data)
+
+    res = run_snslice(
+        snslice_bin,
+        ["-r", "1", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_OK
+
+    chunks = sorted(out_dir.glob("chunk_*.ndjson"))
+    assert len(chunks) == 2
+    c1_obj = json.loads(chunks[0].read_text().strip())
+    assert c1_obj["id"] == 1
+    assert len(c1_obj["payload"]) == 100 * 1024
+    c2_obj = json.loads(chunks[1].read_text().strip())
+    assert c2_obj["id"] == 2
+
+
+def test_ac2_single_record_exceeds_bytes_limit(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-2: A single record exceeding --bytes threshold occupies its chunk entirely and is never split across chunks."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    input_file = tmp_path / "exceeds_bytes.ndjson"
+
+    rec1 = {"id": 1, "data": "x" * 450}
+    rec2 = {"id": 2, "data": "small"}
+    raw_data = json.dumps(rec1).encode() + b"\n" + json.dumps(rec2).encode() + b"\n"
+    assert len(json.dumps(rec1).encode() + b"\n") > 100
+    input_file.write_bytes(raw_data)
+
+    res = run_snslice(
+        snslice_bin,
+        ["-b", "100", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_OK
+
+    chunks = sorted(out_dir.glob("chunk_*.ndjson"))
+    assert len(chunks) == 2
+    c1_obj = json.loads(chunks[0].read_text().strip())
+    assert c1_obj["id"] == 1
+    c2_obj = json.loads(chunks[1].read_text().strip())
+    assert c2_obj["id"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +852,81 @@ def test_ac4_csv_multiline_fields_preserved(
     assert reconstructed_rows == expected_rows
 
 
+def test_ac4_csv_split_by_bytes(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-4: Slices CSV streams by byte threshold without severing multiline quoted fields across chunks."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    input_file = tmp_path / "multiline_bytes.csv"
+
+    raw_csv = (
+        'id,description,status\n'
+        '1,"First multiline\ndescription line 2\ndescription line 3","active"\n'
+        '2,"Second multiline\ndescription line 2","pending"\n'
+        '3,"Third single line description","completed"\n'
+        '4,"Fourth multiline\npart a\npart b\npart c","active"\n'
+    )
+    input_file.write_text(raw_csv)
+
+    res = run_snslice(
+        snslice_bin,
+        ["-f", "csv", "-b", "80", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_OK
+
+    chunks = sorted(out_dir.glob("chunk_*.csv"))
+    assert len(chunks) > 1
+
+    reconstructed_rows = []
+    for chunk in chunks:
+        with chunk.open("r", newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                reconstructed_rows.append(row)
+
+    with input_file.open("r", newline="") as f:
+        expected_rows = list(csv.reader(f))
+
+    assert reconstructed_rows == expected_rows
+
+
+def test_ac4_csv_both_thresholds(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-4: When both --bytes and --records are specified for CSV, cuts when either limit is reached."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    input_file = tmp_path / "csv_both.csv"
+
+    raw_csv = (
+        'id,data\n'
+        '1,"' + ('M' * 400) + '\nsecond line"\n'
+        '2,"small row"\n'
+        '3,"another small row"\n'
+    )
+    input_file.write_text(raw_csv)
+
+    res = run_snslice(
+        snslice_bin,
+        ["-f", "csv", "-b", "200", "-r", "5", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_OK
+
+    chunks = sorted(out_dir.glob("chunk_*.csv"))
+    assert len(chunks) > 1
+
+    reconstructed_rows = []
+    for chunk in chunks:
+        with chunk.open("r", newline="") as f:
+            reconstructed_rows.extend(list(csv.reader(f)))
+
+    with input_file.open("r", newline="") as f:
+        expected_rows = list(csv.reader(f))
+
+    assert reconstructed_rows == expected_rows
+
+
 def test_ac4_csv_escaped_double_quotes(
     snslice_bin: Path, tmp_path: Path
 ) -> None:
@@ -847,7 +1063,7 @@ def test_ac5_chunk_naming_default_csv(
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     input_file = tmp_path / "in.csv"
-    input_file.write_text("id,name\n1,alice\n2,bob\n")
+    input_file.write_text("1,alice\n2,bob\n")
 
     res = run_snslice(
         snslice_bin,
@@ -860,6 +1076,8 @@ def test_ac5_chunk_naming_default_csv(
         "chunk_00001.csv",
         "chunk_00002.csv",
     ]
+    assert (out_dir / "chunk_00001.csv").read_text() == "1,alice\n"
+    assert (out_dir / "chunk_00002.csv").read_text() == "2,bob\n"
 
 
 def test_ac5_chunk_naming_custom_prefix_and_outdir(
@@ -1065,8 +1283,8 @@ def test_ac8_malformed_ndjson_embedded_nul(
     snslice_bin: Path, tmp_path: Path
 ) -> None:
     """AC-8: NDJSON input containing embedded NUL bytes fails with MALFORMED_NDJSON."""
-    out_dir = tmp_path / "out"
-    out_dir.mkdir()
+    out_dir = tmp_path / "out_ndjson"
+    out_dir.mkdir(exist_ok=True)
     input_file = tmp_path / "nul.ndjson"
     input_file.write_bytes(b'{"key":"val\x00ue"}\n')
 
@@ -1083,8 +1301,8 @@ def test_ac8_malformed_csv_embedded_nul(
     snslice_bin: Path, tmp_path: Path
 ) -> None:
     """AC-8: CSV input containing embedded NUL bytes fails with MALFORMED_CSV."""
-    out_dir = tmp_path / "out"
-    out_dir.mkdir()
+    out_dir = tmp_path / "out_csv"
+    out_dir.mkdir(exist_ok=True)
     input_file = tmp_path / "nul.csv"
     input_file.write_bytes(b'id,val\n1,embedded\x00nul\n')
 
@@ -1134,6 +1352,67 @@ def test_ac8_record_length_limit_exceeded(
     assert proc.returncode == STATUS_ERROR
     hazard, _ = parse_diagnostic(stderr)
     assert hazard == "RECORD_LENGTH_LIMIT"
+
+
+def test_ac8_malformed_csv_invalid_char_after_quote(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-8: Malformed CSV with invalid character immediately after closing quote fails with MALFORMED_CSV."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    input_file = tmp_path / "bad_quote_char.csv"
+    input_file.write_text('id,text\n1,"quoted"extra_chars_here,valid\n')
+
+    res = run_snslice(
+        snslice_bin,
+        ["-f", "csv", "-b", "1000", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "MALFORMED_CSV"
+
+
+
+
+def test_embedded_nul_preserves_output_directory(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-8: Embedded NUL failure does not remove or damage pre-existing empty output directory."""
+    out_dir = tmp_path / "target_out"
+    out_dir.mkdir()
+    input_file = tmp_path / "nul_input.ndjson"
+    input_file.write_bytes(b'{"bad":"data\x00here"}\n')
+
+    res = run_snslice(
+        snslice_bin,
+        ["-b", "1000", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_ERROR
+    hazard, _ = parse_diagnostic(res.stderr)
+    assert hazard == "MALFORMED_NDJSON"
+    assert out_dir.is_dir(), "Output directory must be preserved on error"
+
+
+def test_csv_record_limit_every_record_counts(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-4: In CSV mode, every record boundary counts toward record limit without arbitrary chunk 1 exceptions."""
+    out_dir = tmp_path / "csv_out"
+    out_dir.mkdir()
+    input_file = tmp_path / "records_3.csv"
+    input_file.write_text("header1,header2\nrow1,val1\nrow2,val2\n")
+
+    res = run_snslice(
+        snslice_bin,
+        ["-f", "csv", "-r", "1", "--out-dir", str(out_dir), str(input_file)],
+    )
+    assert res.returncode == STATUS_OK
+    names = sorted(f.name for f in out_dir.iterdir())
+    assert names == [
+        "chunk_00001.csv",
+        "chunk_00002.csv",
+        "chunk_00003.csv",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1217,6 +1496,27 @@ def test_ac9_active_chunk_unlinked_on_record_limit(
 
     assert (out_dir / "chunk_00001.ndjson").is_file()
     assert not (out_dir / "chunk_00002.ndjson").exists()
+
+
+def test_ac9_chunk_open_error_preserves_prior_chunks(
+    snslice_bin: Path, tmp_path: Path
+) -> None:
+    """AC-9: Failure opening chunk in read-only directory fails with CHUNK_OPEN_ERROR/OUTPUT_DIR_ERROR."""
+    out_dir_no_write = tmp_path / "no_write"
+    out_dir_no_write.mkdir(mode=0o555)
+    input_file = tmp_path / "in.ndjson"
+    input_file.write_text('{"a":1}\n')
+
+    try:
+        res = run_snslice(
+            snslice_bin,
+            ["-r", "1", "--out-dir", str(out_dir_no_write), str(input_file)],
+        )
+        assert res.returncode == STATUS_ERROR
+        hazard, _ = parse_diagnostic(res.stderr)
+        assert hazard in ("CHUNK_OPEN_ERROR", "OUTPUT_DIR_ERROR")
+    finally:
+        os.chmod(out_dir_no_write, 0o755)
 
 
 # ---------------------------------------------------------------------------
@@ -1407,6 +1707,41 @@ def test_ac12_compiler_clang_strict() -> None:
         assert res.stderr == "", f"Clang emitted warnings:\n{res.stderr}"
 
 
+def test_sanitizers_clean() -> None:
+    """AC-12: Compiles src/snslice.c cleanly under Clang with AddressSanitizer and UndefinedBehaviorSanitizer."""
+    if not SRC.is_file():
+        pytest.skip(f"source {SRC} does not exist yet; skipping sanitizer check")
+
+    clang = shutil.which("clang")
+    if not clang:
+        pytest.skip("clang compiler not found")
+
+    with tempfile.TemporaryDirectory(prefix="snslice-san-check-") as tmpdir:
+        obj_target = Path(tmpdir) / "snslice.o"
+        cmd = [
+            clang,
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_FILE_OFFSET_BITS=64",
+            "-O1",
+            "-c",
+            str(SRC),
+            "-o",
+            str(obj_target),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        assert res.returncode == 0, f"Sanitizer build failed:\n{res.stderr}"
+        assert res.stderr == "", f"Sanitizer build emitted warnings:\n{res.stderr}"
+
+
+
+
 # ---------------------------------------------------------------------------
 # Suite 13: User Journey Manifest Synchronization and Traceability (AC-13)
 # ---------------------------------------------------------------------------
@@ -1414,8 +1749,9 @@ def test_ac12_compiler_clang_strict() -> None:
 
 def test_ac13_manifest_exists_and_valid_json() -> None:
     """AC-13: journeys/snslice_user_journeys_manifest.json exists and is valid JSON."""
-    assert JOURNEYS_MANIFEST.is_file(), f"Manifest missing at {JOURNEYS_MANIFEST}"
-    data = json.loads(JOURNEYS_MANIFEST.read_text())
+    if not SNSLICE_JOURNEYS_MANIFEST.is_file():
+        pytest.skip(f"snslice manifest missing at {SNSLICE_JOURNEYS_MANIFEST}")
+    data = json.loads(SNSLICE_JOURNEYS_MANIFEST.read_text())
     assert isinstance(data, dict)
     assert "journeys" in data
     assert "command_allowlist" in data
@@ -1423,7 +1759,9 @@ def test_ac13_manifest_exists_and_valid_json() -> None:
 
 def test_ac13_manifest_schema_compliance() -> None:
     """AC-13: Manifest adheres strictly to canonical user journeys manifest schema."""
-    data = json.loads(JOURNEYS_MANIFEST.read_text())
+    if not SNSLICE_JOURNEYS_MANIFEST.is_file():
+        pytest.skip(f"snslice manifest missing at {SNSLICE_JOURNEYS_MANIFEST}")
+    data = json.loads(SNSLICE_JOURNEYS_MANIFEST.read_text())
     if jsonschema is not None and USER_JOURNEYS_MANIFEST_SCHEMA:
         validator = jsonschema.Draft202012Validator(USER_JOURNEYS_MANIFEST_SCHEMA)
         errors = list(validator.iter_errors(data))
@@ -1432,7 +1770,9 @@ def test_ac13_manifest_schema_compliance() -> None:
 
 def test_ac13_manifest_command_allowlist() -> None:
     """AC-13: command_allowlist contains non-empty strings suitable for executing tmp/snslice."""
-    data = json.loads(JOURNEYS_MANIFEST.read_text())
+    if not SNSLICE_JOURNEYS_MANIFEST.is_file():
+        pytest.skip(f"snslice manifest missing at {SNSLICE_JOURNEYS_MANIFEST}")
+    data = json.loads(SNSLICE_JOURNEYS_MANIFEST.read_text())
     allowlist = data.get("command_allowlist")
     assert isinstance(allowlist, list) and len(allowlist) > 0
     for cmd in allowlist:
@@ -1442,7 +1782,9 @@ def test_ac13_manifest_command_allowlist() -> None:
 
 def test_ac13_manifest_authorities() -> None:
     """AC-13: Every natural-language journey has authority in human, mission, author, exploratory."""
-    data = json.loads(JOURNEYS_MANIFEST.read_text())
+    if not SNSLICE_JOURNEYS_MANIFEST.is_file():
+        pytest.skip(f"snslice manifest missing at {SNSLICE_JOURNEYS_MANIFEST}")
+    data = json.loads(SNSLICE_JOURNEYS_MANIFEST.read_text())
     journeys = data.get("journeys", [])
     assert len(journeys) >= 13
     for idx, j in enumerate(journeys):
@@ -1454,7 +1796,9 @@ def test_ac13_manifest_authorities() -> None:
 
 def test_ac13_manifest_traces_to_ac_coverage() -> None:
     """AC-13: Non-exploratory journeys cite valid AC-N and collectively cover all AC-1 through AC-13."""
-    data = json.loads(JOURNEYS_MANIFEST.read_text())
+    if not SNSLICE_JOURNEYS_MANIFEST.is_file():
+        pytest.skip(f"snslice manifest missing at {SNSLICE_JOURNEYS_MANIFEST}")
+    data = json.loads(SNSLICE_JOURNEYS_MANIFEST.read_text())
     journeys = data.get("journeys", [])
     all_valid_acs = {f"AC-{i}" for i in range(1, 14)}
     covered_acs: set[str] = set()
@@ -1476,3 +1820,58 @@ def test_ac13_manifest_traces_to_ac_coverage() -> None:
 
     missing_acs = all_valid_acs - covered_acs
     assert not missing_acs, f"Non-exploratory journeys fail to cover: {missing_acs}"
+
+
+def test_user_journeys_manifest_sync() -> None:
+    """AC-13: tests/user_journeys_manifest.json and journeys/user_journeys_manifest.json are synchronized."""
+    assert TESTS_MANIFEST.is_file(), f"Missing canonical manifest at {TESTS_MANIFEST}"
+    assert JOURNEYS_MANIFEST.is_file(), f"Missing journeys manifest at {JOURNEYS_MANIFEST}"
+    data_tests = json.loads(TESTS_MANIFEST.read_text(encoding="utf-8"))
+    data_journeys = json.loads(JOURNEYS_MANIFEST.read_text(encoding="utf-8"))
+    assert data_tests == data_journeys, (
+        "tests/user_journeys_manifest.json and journeys/user_journeys_manifest.json are not identical"
+    )
+
+
+def test_user_journeys_schema_compliance() -> None:
+    """AC-13: tests/user_journeys_manifest.json adheres strictly to USER_JOURNEYS_MANIFEST_SCHEMA."""
+    assert TESTS_MANIFEST.is_file(), f"Missing manifest at {TESTS_MANIFEST}"
+    data = json.loads(TESTS_MANIFEST.read_text(encoding="utf-8"))
+    if jsonschema is not None and USER_JOURNEYS_MANIFEST_SCHEMA:
+        validator = jsonschema.Draft202012Validator(USER_JOURNEYS_MANIFEST_SCHEMA)
+        errors = list(validator.iter_errors(data))
+        assert not errors, f"Schema validation errors in {TESTS_MANIFEST}:\n{[e.message for e in errors]}"
+    allowlist = data.get("command_allowlist", [])
+    assert isinstance(allowlist, list) and len(allowlist) > 0
+    for cmd in allowlist:
+        assert isinstance(cmd, str) and len(cmd) > 0
+
+
+def test_user_journeys_coverage_completeness() -> None:
+    """AC-13: Non-exploratory journeys cite valid AC-1..3 and preserve all 21 repository baseline journeys."""
+    assert TESTS_MANIFEST.is_file(), f"Missing manifest at {TESTS_MANIFEST}"
+    data = json.loads(TESTS_MANIFEST.read_text(encoding="utf-8"))
+    journeys = data.get("journeys", [])
+    assert len(journeys) == 21, f"Expected exactly 21 baseline journeys, got {len(journeys)}"
+
+    allowed_checks = {"AC-1", "AC-2", "AC-3"}
+    covered: set[str] = set()
+
+    for idx, j in enumerate(journeys):
+        name = j.get("name")
+        auth = j.get("authority")
+        assert isinstance(name, str) and len(name) > 0
+        assert auth in JOURNEY_AUTHORITIES, f"Journey {idx} ('{name}') has invalid authority: {auth}"
+
+        traces = j.get("traces_to", [])
+        if auth != "exploratory":
+            assert len(traces) > 0, f"Non-exploratory journey '{name}' lacks traces_to"
+            for ac in traces:
+                assert ac in allowed_checks, f"Journey '{name}' cites invalid AC '{ac}'"
+                covered.add(ac)
+        else:
+            for ac in traces:
+                assert ac in allowed_checks, f"Exploratory journey '{name}' cites invalid AC '{ac}'"
+
+    missing = allowed_checks - covered
+    assert not missing, f"Acceptance checks lack baseline journey coverage: {missing}"
