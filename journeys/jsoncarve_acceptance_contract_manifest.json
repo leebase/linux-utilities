@@ -1,0 +1,66 @@
+{
+  "command_allowlist": [
+    "python3 -c \"from pathlib import Path; p=Path('docs/jsoncarve-acceptance-contract.md'); assert p.is_file() and p.stat().st_size > 0\"",
+    "python3 -c \"import json; from pathlib import Path; d=json.loads(Path('journeys/jsoncarve_acceptance_contract_manifest.json').read_text()); assert d['command_allowlist'] and d['journeys']\"",
+    "python3 -c \"import re; from pathlib import Path; s=Path('docs/jsoncarve-acceptance-contract.md').read_text(); hs=re.findall(r'^## (.+)$',s,re.M); assert hs==['Overview','Problem','CLI Surface','Capability Boundary','Hazard Taxonomy','Exit Statuses','Non-Goals','Acceptance Checks']\"",
+    "python3 -c \"import json,re; from pathlib import Path; s=Path('docs/jsoncarve-acceptance-contract.md').read_text(); d=json.loads(Path('journeys/jsoncarve_acceptance_contract_manifest.json').read_text()); ac=set(re.findall(r'(?m)^(AC-[1-9][0-9]*)\\b',s)); covered={x for j in d['journeys'] if j['authority']!='exploratory' for x in j['traces_to']}; assert ac and covered==ac\""
+  ],
+  "journeys": [
+    {
+      "name": "review_cli_and_record_framing",
+      "goal": "Determine whether an implementer can derive the exact stdin-only invocation, argument rejection behavior, encounter ordering, and byte-level RFC 7464 output records without making format choices.",
+      "authority": "mission",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#cli-surface", "docs/jsoncarve-acceptance-contract.md#capability-boundary"],
+      "traces_to": ["AC-1", "AC-2", "AC-13"]
+    },
+    {
+      "name": "review_nested_string_lexer_rules",
+      "goal": "Check that implementation can distinguish structural delimiters from string content and can implement the complete escape, control-byte, UTF-8, and surrogate rules precisely.",
+      "authority": "author",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#capability-boundary"],
+      "traces_to": ["AC-3", "AC-4", "AC-5", "AC-7"]
+    },
+    {
+      "name": "review_strict_container_grammar",
+      "goal": "Verify that the contract identifies which top-level values are candidates and supplies closed strict-JSON rejection rules rather than permitting JSON5 or heuristic brace matching.",
+      "authority": "mission",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#capability-boundary", "docs/jsoncarve-acceptance-contract.md#non-goals"],
+      "traces_to": ["AC-6", "AC-8"]
+    },
+    {
+      "name": "review_malformed_recovery_and_eof",
+      "goal": "Confirm that an implementer can locate the exact resumption byte after rejection and determine output, diagnostics, and status for later valid values and truncated final candidates.",
+      "authority": "author",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#capability-boundary", "docs/jsoncarve-acceptance-contract.md#exit-statuses"],
+      "traces_to": ["AC-9", "AC-10", "AC-15"]
+    },
+    {
+      "name": "review_resource_boundaries_and_hostility",
+      "goal": "Assess whether exact inclusive limits, first-over-limit outcomes, bounded memory, forward progress, and adversarial runtime expectations are sufficient for safe C implementation and boundary tests.",
+      "authority": "mission",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#capability-boundary", "docs/jsoncarve-acceptance-contract.md#acceptance-checks"],
+      "traces_to": ["AC-11", "AC-12"]
+    },
+    {
+      "name": "review_diagnostic_taxonomy",
+      "goal": "Ensure every observable hazard maps to a closed code, hostile diagnostic material is escaped, offsets are defined, and suppression remains deterministic without hiding fatal errors.",
+      "authority": "author",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#hazard-taxonomy"],
+      "traces_to": ["AC-14"]
+    },
+    {
+      "name": "review_io_failure_contract",
+      "goal": "Check that read, write, and flush failures have implementable status and diagnostic rules and that callers are warned how to treat an already-written framed prefix.",
+      "authority": "human",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#exit-statuses", "docs/jsoncarve-acceptance-contract.md#capability-boundary"],
+      "traces_to": ["AC-15", "AC-16"]
+    },
+    {
+      "name": "review_scope_restraint",
+      "goal": "Explore whether future users might mistake byte carving for scalar extraction, repair, querying, schema validation, file handling, monitoring, or a released implementation.",
+      "authority": "exploratory",
+      "source_refs": ["docs/jsoncarve-acceptance-contract.md#overview", "docs/jsoncarve-acceptance-contract.md#non-goals"],
+      "traces_to": []
+    }
+  ]
+}
