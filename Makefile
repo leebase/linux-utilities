@@ -7,6 +7,7 @@ SRC := src/sysdiff.c
 PATHAUDIT_SRC := src/pathaudit.c
 PERMGUARD_SRC := src/permguard.c
 OPENUNLINK_SRC := src/openunlink.c
+AGENTWATCH_SRC := src/agentwatch.c
 # Permguard-only POSIX feature-test flag. Keep as a dedicated := variable so
 # callers who replace CFLAGS cannot drop the platform-header lstat prototype
 # contract (PG-PORT-505). Applied on every permguard compile/analyze route.
@@ -15,16 +16,18 @@ PERMGUARD_POSIX_CFLAGS := -D_POSIX_C_SOURCE=200809L
 # callers who replace CFLAGS cannot drop the POSIX/large-file contract.
 # Applied on every openunlink compile/analyze route.
 OPENUNLINK_PLATFORM_CFLAGS := -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64
+AGENTWATCH_PLATFORM_CFLAGS := -D_GNU_SOURCE
 # Ordinary product binary. Keep under build/ so .gitignore covers it; do not
 # emit a top-level ./sysdiff. Instrumented ASan/UBSan/Valgrind builds use mktemp.
 # pathaudit, permguard, and openunlink have no workspace binary target; quality
 # recipes compile them under mktemp.
 BIN := build/sysdiff
+AGENTWATCH_BIN := build/agentwatch
 MANPAGE := man/sysdiff.1
 PATHAUDIT_MANPAGE := man/pathaudit.1
 PERMGUARD_MANPAGE := man/permguard.1
 OPENUNLINK_MANPAGE := man/openunlink.1
-ALL_SRCS := $(SRC) $(PATHAUDIT_SRC) $(PERMGUARD_SRC) $(OPENUNLINK_SRC)
+ALL_SRCS := $(SRC) $(PATHAUDIT_SRC) $(PERMGUARD_SRC) $(OPENUNLINK_SRC) $(AGENTWATCH_SRC)
 ALL_MANPAGES := $(MANPAGE) $(PATHAUDIT_MANPAGE) $(PERMGUARD_MANPAGE) $(OPENUNLINK_MANPAGE)
 STRICT_WARNINGS := -std=c17 -Wall -Wextra -Wpedantic -Werror
 STRICT_CFLAGS := $(STRICT_WARNINGS) -O2
@@ -52,7 +55,7 @@ DISTCHECK_EPOCH := 946684800
 # full checkout still runs every tracked test; the archive carries only the
 # product tests and their source/build/documentation dependencies.
 DIST_PRODUCT_ROOTS := Makefile LICENSE README.md CHANGELOG.md SECURITY.md CONTRIBUTING.md .gitignore
-DIST_PRODUCT_SOURCES := src/sysdiff.c src/pathaudit.c src/permguard.c src/openunlink.c
+DIST_PRODUCT_SOURCES := src/sysdiff.c src/pathaudit.c src/permguard.c src/openunlink.c src/agentwatch.c
 DIST_PRODUCT_MANPAGES := man/sysdiff.1 man/pathaudit.1 man/permguard.1 man/openunlink.1
 DIST_PRODUCT_SCRIPTS := scripts/benchmark_sysdiff.py scripts/check_tools.py scripts/clang scripts/clang-tidy scripts/cppcheck scripts/ensure_tools.sh scripts/install_tools.sh scripts/smoke.sh
 DIST_PRODUCT_TESTS := tests/check_sysdiff_smoke.py tests/smoke_manifest.json tests/smoke_start.py tests/test_check_tools.py tests/test_openunlink.py tests/test_pathaudit.py tests/test_permguard.py tests/test_sysdiff.py tests/test_sysdiff.sh tests/test_sysdiff_benchmark.py tests/test_sysdiff_c_craftsmanship.py tests/test_sysdiff_fixture.sh tests/test_sysdiff_malformed_fuzz.py
@@ -87,7 +90,7 @@ RELEASE_PATHSPECS := \
 	tests \
 	scripts
 
-.PHONY: all sysdiff pathaudit permguard openunlink test check clean quality \
+.PHONY: all sysdiff pathaudit permguard openunlink agentwatch test check clean quality \
 	make-quality \
 	test-suite test-shell install uninstall dist distcheck release \
 	gcc-strict clang-strict clang-syntax format-check clang-tidy-check \
@@ -106,6 +109,12 @@ sysdiff: $(BIN)
 $(BIN): $(SRC)
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $<
+
+agentwatch: $(AGENTWATCH_BIN)
+
+$(AGENTWATCH_BIN): $(AGENTWATCH_SRC)
+	mkdir -p build
+	$(CC) $(CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o $@ $<
 
 # Non-writing pathaudit recipe: compile/link under mktemp only, then discard.
 # Does not create build/pathaudit or a top-level ./pathaudit.
@@ -176,7 +185,8 @@ gcc-strict:
 	gcc $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	gcc $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
 	gcc $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC); \
-	gcc $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
+	gcc $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC); \
+	gcc $(STRICT_CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o "$$workdir/agentwatch" $(AGENTWATCH_SRC)
 
 clang-strict:
 	@set -e; \
@@ -189,7 +199,8 @@ clang-strict:
 	clang $(STRICT_CFLAGS) -o "$$workdir/sysdiff" $(SRC); \
 	clang $(STRICT_CFLAGS) -o "$$workdir/pathaudit" $(PATHAUDIT_SRC); \
 	clang $(STRICT_CFLAGS) $(PERMGUARD_POSIX_CFLAGS) -o "$$workdir/permguard" $(PERMGUARD_SRC); \
-	clang $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
+	clang $(STRICT_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$workdir/openunlink" $(OPENUNLINK_SRC); \
+	clang $(STRICT_CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o "$$workdir/agentwatch" $(AGENTWATCH_SRC)
 
 clang-syntax:
 	@set -e; \
@@ -199,6 +210,7 @@ clang-syntax:
 			scripts/clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC); \
 			scripts/clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC); \
 			scripts/clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC); \
+			scripts/clang $(STRICT_WARNINGS) $(AGENTWATCH_PLATFORM_CFLAGS) -fsyntax-only $(AGENTWATCH_SRC); \
 		else \
 			printf 'error: clang is required for make clang-syntax\n' >&2; \
 			exit 1; \
@@ -208,6 +220,7 @@ clang-syntax:
 		clang $(STRICT_WARNINGS) -fsyntax-only $(PATHAUDIT_SRC); \
 		clang $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -fsyntax-only $(PERMGUARD_SRC); \
 		clang $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -fsyntax-only $(OPENUNLINK_SRC); \
+		clang $(STRICT_WARNINGS) $(AGENTWATCH_PLATFORM_CFLAGS) -fsyntax-only $(AGENTWATCH_SRC); \
 	fi
 
 format-check:
@@ -228,7 +241,8 @@ clang-tidy-check:
 	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(SRC) -- $(STRICT_WARNINGS); \
 	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PATHAUDIT_SRC) -- $(STRICT_WARNINGS); \
 	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(PERMGUARD_SRC) -- $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS); \
-	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(OPENUNLINK_SRC) -- $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS)
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(OPENUNLINK_SRC) -- $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS); \
+	$$CLANG_TIDY_CMD --checks='$(CLANG_TIDY_CHECKS)' --warnings-as-errors='*' $(AGENTWATCH_SRC) -- $(STRICT_WARNINGS) $(AGENTWATCH_PLATFORM_CFLAGS)
 
 cppcheck-check:
 	@set -e; \
@@ -260,7 +274,9 @@ clang-analyzer-check:
 	clang --analyze $(STRICT_WARNINGS) $(PERMGUARD_POSIX_CFLAGS) -Xclang -analyzer-werror \
 		-Xclang -analyzer-output=text -o "$$workdir/permguard" $(PERMGUARD_SRC); \
 	clang --analyze $(STRICT_WARNINGS) $(OPENUNLINK_PLATFORM_CFLAGS) -Xclang -analyzer-werror \
-		-Xclang -analyzer-output=text -o "$$workdir/openunlink" $(OPENUNLINK_SRC)
+		-Xclang -analyzer-output=text -o "$$workdir/openunlink" $(OPENUNLINK_SRC); \
+	clang --analyze $(STRICT_WARNINGS) $(AGENTWATCH_PLATFORM_CFLAGS) -Xclang -analyzer-werror \
+		-Xclang -analyzer-output=text -o "$$workdir/agentwatch" $(AGENTWATCH_SRC)
 
 man-check:
 	@warnfile=$$(mktemp /tmp/permguard-manwarn.XXXXXXXXXX) || exit 1; \
@@ -318,6 +334,7 @@ test-asan:
 	pathaudit_bin="$$workdir/pathaudit-asan"; \
 	permguard_bin="$$workdir/permguard-asan"; \
 	openunlink_bin="$$workdir/openunlink-asan"; \
+	agentwatch_bin="$$workdir/agentwatch-asan"; \
 	if ! clang $(ASAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: AddressSanitizer build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
@@ -332,6 +349,10 @@ test-asan:
 	fi; \
 	if ! clang $(ASAN_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
 		printf 'error: AddressSanitizer openunlink build failed (clang or ASan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
+	if ! clang $(ASAN_CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o "$$agentwatch_bin" $(AGENTWATCH_SRC); then \
+		printf 'error: AddressSanitizer agentwatch build failed (clang or ASan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
 	status=0; \
@@ -358,6 +379,7 @@ test-ubsan:
 	pathaudit_bin="$$workdir/pathaudit-ubsan"; \
 	permguard_bin="$$workdir/permguard-ubsan"; \
 	openunlink_bin="$$workdir/openunlink-ubsan"; \
+	agentwatch_bin="$$workdir/agentwatch-ubsan"; \
 	if ! clang $(UBSAN_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
@@ -372,6 +394,10 @@ test-ubsan:
 	fi; \
 	if ! clang $(UBSAN_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
 		printf 'error: UndefinedBehaviorSanitizer openunlink build failed (clang or UBSan runtime missing)\n' >&2; \
+		exit 1; \
+	fi; \
+	if ! clang $(UBSAN_CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o "$$agentwatch_bin" $(AGENTWATCH_SRC); then \
+		printf 'error: UndefinedBehaviorSanitizer agentwatch build failed (clang or UBSan runtime missing)\n' >&2; \
 		exit 1; \
 	fi; \
 	status=0; \
@@ -398,6 +424,7 @@ test-valgrind:
 	pathaudit_bin="$$workdir/pathaudit-valgrind"; \
 	permguard_bin="$$workdir/permguard-valgrind"; \
 	openunlink_bin="$$workdir/openunlink-valgrind"; \
+	agentwatch_bin="$$workdir/agentwatch-valgrind"; \
 	if ! gcc $(VALGRIND_CFLAGS) -o "$$tmpbin" $(SRC); then \
 		printf 'error: Valgrind debug build failed\n' >&2; \
 		exit 1; \
@@ -412,6 +439,10 @@ test-valgrind:
 	fi; \
 	if ! gcc $(VALGRIND_CFLAGS) $(OPENUNLINK_PLATFORM_CFLAGS) -o "$$openunlink_bin" $(OPENUNLINK_SRC); then \
 		printf 'error: Valgrind openunlink debug build failed\n' >&2; \
+		exit 1; \
+	fi; \
+	if ! gcc $(VALGRIND_CFLAGS) $(AGENTWATCH_PLATFORM_CFLAGS) -o "$$agentwatch_bin" $(AGENTWATCH_SRC); then \
+		printf 'error: Valgrind agentwatch debug build failed\n' >&2; \
 		exit 1; \
 	fi; \
 	status=0; \

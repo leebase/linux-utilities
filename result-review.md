@@ -1,5 +1,30 @@
 # Result Review
 
+## Agentwatch failed-run closeout — 2026-09-09
+
+Failed run `ee643f02e70a` produced the first-slice contract, implementation plan,
+`src/agentwatch.c`, focused tests, and additive Makefile integration, then
+stopped in implementation validation on two parameterizations of one assertion:
+the test searched for string `"PROCFS_UNTRUSTED"` in bytes stderr. The assertion
+now uses `b"PROCFS_UNTRUSTED"` and preserves the trusted/untrusted boundary
+semantics at 4096/4097 bytes.
+
+Manual validation also exposed and repaired two integration defects outside
+the focused failure: the run had replaced the canonical shared 21-journey
+sysdiff manifest with an agentwatch-only manifest, and the legitimate Makefile
+extension invalidated current integrity pins. The canonical manifest was
+restored unchanged; the current Makefile hash and its governed verifier/document
+pins are now
+`a4ea71c27b4a5f17db47a960a327e11d4fdebbe1a50123db7193682483c7d9f1`.
+Cppcheck requested `const struct dirent *` for the read-only procfs entry
+cursor; that const-correctness repair left behavior unchanged.
+
+Evidence: `python3 -m pytest -q tests/test_agentwatch.py` passed 102 tests;
+final `make test` passed 1229 with 19 skips; `make gcc-strict clang-strict
+clang-syntax format-check clang-tidy-check cppcheck-check
+clang-analyzer-check` exited 0. The failed run remains failed and its evidence
+was not changed. No Auto-Orch mission/run operation or new cycle occurred.
+
 ## Linux Utilities truth validation — 2026-09-07 UTC
 
 Lee-authorized validation started on clean, synchronized `main` at

@@ -1,5 +1,24 @@
 # Context
 
+## Agentwatch failed-run closeout — 2026-09-09
+
+Directed manual closeout of failed governed run `ee643f02e70a` completed the
+`agentwatch` first vertical slice without resuming, relabeling, or modifying the
+run archive. The run's only reported implementation-test defect was corrected:
+`test_proc_stat_record_size_boundary` now compares the bytes token
+`b"PROCFS_UNTRUSTED"` with bytes `CompletedProcess.stderr`. The overwritten
+shared journey manifest was restored to its canonical 21-journey sysdiff form,
+preserving delivered treehash/snslice behavior, and stale Makefile integrity
+pins were advanced to the authorized agentwatch-integrated Makefile hash
+`a4ea71c27b4a5f17db47a960a327e11d4fdebbe1a50123db7193682483c7d9f1`.
+
+Final verification: focused agentwatch `102 passed`; complete `make test`
+`1229 passed / 19 skipped / 0 failed`; GCC strict, Clang strict and syntax,
+clang-format, clang-tidy, cppcheck, and Clang static analyzer gates all exited
+0. Cppcheck's one actionable const-correctness finding was repaired. No
+Auto-Orch mission state, governed run evidence, treehash source, or snslice
+source was modified.
+
 ## Linux Utilities truth validation — 2026-09-07 UTC
 
 Lee-authorized validation started on clean, synchronized `main` at

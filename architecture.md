@@ -1,5 +1,17 @@
 # Architecture
 
+## Agentwatch
+
+`src/agentwatch.c` is a single-file Linux C17 supervisor built as
+`build/agentwatch`. It accepts one direct command, optionally bounded by timeout
+and grace values, enables `PR_SET_CHILD_SUBREAPER`, owns the command's process
+group, tracks descendants through bounded `/proc` identity scans, revalidates
+PID/starttime pairs before individual signals, and drains adopted children with
+`waitpid`. Timeout and interruption converge on bounded `SIGTERM` then
+`SIGKILL` cleanup. It has no shell insertion, daemon mode, persistence,
+networking, telemetry, or general process-discovery surface. The normative
+contract is `docs/agentwatch-first-slice-contract.md`.
+
 `sysdiff` is a single-file C17 command-line utility that compares two explicit
 plain-text snapshot files and emits a deterministic, key-sorted map diff. The
 executable is built from `src/sysdiff.c` into `build/sysdiff` by `make`. The

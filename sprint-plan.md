@@ -1,5 +1,17 @@
 # Sprint Plan
 
+## Agentwatch failed-run closeout — 2026-09-09
+
+- [x] Correct the exact bytes/string mismatch in the 4096/4097-byte procfs
+  record boundary test while preserving its trusted/untrusted semantics.
+- [x] Restore the canonical shared 21-journey manifest and refresh authorized
+  Makefile integrity pins without changing treehash or snslice source.
+- [x] Verify focused agentwatch: 102 passed; full suite: 1229 passed, 19
+  skipped; GCC/Clang strict compilation, syntax, format, tidy, cppcheck, and
+  Clang analyzer gates: exit 0.
+- [x] Close the candidate manually without touching Auto-Orch state, run
+  evidence, or starting another governed cycle.
+
 ## Linux Utilities truth validation — 2026-09-07 UTC
 
 - [x] Explain the original six oracle failures from preserved evidence and test

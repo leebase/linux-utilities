@@ -1,5 +1,19 @@
 # Where Am I
 
+## Agentwatch first vertical slice
+
+The workspace now contains the manually closed candidate from failed governed
+run `ee643f02e70a`: `agentwatch [--timeout SECONDS] [--grace SECONDS] --
+COMMAND [ARG...]`, a Linux C17 child-subreaper supervisor with bounded procfs
+observation, owned-process-group termination, PID/starttime revalidation,
+TERM-to-KILL escalation, and synchronous adopted-child reaping. The failed run
+record remains failed and unmodified.
+
+Focused agentwatch validation passes 102 tests. The complete suite passes 1229
+with 19 skips. GCC and Clang strict links, Clang syntax, format, clang-tidy,
+cppcheck, and Clang analyzer gates all pass. Shared journey state remains the
+canonical 21 sysdiff journeys; treehash and snslice source are unchanged.
+
 ## pathaudit PA-W1 Open-Repair Maintenance
 
 Governed run `c9e3de33f46b` (`pathaudit_open_repair_maintenance`) closed Low
