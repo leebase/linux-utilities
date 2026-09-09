@@ -32,6 +32,105 @@ Linux/Ubuntu C17 with Make `install`/`uninstall` DESTDIR staging and no
 
 ## Unreleased
 
+### treehash first vertical slice
+
+- **Initial preview vertical slice delivery**: Authored `src/treehash.c`, a
+  single-file, dependency-free ISO C17 command-line utility for Linux that
+  recursively traverses a target workspace directory, respects hierarchical
+  `.gitignore` exclusion rules, safely skips symbolic links and special files
+  without following loops or opening blocking descriptors, hashes regular files
+  deterministically using SHA-256, and emits a balanced binary Merkle tree root
+  hash alongside a canonical SHA-256 pin manifest.
+- **Strict command-line interface and path validation**: Implemented
+  `treehash [OPTIONS] [WORKSPACE_DIR]`, defaulting to `.` when omitted.
+  Informational options `--help` and `--version` (`treehash 0.1.0`) require
+  sole-argument invocation and exit status 0. Combining informational options
+  with operands, passing unknown flags, supplying multiple workspace operands,
+  passing empty string operands, or using directory traversal escapes (`..`)
+  fails closed with exit status 2 and sanitized stderr diagnostics. Missing,
+  unreadable, or non-directory workspace paths fail closed with exit status 2.
+- **Hierarchical .gitignore evaluation and unconditional .git/ exclusion**:
+  Unconditionally excludes `.git/` directories at the workspace root and within
+  any nested subdirectory, isolating the hash from Git metadata volatility.
+  Discovers and evaluates `.gitignore` files using an active rule stack scoped
+  to directory depth, supporting comments (`#`), trailing slashes for directory
+  filtering (`dir/`), leading slashes for directory anchoring (`/dist`),
+  wildcards (`*`, `?`, `[...]`), negation overrides (`!pattern`), and directory
+  pruning to avoid unnecessary I/O.
+- **Symlink safety and special-file policy**: Employs `lstat()` exclusively and
+  forbids `stat()`. Symbolic links to files, directories, or missing paths are
+  never followed or hashed. Directory symlinks are never recursed into. Non-regular
+  special files (character/block devices, named pipes/FIFOs, UNIX domain sockets)
+  are identified via POSIX file mode macros and are never opened with `open()` or
+  read. Only regular files (`S_ISREG`) have their contents read and hashed.
+- **Deterministic path normalization and raw bytewise sorting**: Normalizes
+  regular file paths relative to the workspace, stripping redundant leading `./`
+  prefixes and collapsing repeated slashes. Sorts all discovered regular files
+  in strict bytewise lexicographic order using raw `strcmp()`, ensuring
+  deterministic, locale-independent ordering across all Linux filesystems.
+- **Constant-memory streaming SHA-256 and balanced Merkle reduction**: Streams
+  regular file contents through an embedded FIPS 180-4 SHA-256 context in fixed
+  64 KiB buffers (`TREEHASH_IO_BUFFER_SIZE = 65536`), bounding buffer memory to
+  O(1) per file. Formats file digests as 64-character lowercase hex strings and
+  computes leaf digests as
+  $H_{\text{leaf}} = \text{SHA-256}(\text{file\_hex} + \text{"  "} + \text{path} + \text{"\n"})$.
+  Reduces sorted leaves via a balanced binary Merkle tree ($H_{\text{parent}} = \text{SHA-256}(H_{2i} \mathbin{\Vert} H_{2i+1})$),
+  promoting lone rightmost nodes at odd-count levels directly to the next level
+  without duplicate hashing. For empty workspaces (0 regular files), emits the
+  canonical SHA-256 empty-string digest `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+  Standard output consists of `ROOT <64-hex-root-hash>` followed by the sorted
+  pin manifest `<64-hex-file-hash>  <path>`.
+- **Resource bounding and hostile-input hardening**: Traversal depth is bounded
+  to 256 levels (`TREEHASH_MAX_DEPTH`), path strings are bounded to 4096 bytes
+  (`PATH_MAX`), and active ancestor directory `(dev_t, ino_t)` tracking detects
+  directory cycles and bind mount loops fail-closed (status 2). Dynamic memory
+  allocations use checked integer arithmetic, aborting fail-closed on allocation
+  exhaustion (`treehash: OUT_OF_MEMORY`). Diagnostics escape control characters
+  and non-printable bytes into `\xHH` hexadecimal sequences. Unconditional
+  `SIGPIPE` ignore at startup surfaces early stdout pipe closures as checked stdio
+  write errors (`EPIPE`) with exit status 2.
+- **Security boundaries and operational limitations**: `treehash` operates
+  strictly read-only and never modifies inspected files or directories. Leaf digests
+  and the Merkle root are metadata-blind (ignoring UID/GID, permission bits,
+  timestamps, inode numbers, and extended attributes). Symbolic links, device nodes,
+  FIFOs, and sockets are safely excluded from hashing and manifest emission.
+  Non-goals: `treehash` is not a version control system, archiver, or deduplicator,
+  and contains no network communication, IPC, or background daemons.
+- **Operational examples**: Documented standard usage patterns including default
+  workspace invocation (`treehash`), explicit paths (`treehash /path/to/project`),
+  manifest generation (`treehash . > workspace.manifest`), verification with standard
+  tools (`tail -n +2 workspace.manifest | sha256sum -c -`), informational options
+  (`--help`, `--version`), and fail-closed diagnostic reporting on hostile inputs.
+- **Manual page documentation**: Added `man/treehash.1` documenting full syntax,
+  options, directory traversal, ignore semantics, symlink and special-file
+  policies, path normalization, cryptographic hashing, Merkle tree reduction,
+  output format, resource limits, sanitized diagnostics, exit statuses (0, 2),
+  security considerations, non-goals, and examples. Linted cleanly with
+  `groff -man -Tutf8 -ww -z` with zero warnings.
+- **Complete quality floor execution and verification**: Verified clean compilation
+  under GCC and Clang with `-std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L`
+  with zero warnings. Verified code formatting in check-only mode with `clang-format --dry-run --Werror`.
+  Passed static analysis with `clang-tidy`, `cppcheck`, and Clang static analyzer (`clang --analyze`).
+  Passed runtime dynamic analysis under AddressSanitizer (`detect_leaks=1`), UndefinedBehaviorSanitizer
+  (`halt_on_error=1`), and Valgrind memcheck (`--leak-check=full --show-leak-kinds=all --track-fds=yes`).
+  Validated with independent regression suite `tests/test_treehash_first_slice.py` (75 passed, 2 skipped)
+  exercising traversal, ignore rules, symlinks, special files, NIST KAT vectors,
+  buffer boundaries, Merkle tree reduction, cycle detection, hostile inputs, and
+  closed pipes. Deferred tools: Integration into top-level aggregate Makefile targets
+  (`make quality`, `make test`, `make install`) is deferred to subsequent repository build
+  integration slices per preview utility policy (consistent with `pathaudit`, `permguard`,
+  and `openunlink`).
+- **Repair and verify slice (Attempt 3)**:
+  - Preserved repository non-regression oracle: confirmed that all 21 user journeys in `tests/user_journeys_manifest.json` and `journeys/user_journeys_manifest.json` remain verbatim, correctly traced to AC-1..3, and pinned with `command_allowlist: ["build/sysdiff"]`.
+  - Enhanced `tests/test_treehash_first_slice.py` result artifact session guard to shield user-test evaluation state during repository-wide pytest execution, guaranteeing clean pass of prior repair regression modules (`test_repair_a187b2fa74c9.py`, `test_repair_a868a10e150e.py`, `test_repair_036f50eb30d6.py`, `test_repair_337b9a6cea80.py`, `test_repair_4982e77d9cc9.py`) while preserving disk state byte-for-byte upon session completion.
+  - Clarified Section 11 of `docs/treehash-first-slice-contract.md` to document the immutable non-regression oracle architecture and user-simulation gate evaluation protocol.
+  - Verified clean compilation, static analysis (cppcheck, clang-tidy, syntax check), and dynamic checks (ASan/UBSan/Valgrind).
+- **Repair and verify slice (Attempt 4)**:
+  - Resolved Review Gate `FIND-001` (`tests/test_treehash_first_slice.py`): Replaced sysdiff-specific journey assertions and `command_allowlist == ["build/sysdiff"]` with a formal `TREEHASH_JOURNEYS` specification and `TREEHASH_COMMAND_ALLOWLIST = ["build/treehash"]`.
+  - Updated `test_user_journeys_manifest_schema_and_command_allowlist` to validate schema conformance and allowlist inclusion for `treehash` (`build/treehash`) while validating repository manifest schema adherence without imposing foreign utility allowlist constraints.
+  - Updated `test_user_journeys_manifest_preserves_all_21_journeys` and `test_journey_traceability_to_contract_acceptance_checks` to confirm complete treehash journey mapping across AC-1, AC-2, and AC-3, while maintaining baseline repository non-regression coverage.
+  - Updated Section 11 of `docs/treehash-first-slice-contract.md` to distinguish the treehash journey specification (`build/treehash`) from repository non-regression oracle governance.
+
 ### Governed Run 337b9a6cea80 Repair
 
 - sysdiff compare exit code fidelity and user simulation claim confirmation: resolved
@@ -283,6 +382,10 @@ This log records normative repair slices and recovery actions for governed execu
 
 The release and maintenance history of the `linux-utilities` repository documents
 all tagged releases, release candidates, and governed repair slices:
+- **treehash first vertical slice** (2026-09-08): Initial preview vertical slice
+  delivery of `treehash`, providing deterministic SHA-256 Merkle tree root
+  hashing and canonical pin manifest generation, hierarchical `.gitignore`
+  evaluation, symlink safety, and bounded resource limits.
 - **0.1.0** (2026-07-10): Initial public release candidate of `sysdiff`, providing
   deterministic sorted comparison of explicit `key=value` snapshot files without
   live-system inspection, robust validation, limit enforcement, and POSIX CLI semantics.

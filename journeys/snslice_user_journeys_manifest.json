@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "command_allowlist": [
+    "tmp/snslice"
+  ],
+  "journeys": [
+    {
+      "name": "A user asks snslice for help via sole-argument --help and receives command synopsis and option documentation on stdout with exit status 0",
+      "authority": "author",
+      "traces_to": [
+        "AC-1"
+      ]
+    },
+    {
+      "name": "A user queries the version of snslice via sole-argument --version and observes canonical version metadata on stdout with exit status 0",
+      "authority": "author",
+      "traces_to": [
+        "AC-1"
+      ]
+    },
+    {
+      "name": "A user invokes snslice with invalid option combinations or missing chunk limits and observes fail-closed usage diagnostics on stderr with exit status 2",
+      "authority": "author",
+      "traces_to": [
+        "AC-1"
+      ]
+    },
+    {
+      "name": "An operator streams a large multi-gigabyte dataset through snslice and verifies that resident memory consumption remains strictly bounded and constant",
+      "authority": "mission",
+      "traces_to": [
+        "AC-2"
+      ]
+    },
+    {
+      "name": "A data engineer streams NDJSON records with mixed LF and CRLF line delimiters and confirms that chunks are split strictly on complete record boundaries without truncating JSON objects",
+      "authority": "author",
+      "traces_to": [
+        "AC-3"
+      ]
+    },
+    {
+      "name": "A user slices a CSV dataset containing multiline quoted fields with embedded newlines and commas and verifies that records spanning physical lines remain intact within single chunks",
+      "authority": "human",
+      "traces_to": [
+        "AC-4"
+      ]
+    },
+    {
+      "name": "A user slices an RFC 4180 CSV stream containing escaped double quotes inside quoted fields and verifies that quotes are preserved without prematurely triggering record boundaries",
+      "authority": "author",
+      "traces_to": [
+        "AC-4"
+      ]
+    },
+    {
+      "name": "A pipeline script configures custom output directories and prefixes and verifies that chunk files are created sequentially with deterministic five-digit zero-padded numbering",
+      "authority": "mission",
+      "traces_to": [
+        "AC-5"
+      ]
+    },
+    {
+      "name": "A user attempts to slice into an output directory where a chunk file already exists and observes immediate fail-closed termination with OUTPUT_COLLISION preventing overwrite",
+      "authority": "author",
+      "traces_to": [
+        "AC-6"
+      ]
+    },
+    {
+      "name": "A user passes an empty zero-byte input stream to snslice and verifies clean exit status 0 with zero chunk files created on disk",
+      "authority": "human",
+      "traces_to": [
+        "AC-7"
+      ]
+    },
+    {
+      "name": "A user supplies a malformed CSV stream with an unterminated quoted field reaching end-of-file and observes fail-closed exit status 2 with MALFORMED_CSV diagnostic",
+      "authority": "author",
+      "traces_to": [
+        "AC-8"
+      ]
+    },
+    {
+      "name": "A user supplies an NDJSON stream containing an oversized record exceeding the record length limit and observes fail-closed exit status 2 with RECORD_LENGTH_LIMIT",
+      "authority": "author",
+      "traces_to": [
+        "AC-8"
+      ]
+    },
+    {
+      "name": "An operator simulates a write failure due to disk exhaustion and confirms that snslice unlinks the incomplete partial chunk and exits with status 2",
+      "authority": "mission",
+      "traces_to": [
+        "AC-9"
+      ]
+    },
+    {
+      "name": "A security auditor feeds hostile filenames and non-printable control byte sequences and verifies that diagnostic stderr messages escape bytes into hexadecimal notation",
+      "authority": "human",
+      "traces_to": [
+        "AC-10"
+      ]
+    },
+    {
+      "name": "A test engineer exercises invalid formats, missing files, and directory paths to verify that all errors map deterministically to the closed hazard taxonomy and exit status 2",
+      "authority": "author",
+      "traces_to": [
+        "AC-11"
+      ]
+    },
+    {
+      "name": "A developer builds snslice with strict GCC and Clang compiler warnings and runs dynamic sanitizers and Valgrind memcheck to ensure zero memory defects",
+      "authority": "author",
+      "traces_to": [
+        "AC-12"
+      ]
+    },
+    {
+      "name": "A maintainer validates that the synchronized user journeys manifest adheres to canonical schema and maps completely to all contract acceptance checks",
+      "authority": "author",
+      "traces_to": [
+        "AC-13"
+      ]
+    },
+    {
+      "name": "An exploratory tester fuzzes snslice with high-frequency boundary conditions including 1-byte limits and rapid stdin EOF transitions to confirm streaming robustness",
+      "authority": "exploratory",
+      "traces_to": [
+        "AC-2",
+        "AC-3",
+        "AC-4"
+      ]
+    }
+  ]
+}

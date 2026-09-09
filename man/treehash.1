@@ -1,0 +1,452 @@
+.\" Copyright (c) 2026 Lee Harrington
+.\" SPDX-License-Identifier: MIT
+.TH TREEHASH 1 "2026-09-08" "treehash 0.1.0" "User Commands"
+.SH NAME
+treehash \(em compute deterministic SHA-256 Merkle tree root hash and pin manifest
+.SH SYNOPSIS
+.B treehash
+.RI [ OPTIONS ]
+.RI [ WORKSPACE_DIR ]
+.P
+.B treehash \-\-help
+.P
+.B treehash \-\-version
+.SH DESCRIPTION
+.B treehash
+is an intentionally small, auditable, dependency\-free ISO C17 command\-line
+utility for Linux that recursively walks a workspace directory, respects
+hierarchical
+.B .gitignore
+exclusion rules, hashes regular files deterministically using SHA\-256, and emits
+a stable Merkle\-style root hash alongside a canonical SHA\-256 pin manifest.
+.P
+When
+.I WORKSPACE_DIR
+is omitted, it defaults to the current working directory
+.RB ( . ).
+.P
+.B treehash
+adheres strictly to the Unix philosophy: doing one job cleanly and predictably,
+without hidden background services, daemons, IPC, telemetry, or external
+runtime dependencies beyond standard ISO C17 libc and POSIX.1\-2008 system
+interfaces.
+It performs pure read\-only inspection and never alters files, timestamps, or
+permissions.
+.SH OPTIONS
+.TP
+.B \-\-help
+Print usage guidance to standard output and exit with status
+.BR 0 .
+Must be supplied as the sole argument; combining
+.B \-\-help
+with other options or operands is an error (exit status
+.BR 2 ).
+.TP
+.B \-\-version
+Print version information
+.RB ( "treehash 0.1.0" )
+to standard output and exit with status
+.BR 0 .
+Must be supplied as the sole argument; combining
+.B \-\-version
+with other options or operands is an error (exit status
+.BR 2 ).
+.SH OPERANDS
+.TP
+.I WORKSPACE_DIR
+Target root directory to inspect and hash.
+If omitted, defaults to
+.RB \(lq . \(rq
+(the current working directory).
+Specifying multiple directory operands, an empty string operand, or an unknown
+option flag fails closed with exit status
+.BR 2 .
+Any attempt to specify a path containing relative directory traversal escapes
+.RB ( .. )
+is rejected fail\-closed as a path escape with exit status
+.BR 2 .
+.SH DIRECTORY TRAVERSAL
+Directory traversal begins at
+.I WORKSPACE_DIR
+and navigates all accessible subdirectories recursively:
+.IP \(bu 3
+.B Unconditional .git/ Exclusion:
+Any directory named
+.B .git
+is ignored unconditionally at the workspace root and at every nested
+subdirectory level.
+Traversal never descends into
+.BR .git/ ,
+preventing Git metadata volatility (such as index locks, pack updates, or reflogs)
+from altering the workspace hash.
+.IP \(bu 3
+.B Deterministic Traversal Depth:
+Directory recursion is bounded to a maximum depth of 256 levels
+.RB ( TREEHASH_MAX_DEPTH ).
+If this depth limit is reached, traversal terminates immediately fail\-closed
+with diagnostic
+.B treehash: RECURSION_DEPTH_EXCEEDED
+and exit status
+.BR 2 .
+.IP \(bu 3
+.B Ancestor Cycle Detection:
+The walker tracks device and inode numbers
+.RB ( st_dev ,
+.BR st_ino )
+of active ancestor directories up to the recursion depth limit.
+If an ancestor directory is revisited (such as via recursive bind mounts or
+directory hard link cycles), traversal terminates immediately fail\-closed with
+diagnostic
+.BI "treehash: CYCLE_DETECTED: \(dq" PATH \(dq
+and exit status
+.BR 2 .
+.IP \(bu 3
+.B Path Length Limits:
+Constructed filesystem paths are bounded to 4096 bytes
+.RB ( PATH_MAX ).
+Paths exceeding this limit fail closed with diagnostic
+.B treehash: PATH_LENGTH_EXCEEDED
+and exit status
+.BR 2 .
+.SH IGNORE RULES (.GITIGNORE)
+.B treehash
+discovers and evaluates hierarchical
+.B .gitignore
+files found within the workspace:
+.IP \(bu 3
+As traversal enters a directory, any
+.B .gitignore
+file inside that directory is parsed and its rules are pushed onto an active
+ignore stack tagged with the current directory depth.
+.IP \(bu 3
+When traversal exits a directory, all ignore rules associated with that depth
+are popped and released.
+.IP \(bu 3
+Supported rule semantics:
+.RS 3
+.IP \(bu 3
+Blank lines and lines starting with
+.B #
+are ignored as comments.
+.IP \(bu 3
+Trailing slashes (for example,
+.BR build/ )
+restrict matching strictly to directories.
+.IP \(bu 3
+Wildcards:
+.B *
+matches zero or more characters (except slashes),
+.B ?
+matches any single character (except slashes), and
+.B [...]
+matches character classes via
+.BR fnmatch (3).
+.IP \(bu 3
+Leading slashes (for example,
+.BR /dist )
+anchor matching to the directory level where the enclosing
+.B .gitignore
+file resides.
+.IP \(bu 3
+Negation rules: Patterns prefixed with
+.B !
+re\-include previously excluded paths, allowing selective overrides.
+.IP \(bu 3
+.B Directory Pruning:
+When an entire directory matches an exclusion rule, traversal skips descending
+into that directory entirely, eliminating unnecessary I/O.
+.RE
+.SH SYMBOLIC LINKS AND SPECIAL FILES
+To guard against infinite loops, out\-of\-tree escapes, and process blocking:
+.IP \(bu 3
+All filesystem inspections use
+.BR lstat (2)
+exclusively.
+The
+.BR stat (2)
+system call is never invoked, ensuring symbolic links are never traversed or
+resolved to their targets.
+.IP \(bu 3
+.B Symbolic Links:
+Evaluated via
+.BR S_ISLNK .
+Symbolic links (whether pointing to files, directories, or nonexistent targets)
+are never followed.
+Directory symlinks are never recursed into, preventing symlink loops and workspace
+boundary escapes.
+Symbolic links are excluded from leaf hashing and do not appear in the pin manifest.
+.IP \(bu 3
+.B Special Files:
+Character device nodes
+.RB ( S_ISCHR ),
+block device nodes
+.RB ( S_ISBLK ),
+named pipes / FIFOs
+.RB ( S_ISFIFO ),
+and UNIX domain sockets
+.RB ( S_ISSOCK )
+are identified via POSIX mode macros and are never opened with
+.BR open (2)
+or read.
+This prevents process hangs and blocking I/O.
+All special files are excluded from leaf hashing and the pin manifest.
+.IP \(bu 3
+.B Regular Files Only:
+Only filesystem entries conforming to
+.BR S_ISREG
+have their contents read and hashed.
+.SH PATH NORMALIZATION AND SORTING
+.IP \(bu 3
+.B Path Normalization:
+All regular file paths are normalized relative to
+.IR WORKSPACE_DIR .
+Redundant leading
+.B ./
+prefixes are stripped, consecutive slashes
+.RB ( // )
+are collapsed into single slashes
+.RB ( / ),
+and paths are canonicalized without relative directory escapes
+.RB ( .
+or
+.BR .. ).
+.IP \(bu 3
+.B Bytewise Lexicographic Sorting:
+Directory enumeration order from
+.BR readdir (3)
+is treated as untrusted and filesystem\-dependent.
+All eligible regular file entries are accumulated into memory and sorted in
+strict bytewise lexicographic order using raw
+.BR strcmp (3).
+This ensures deterministic, locale\-independent, and platform\-reproducible
+ordering across all Linux filesystems.
+.SH CRYPTOGRAPHIC HASHING AND MERKLE TREE
+.IP \(bu 3
+.B Streaming SHA\-256:
+File contents are read and hashed using an embedded FIPS 180\-4 SHA\-256
+implementation in fixed 64\|KiB streaming chunks
+.RB ( TREEHASH_IO_BUFFER_SIZE\ =\ 65536 ).
+Files of arbitrary size are hashed in constant O(1) memory per file.
+.IP \(bu 3
+.B Leaf Digest Computation:
+For each sorted regular file, its 32\-byte raw SHA\-256 content digest is formatted
+as a 64\-character lowercase hexadecimal string.
+The leaf record digest
+.I H_leaf
+is computed by hashing the canonical manifest line:
+.RS 3
+.P
+.IR H_leaf\ =\  SHA\-256(file_hex\ +\ \(dq\ \ \(dq\ +\ rel_path\ +\ \(dq\en\(dq)
+.RE
+.IP \(bu 3
+.B Binary Merkle Tree Reduction:
+Sorted leaf digests form the base level (Level 0) of a binary Merkle tree:
+.RS 3
+.IP \(bu 3
+Consecutive adjacent pairs
+.RI ( H_2i ,
+.IR H_2i+1 )
+in raw 32\-byte binary form are concatenated (64 bytes total) and hashed:
+.IR H_parent\ =\  SHA\-256( H_2i\  ||\  H_2i+1 ).
+.IP \(bu 3
+At any level with an odd number of nodes, the lone rightmost node is promoted
+directly to the next level without duplicate hashing.
+.IP \(bu 3
+Iterative reduction continues level\-by\-level until a single 32\-byte binary root
+digest is obtained, rendered as a 64\-character lowercase hexadecimal string.
+.IP \(bu 3
+.B Empty Workspace:
+For an empty workspace containing zero eligible regular files, the root hash is
+the canonical SHA\-256 digest of the empty string:
+.BR e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 .
+.RE
+.SH OUTPUT FORMAT
+Output is emitted strictly to standard output:
+.P
+.RS
+.nf
+ROOT <64\-hex\-root\-hash>
+<64\-hex\-file\-hash>  <normalized\-relative\-path>
+\&...
+.fi
+.RE
+.P
+The first line contains
+.B ROOT
+followed by a single space and the 64\-character lowercase hexadecimal Merkle
+tree root hash.
+.P
+Each subsequent line represents one regular file, consisting of its 64\-character
+lowercase hexadecimal SHA\-256 content digest, followed by exactly two ASCII
+spaces
+.RB ( \(dq\ \ \(dq ),
+followed by its normalized relative path, terminated by a newline
+.RB ( \en ).
+Entries are printed in strict bytewise lexicographic order of relative paths.
+.SH DIAGNOSTICS
+Diagnostic messages are printed strictly to standard error.
+All paths, arguments, and untrusted strings rendered to standard error are
+sanitized:
+non\-printable ASCII bytes (bytes less than 0x20 or greater than 0x7E),
+backslashes
+.RB ( \e ),
+and double quotes
+.RB ( \(dq )
+are escaped to uppercase
+.BI \ex HH
+hexadecimal sequences, preventing ANSI terminal control sequence injection.
+.P
+Common diagnostic messages include:
+.TP
+.B treehash: unknown option '\fIopt\fR'
+An unrecognized option flag was passed on the command line.
+.TP
+.B treehash: too many arguments; expected at most one workspace directory
+More than one directory operand was provided.
+.TP
+.B treehash: invalid empty workspace directory
+An empty string
+.RB ( \(dq\(dq )
+was passed as the workspace directory operand.
+.TP
+.BI "treehash: PATH_ESCAPE: \(dq" PATH "\(dq"
+The directory operand contains relative traversal escape segments
+.RB ( .. ).
+.TP
+.B treehash: PATH_LENGTH_EXCEEDED
+A filesystem path exceeded 4096 bytes
+.RB ( PATH_MAX ).
+.TP
+.B treehash: RECURSION_DEPTH_EXCEEDED
+Directory traversal exceeded the maximum recursion depth limit of 256.
+.TP
+.BI "treehash: CYCLE_DETECTED: \(dq" PATH "\(dq"
+A directory loop or cyclic filesystem structure was encountered.
+.TP
+.BI "treehash: cannot access '\fIPATH\fR': " REASON
+The workspace directory does not exist or permission was denied.
+.TP
+.BI "treehash: '\fIPATH\fR': Not a directory"
+The target workspace path is not a directory.
+.TP
+.BI "treehash: cannot read '\fIPATH\fR': " REASON
+A file could not be opened or read during traversal.
+.TP
+.B treehash: OUT_OF_MEMORY
+Heap memory allocation failed during execution.
+.SH EXIT STATUS
+.TP
+.B 0
+Success: the workspace was walked, regular files were hashed, and the root hash
+and pin manifest were emitted to standard output; or a sole informational option
+.RB ( \-\-help ,
+.BR \-\-version )
+was executed successfully.
+.TP
+.B 1
+Reserved for operational notice or hash mismatch in future verification modes.
+.TP
+.B 2
+Operational or usage failure: command\-line syntax error, target path missing or
+not a directory, permission denied, recursion depth or path length limit
+exceeded, directory cycle detected, memory allocation failure, or standard
+output write/flush failure.
+.P
+.B SIGPIPE
+is ignored unconditionally via POSIX
+.BR signal (2)
+at startup.
+If standard output is closed prematurely by a downstream consumer (such as
+.BR head (1)),
+the resulting pipe error surfaces as a checked stdio write failure with exit
+status
+.BR 2 .
+.SH SECURITY AND LIMITATIONS
+.IP \(bu 3
+.B Metadata Immunity:
+Only regular file byte content and relative path strings contribute to the
+Merkle root hash and leaf digests.
+File modification times, permission modes, ownership (UID/GID), inode numbers,
+and extended attributes are not hashed, ensuring reproducible hashes across
+clones and environments.
+.IP \(bu 3
+.B Excluded Objects:
+Symbolic links, directory symlinks, character devices, block devices, named
+pipes (FIFOs), and UNIX domain sockets are not hashed and do not appear in the
+pin manifest.
+.B treehash
+is not a general\-purpose archival tool (such as
+.BR tar (1)).
+.IP \(bu 3
+.B Non\-Goals:
+.B treehash
+is not a version control system and does not manage branches, commits, or
+staging areas.
+It does not perform remote networking, socket communication, or telemetry.
+It does not run background daemons or filesystem watchers.
+It does not write persistent index files, caches, or databases to disk.
+It does not require elevated privileges
+.RB ( sudo
+or capabilities).
+.SH EXAMPLES
+Compute Merkle root hash and pin manifest for current directory:
+.P
+.RS
+.nf
+treehash
+.fi
+.RE
+.P
+Compute Merkle root hash and pin manifest for a specific workspace:
+.P
+.RS
+.nf
+treehash /path/to/project
+.fi
+.RE
+.P
+Save the manifest to a file for integrity auditing:
+.P
+.RS
+.nf
+treehash . > workspace.manifest
+.fi
+.RE
+.P
+Verify file contents using standard
+.BR sha256sum (1):
+.P
+.RS
+.nf
+tail \-n +2 workspace.manifest | sha256sum \-c \-
+.fi
+.RE
+.P
+Display usage help:
+.P
+.RS
+.nf
+treehash \-\-help
+.fi
+.RE
+.P
+Display version information:
+.P
+.RS
+.nf
+treehash \-\-version
+.fi
+.RE
+.SH SEE ALSO
+.BR sha256sum (1),
+.BR git (1),
+.BR fnmatch (3),
+.BR lstat (2)
+.SH AUTHOR
+Lee Harrington
+.SH COPYRIGHT
+Copyright \(co 2026 Lee Harrington.
+.B treehash
+is released under the MIT License.
+.SH VERSION
+treehash 0.1.0 (2026\-09\-08)

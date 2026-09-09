@@ -2,7 +2,7 @@
 
 ## Overview
 
-Linux Utilities provides small, auditable command-line tools for Linux system administration, inspection, and verification. Each utility is written in a single C17 source file, has no runtime dependencies, performs no networking or telemetry, and does not run a background service. The released `sysdiff` utility compares explicit `key=value` system snapshots deterministically and reports differences with precise exit codes (0 for identical snapshots, 1 for detected differences, and 2 for operational or file errors). Preview utilities include `pathaudit`, `permguard`, and `openunlink`.
+Linux Utilities provides small, auditable command-line tools for Linux system administration, inspection, and verification. Each utility is written in a single C17 source file, has no runtime dependencies, performs no networking or telemetry, and does not run a background service. The released `sysdiff` utility compares explicit `key=value` system snapshots deterministically and reports differences with precise exit codes (0 for identical snapshots, 1 for detected differences, and 2 for operational or file errors). Preview utilities include `pathaudit`, `permguard`, `openunlink`, and `treehash`.
 
 | Utility | Purpose | Status |
 | --- | --- | --- |
@@ -10,6 +10,7 @@ Linux Utilities provides small, auditable command-line tools for Linux system ad
 | [`pathaudit`](docs/pathaudit.md) | Find risky, missing, or shadowed entries in command search paths | Preview |
 | [`permguard`](docs/permguard.md) | Report dangerous permission bits on explicitly named paths | Preview |
 | [`openunlink`](docs/openunlink.md) | Report stable zero-link regular files held open by one process | Preview |
+| [`treehash`](docs/treehash-first-slice-contract.md) | Compute deterministic SHA-256 Merkle tree root hash and pin manifest | Preview |
 
 The preview tools are available as reviewed source with tests and manual
 pages. They are intentionally not included in the `sysdiff` installation or
@@ -17,7 +18,7 @@ release package yet.
 
 ## Quick start
 
-Clone the repository and compile all three tools:
+Clone the repository and compile the tools:
 
 ```sh
 git clone https://github.com/leebase/linux-utilities.git
@@ -34,6 +35,9 @@ cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
 cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
   -D_POSIX_C_SOURCE=200809L -D_FILE_OFFSET_BITS=64 \
   -o build/openunlink src/openunlink.c
+cc -std=c17 -Wall -Wextra -Wpedantic -Werror -O2 \
+  -D_POSIX_C_SOURCE=200809L \
+  -o build/treehash src/treehash.c
 ```
 
 Try the built-in help:
@@ -43,6 +47,7 @@ Try the built-in help:
 ./build/pathaudit --help
 ./build/permguard --help
 ./build/openunlink --help
+./build/treehash --help
 ```
 
 `make` remains the supported build and installation path for the released
@@ -66,6 +71,8 @@ for staged or custom installations.
   examples, and limitations.
 - [openunlink guide](docs/openunlink.md) — one-process descriptor scans,
   zero-link semantics, output, and limitations.
+- [treehash contract](docs/treehash-first-slice-contract.md) — deterministic
+  Merkle root hash, .gitignore traversal, symlink safety, and SHA-256 pin manifest.
 
 Traditional section-1 manual pages are also included:
 
@@ -74,6 +81,7 @@ man -l man/sysdiff.1
 man -l man/pathaudit.1
 man -l man/permguard.1
 man -l man/openunlink.1
+man -l man/treehash.1
 ```
 
 ## Test and inspect
@@ -298,6 +306,230 @@ does not terminate processes, and is not installed or packaged by this
 preview. See [`docs/openunlink.md`](docs/openunlink.md),
 [`man/openunlink.1`](man/openunlink.1), and the authority contract in
 [`docs/sixth-utility-capability-contract.md`](docs/sixth-utility-capability-contract.md).
+
+## treehash
+
+`treehash` is a preview ISO C17 command-line utility for Linux that recursively
+walks a target workspace directory, respects hierarchical `.gitignore` exclusion
+rules, safely ignores directory symlinks and non-regular special files without
+following loops or opening blocking descriptors, hashes regular files
+deterministically using SHA-256, and emits a balanced binary Merkle tree root
+hash alongside a canonical SHA-256 pin manifest.
+
+The first release-quality vertical slice is compiled directly from
+`src/treehash.c` and is completely dependency-free, relying exclusively on
+standard ISO C17 library facilities and POSIX.1-2008 system interfaces
+(`opendir`, `readdir`, `closedir`, `lstat`, `open`, `read`, `close`). It embeds a
+self-contained, standard-compliant implementation of the SHA-256 cryptographic
+hash function (FIPS 180-4). In adherence to the repository constraints,
+`treehash` performs pure read-only inspection: it has no runtime services,
+daemons, IPC, telemetry, network access, or persistent disk indices.
+
+### Command-line interface and path validation
+
+`treehash` implements the strict CLI form:
+
+```sh
+treehash [OPTIONS] [WORKSPACE_DIR]
+```
+
+- `WORKSPACE_DIR`: An optional single operand specifying the target workspace
+  root directory. When omitted, it defaults to the current working directory
+  (`.`).
+- Informational options: Sole-argument `--help` outputs usage guidance to stdout
+  and exits status `0`. Sole-argument `--version` outputs version metadata
+  (`treehash 0.1.0`) to stdout and exits status `0`.
+- Fail-closed argument validation: Combining `--help` or `--version` with
+  operands, passing unrecognized options (flags beginning with `-`), providing
+  more than one directory operand, passing an empty string operand (`""`), or
+  supplying directory paths containing relative directory traversal escapes
+  (`..`) fails closed with exit status `2` and sanitized stderr diagnostics.
+  If the specified workspace path does not exist, is inaccessible, or is not a
+  directory, `treehash` exits with status `2`.
+
+### Traversal and ignore semantics
+
+Directory traversal navigates all accessible subdirectories recursively:
+
+- **Unconditional `.git/` Pruning**: Any directory named `.git` is ignored
+  unconditionally at the workspace root and at every nested subdirectory level.
+  Traversal never descends into `.git/`, guaranteeing that Git metadata
+  volatility (index locks, pack updates, reflogs) does not alter the hash.
+- **Hierarchical `.gitignore` Evaluation**: Discovers and evaluates
+  `.gitignore` files located at the workspace root and within nested
+  subdirectories using a scoped rule stack. Supported semantics include:
+  - Blank lines and comment lines beginning with `#` are ignored.
+  - Trailing slashes (e.g., `build/`) constrain matching strictly to directory
+    candidates.
+  - Wildcards: `*` (matching zero or more non-slash characters), `?` (matching
+    any single non-slash character), and bracket character classes (`[...]`).
+  - Leading slashes (e.g., `/dist`) anchor matching to the directory level
+    where the enclosing `.gitignore` file resides.
+  - Negation rules (`!pattern`) re-include previously excluded paths.
+  - **Directory Pruning**: When a directory matches an exclusion rule, traversal
+    skips descending into it entirely, eliminating unnecessary I/O.
+
+### Symlink safety and special-file policy
+
+To prevent infinite traversal loops, out-of-workspace boundary escapes, and
+process blocking:
+
+- **Exclusive use of `lstat()`**: All filesystem inspections use POSIX
+  `lstat()` exclusively; `stat()` is strictly forbidden to ensure symbolic links
+  are never traversed or resolved to their targets.
+- **Symbolic links**: Evaluated via `S_ISLNK`. Symbolic links to files,
+  directories, or missing targets are never followed. Directory symlinks are
+  never recursed into. All symbolic links are excluded from regular-file content
+  hashing and the pin manifest.
+- **Special files**: Character devices (`S_ISCHR`), block devices (`S_ISBLK`),
+  named pipes / FIFOs (`S_ISFIFO`), and UNIX domain sockets (`S_ISSOCK`) are
+  detected via POSIX mode macros and are never opened with `open()` or read,
+  preventing blocking I/O and device manipulation. All special files are
+  excluded from leaf hashing and the pin manifest.
+- **Regular files only**: Only filesystem objects conforming to `S_ISREG`
+  have their contents read and hashed.
+
+### Deterministic sorting and canonical path normalization
+
+- **Canonical Path Normalization**: Discovered regular file paths are normalized
+  relative to `WORKSPACE_DIR`. Redundant leading `./` prefixes are stripped,
+  consecutive slashes (`//`) are collapsed, and paths are canonicalized without
+  relative escapes (`.` or `..`).
+- **Bytewise Lexicographic Sorting**: Directory enumeration order from
+  `readdir()` is treated as untrusted and filesystem-dependent. All eligible
+  regular file entries are accumulated into memory and sorted in strict bytewise
+  lexicographic order using raw `strcmp()`, ensuring deterministic,
+  locale-independent, and platform-reproducible ordering across all Linux
+  filesystems.
+
+### Streaming SHA-256, Merkle tree reduction, and pin manifest
+
+- **Constant-Memory Streaming**: File contents are read and streamed through
+  SHA-256 in fixed 64 KiB chunks (`TREEHASH_IO_BUFFER_SIZE = 65536`), achieving
+  constant O(1) buffer allocation per file regardless of file size.
+- **Leaf Digest Computation**: For each regular file, the 32-byte SHA-256
+  digest of its byte content is formatted as a 64-character lowercase hexadecimal
+  string. The leaf record digest $H_{\text{leaf}}$ is computed by hashing the
+  canonical manifest line:
+  $$H_{\text{leaf}} = \text{SHA-256}\left(\text{SHA256\_hex}(file\_content) + \text{"  "} + relative\_path + \text{"\n"}\right)$$
+- **Balanced Binary Merkle Tree**: Sorted leaf digests form Level 0 of a
+  binary Merkle tree. Pairwise reduction proceeds level-by-level:
+  - Consecutive adjacent pairs $(H_{2i}, H_{2i+1})$ in raw 32-byte binary form
+    are concatenated (64 bytes total) and hashed: $H_{\text{parent}} = \text{SHA-256}(H_{2i} \mathbin{\Vert} H_{2i+1})$.
+  - At any level with an odd number of nodes, the lone rightmost node is
+    promoted directly to the next level without duplicate hashing.
+  - Reduction continues iteratively until a single 32-byte binary root digest is
+    obtained, rendered as a 64-character lowercase hexadecimal string.
+  - **Empty Workspace**: For an empty workspace containing zero eligible regular
+    files, the root hash is the canonical SHA-256 digest of the empty string:
+    `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- **Standard Output Format**: Output is written strictly to stdout:
+  ```text
+  ROOT <64-hex-root-hash>
+  <64-hex-file-hash>  <normalized-relative-path>
+  ...
+  ```
+  The pin manifest lines appear in the exact bytewise path order determined by
+  `strcmp()`.
+
+### Resource limits and hostile-input hardening
+
+- **Recursion Depth Limit**: Directory traversal is bounded to a maximum depth
+  of 256 levels (`TREEHASH_MAX_DEPTH = 256`). Exceeding this limit aborts
+  fail-closed with diagnostic `treehash: RECURSION_DEPTH_EXCEEDED` and exit
+  status `2`.
+- **Path Length Limit**: Path strings are bounded to 4096 bytes (`PATH_MAX = 4096`).
+  Paths exceeding this limit fail closed with diagnostic `treehash: PATH_LENGTH_EXCEEDED`
+  and exit status `2`.
+- **Cycle Detection**: Traversal tracks active ancestor directory `(dev_t, ino_t)`
+  tuples up to the recursion depth limit. Detecting a revisited ancestor directory
+  aborts fail-closed with `treehash: CYCLE_DETECTED: "..."` and exit status `2`.
+- **Sanitized Stderr Diagnostics**: All paths, arguments, and untrusted strings
+  rendered to stderr in diagnostics are sanitized by escaping non-printable
+  ASCII bytes (< `0x20` or > `0x7E`), backslashes (`\`), and double quotes (`"`)
+  into uppercase `\xHH` sequences, preventing ANSI terminal control injection.
+- **SIGPIPE and Checked Output**: `signal(SIGPIPE, SIG_IGN)` is installed
+  unconditionally at startup so stdout pipe closures (e.g., when piped to
+  `head -n 1`) surface as checked stdio write errors (`EPIPE`) with exit status `2`
+  rather than terminating abnormally.
+
+### Exit status contract
+
+- `0`: Success: workspace walked, regular files hashed, root hash and pin manifest
+  emitted to stdout, or sole informational invocation (`--help`, `--version`).
+- `1`: Reserved for operational notice or verification mismatch in future
+  verification modes.
+- `2`: Operational or usage failure: command-line syntax error, target path
+  missing or not a directory, permission denied, recursion depth or path length
+  limit exceeded, directory cycle detected, memory allocation failure, or stdout
+  write/flush failure.
+
+### Security boundaries and operational limitations
+
+- **Read-Only Inspection**: `treehash` operates strictly in read-only mode,
+  performing zero file modifications, permission changes, or temporary file writes.
+- **Metadata-Blind Content Hashing**: Only regular file byte contents and relative
+  path strings contribute to leaf digests and the Merkle root hash. File modification
+  times, permission bits, ownership (UID/GID), inode numbers, and extended attributes
+  are not hashed, guaranteeing reproducible output across checkouts and environments.
+- **Excluded Filesystem Objects**: Symbolic links (whether pointing to files,
+  directories, or missing targets), character/block device nodes, named pipes
+  (FIFOs), and UNIX domain sockets are never followed or opened, preventing
+  process hangs and directory escapes. They are excluded from leaf hashing and the
+  pin manifest.
+- **Operational Non-Goals**: `treehash` is intentionally small and focused. It is
+  not a version control system, archiver, or deduplicator. It does not perform
+  remote networking, telemetry, IPC, or background filesystem watching.
+
+### Examples
+
+Compute Merkle root hash and pin manifest for current working directory:
+
+```sh
+build/treehash
+```
+
+Compute Merkle root hash and pin manifest for a specific workspace:
+
+```sh
+build/treehash /path/to/project
+```
+
+Save the manifest to a file for integrity auditing:
+
+```sh
+build/treehash . > workspace.manifest
+```
+
+Verify regular file content integrity against the manifest with standard `sha256sum`:
+
+```sh
+tail -n +2 workspace.manifest | sha256sum -c -
+```
+
+Display usage guidance or version metadata:
+
+```sh
+build/treehash --help
+build/treehash --version
+```
+
+### Quality floor execution and verification
+
+`treehash` satisfies repository quality floor requirements:
+- Clean compilation under GCC and Clang with `-std=c17 -Wall -Wextra -Wpedantic -Werror -D_POSIX_C_SOURCE=200809L` with zero warnings.
+- Verified in check-only mode with `clang-format --dry-run --Werror`.
+- Static analysis clean with `clang-tidy`, `cppcheck`, and Clang static analyzer (`clang --analyze`).
+- Memory and behavior analysis clean under AddressSanitizer (`detect_leaks=1`), UndefinedBehaviorSanitizer (`halt_on_error=1`), and Valgrind memcheck (`--leak-check=full --show-leak-kinds=all --track-fds=yes`).
+- Manual page syntax linted cleanly with `groff -man -Tutf8 -ww -z`.
+- Validated by independent regression tests in `tests/test_treehash_first_slice.py`
+  (75 passed, 2 skipped) exercising traversal, ignore rules, symlinks, special files,
+  NIST KAT vectors, buffer boundaries, Merkle tree reduction, cycle detection, hostile
+  inputs, and closed pipes.
+- **Preview integration status**: Integration into aggregate top-level
+  `Makefile` targets (`make quality`, `make test`, `make install`) is deferred
+  to subsequent repository build integration slices, following preview utility
+  policy (consistent with `pathaudit`, `permguard`, and `openunlink`).
 
 ## License
 
