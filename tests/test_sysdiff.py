@@ -731,6 +731,7 @@ DIST_PRODUCT_FILES = (
     "src/pathaudit.c",
     "src/permguard.c",
     "src/openunlink.c",
+    "src/agentwatch.c",
     "man/sysdiff.1",
     "man/pathaudit.1",
     "man/permguard.1",
